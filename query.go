@@ -1,0 +1,528 @@
+package gplus
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"gorm.io/gorm"
+)
+
+type Query[T any] struct {
+	ScopeBuilder
+	ctx context.Context
+	// errs 是错误列表，用于存储执行过程中出现的错误
+	errs []error
+}
+
+func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
+	// 确保模型已注册
+	model := getModelInstance[T]()
+	return &Query[T]{
+		ctx: ctx,
+		ScopeBuilder: ScopeBuilder{
+			conditions: make([]condition, 0, 8), // 预分配
+		},
+		errs: make([]error, 0, 8),
+	}, model
+}
+
+// Context 获取上下文
+func (q *Query[T]) Context() context.Context {
+	if q.ctx == nil {
+		return context.Background()
+	}
+	return q.ctx
+}
+
+// IsEmpty 是否为空查询
+func (q *Query[T]) IsEmpty() bool {
+	return len(q.conditions) == 0
+}
+
+// IsUnscoped 是否为不带软删除的查询
+func (q *Query[T]) IsUnscoped() bool {
+	return q.unscoped
+}
+
+// GetError 将所有累积的错误合并为一个返回
+func (q *Query[T]) GetError() error {
+	if len(q.errs) == 0 {
+		return nil
+	}
+	// 建议在 Go 1.20+ 使用 errors.Join，这里为了兼容性手动拼接
+	//var sb strings.Builder
+	//sb.WriteString(fmt.Sprintf("gplus query builder errors (%d):", len(q.errs)))
+	//for i, err := range q.errs {
+	//	sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, err.Error()))
+	//}
+	//return fmt.Errorf(sb.String())
+	return errors.Join(q.errs...)
+}
+
+// Table 动态指定表名
+// 场景：分表查询或临时表操作
+func (q *Query[T]) Table(name string) *Query[T] {
+	q.tableName = name
+	return q
+}
+
+// addCond 内部辅助方法
+func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
+	name, err := resolveColumnName(col)
+	if err != nil {
+		// 记录错误或 Panic，取决于策略。这里选择不做静默失败，便于调试
+		// 生产环境建议结合日志库
+		//fmt.Printf("gplus error: %v\n", err)
+		// 记录错误，指明操作类型，但不中断链式调用
+		q.errs = append(q.errs, fmt.Errorf("addCond error [col: %s,op: %s]: %w", col, op, err))
+		// 发生错误时，跳过添加该条件，避免生成错误的 SQL
+		return q
+	}
+	q.conditions = append(q.conditions, condition{
+		column:   name,
+		operator: op,
+		value:    val,
+		isOr:     isOr,
+	})
+	return q
+}
+
+// Select 指定查询字段
+func (q *Query[T]) Select(cols ...any) *Query[T] {
+	for _, c := range cols {
+		if name, err := resolveColumnName(c); err == nil {
+			q.selects = append(q.selects, name)
+		} else {
+			// 记录错误，指明操作类型，但不中断链式调用
+			q.errs = append(q.errs, fmt.Errorf("select error [col: %s]: %w", c, err))
+		}
+	}
+	return q
+}
+
+// ToDB 将当前 Query 的条件转换为 GORM 的 DB 对象
+// 注意：这不会执行查询，只会生成带有条件的 DB 实例，常用于子查询
+// 1. 构建子查询 (查部门 ID)
+// subQuery, _ := gplus.NewQuery[Dept](ctx)
+// subQuery.Eq(&Dept.Name, "IT").Select(&Dept.Id)
+// 2. 获取 DB 实例 (通常 Repository 会暴露 GetDB，或者直接从外部传入)
+// 这里的 repo 是 UserRepo
+// db := userRepo.GetDB()
+// 3. 构建主查询 (查用户)
+// mainQuery, _ := gplus.NewQuery[User](ctx)
+// 【关键】：使用 ToDB 将 subQuery 转换为 GORM 对象，放入 In 条件中
+// mainQuery.In(&User.DeptId, subQuery.ToDB(db))
+// 4. 执行查询
+// users, err := userRepo.List(mainQuery)
+func (q *Query[T]) ToDB(db *gorm.DB) *gorm.DB {
+	// 1. 使用 Session(&gorm.Session{}) 创建一个干净的 DB 会话，避免污染传入的 db
+	// 2. 调用 BuildQuery() 获取闭包，并立即执行该闭包应用条件
+	return q.ScopeBuilder.BuildQuery()(db.Session(&gorm.Session{}))
+}
+
+// Eq 等于
+func (q *Query[T]) Eq(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpEq, val)
+}
+
+// Ne 不等于
+func (q *Query[T]) Ne(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpNe, val)
+}
+
+// Ge 大于等于
+func (q *Query[T]) Ge(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpGe, val)
+}
+
+// Le 小于等于
+func (q *Query[T]) Le(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpLe, val)
+}
+
+// Gt 大于
+func (q *Query[T]) Gt(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpGt, val)
+}
+
+// Lt 小于
+func (q *Query[T]) Lt(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpLt, val)
+}
+
+// Like 模糊查询
+func (q *Query[T]) Like(col any, val string) *Query[T] {
+	return q.addCond(false, col, OpLike, "%"+val+"%")
+}
+
+// In 包含
+func (q *Query[T]) In(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpIn, val)
+}
+
+// OpNotIn 不包含
+func (q *Query[T]) OpNotIn(col any, val any) *Query[T] {
+	return q.addCond(false, col, OpNotIn, val)
+}
+
+// IsNull 为空
+func (q *Query[T]) IsNull(col any) *Query[T] {
+	return q.addCond(false, col, OpIsNull, nil)
+}
+
+// IsNotNull 不为空
+func (q *Query[T]) IsNotNull(col any) *Query[T] {
+	return q.addCond(false, col, OpIsNotNull, nil)
+}
+
+// LikeLeft 左模糊查询
+func (q *Query[T]) LikeLeft(col any, val string) *Query[T] {
+	return q.addCond(false, col, OpLike, "%"+val)
+}
+
+// LikeRight 右模糊查询
+func (q *Query[T]) LikeRight(col any, val string) *Query[T] {
+	return q.addCond(false, col, OpLike, val+"%")
+}
+
+// OpNotLike 不包含
+func (q *Query[T]) OpNotLike(col any, val string) *Query[T] {
+	return q.addCond(false, col, OpNotLike, "%"+val+"%")
+}
+
+// Between 区间查询
+func (q *Query[T]) Between(col any, val1 any, val2 any) *Query[T] {
+	return q.addCond(false, col, OpBetween, []any{val1, val2})
+}
+
+// BetweenOR 区间查询（包含边界）
+func (q *Query[T]) BetweenOR(col any, val1 any, val2 any) *Query[T] {
+	return q.addCond(true, col, OpBetween, []any{val1, val2})
+}
+
+// NotBetween 区间查询（不包含边界）
+func (q *Query[T]) NotBetween(col any, val1 any, val2 any) *Query[T] {
+	return q.addCond(false, col, OpNotBetween, []any{val1, val2})
+}
+
+// Order 排序
+func (q *Query[T]) Order(col any, isAsc bool) *Query[T] {
+	name, err := resolveColumnName(col)
+	if err != nil {
+		q.errs = append(q.errs, fmt.Errorf("order error [col: %s]: %w", col, err))
+		return q
+	}
+	direction := KeyDesc
+	if isAsc {
+		direction = KeyAsc
+	}
+	q.orders = append(q.orders, fmt.Sprintf("%s %s", name, direction))
+	return q
+}
+
+// Limit 分页
+func (q *Query[T]) Limit(limit int) *Query[T] {
+	q.limit = limit
+	return q
+}
+
+// Offset 偏移
+func (q *Query[T]) Offset(offset int) *Query[T] {
+	q.offset = offset
+	return q
+}
+
+func (q *Query[T]) EqOr(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpEq, val)
+}
+
+// Omit 排除某些字段（不查询某些字段）
+func (q *Query[T]) Omit(cols ...any) *Query[T] {
+	for _, c := range cols {
+		if name, err := resolveColumnName(c); err == nil {
+			q.omits = append(q.omits, name)
+		}
+	}
+	return q
+}
+
+// Distinct 去重
+// 支持传入字段指针或字符串，例如：q.Distinct(&user.Name, &user.Age)
+// 如果不传参数，则默认为 DISTINCT *
+func (q *Query[T]) Distinct(cols ...any) *Query[T] {
+	// 初始化 slice，标记 Distinct 被调用过
+	if q.distinctArgs == nil {
+		q.distinctArgs = make([]interface{}, 0)
+	}
+
+	for _, c := range cols {
+		if name, err := resolveColumnName(c); err == nil {
+			q.distinctArgs = append(q.distinctArgs, name)
+		} else {
+			q.errs = append(q.errs, fmt.Errorf("distinct error [col: %s]: %w", c, err))
+		}
+	}
+	return q
+}
+
+// Group 分组
+func (q *Query[T]) Group(cols ...any) *Query[T] {
+	for _, c := range cols {
+		if name, err := resolveColumnName(c); err == nil {
+			q.groups = append(q.groups, name)
+		} else {
+			q.errs = append(q.errs, fmt.Errorf("group error [col: %s]: %w", c, err))
+		}
+	}
+	return q
+}
+
+// Join 通用关联查询，支持自定义连接方式
+// 示例：q.Join("profiles", gplus.JoinLeft, "profiles.user_id = users.id")
+func (q *Query[T]) join(table, method, on string, args ...any) *Query[T] {
+	if table == "" || method == "" {
+		q.errs = append(q.errs, fmt.Errorf("join error: table or method is empty"))
+		return q
+	}
+	q.joins = append(q.joins, joinInfo{method: method, table: table, on: on, args: args})
+	return q
+}
+
+// LeftJoin 左连接：返回左表所有记录，即使右表无匹配
+func (q *Query[T]) LeftJoin(table string, on string, args ...any) *Query[T] {
+	return q.join(table, JoinLeft, on, args...)
+}
+
+// RightJoin 右连接：返回右表所有记录，即使左表无匹配
+func (q *Query[T]) RightJoin(table string, on string, args ...any) *Query[T] {
+	return q.join(table, JoinRight, on, args...)
+}
+
+// InnerJoin 内连接：仅返回两个表中匹配的记录（交集）
+func (q *Query[T]) InnerJoin(table string, on string, args ...any) *Query[T] {
+	return q.join(table, JoinInner, on, args...)
+}
+
+// OuterJoin 外连接
+func (q *Query[T]) OuterJoin(table string, on string, args ...any) *Query[T] {
+	return q.join(table, JoinOuter, on, args...)
+}
+
+// FullJoin 全外连接：返回左右表中所有的记录
+func (q *Query[T]) FullJoin(table string, on string, args ...any) *Query[T] {
+	return q.join(table, JoinFull, on, args...)
+}
+
+// CrossJoin 交叉连接：返回笛卡尔积
+// 注意：交叉连接通常不需要 ON 条件
+func (q *Query[T]) CrossJoin(table string) *Query[T] {
+	return q.join(table, JoinCross, "")
+}
+
+// NaturalJoin 自然连接：基于相同列名自动匹配
+func (q *Query[T]) NaturalJoin(table string) *Query[T] {
+	return q.join(table, JoinNatural, "")
+}
+
+// Unscoped 物理查询（包含被软删除的数据）
+func (q *Query[T]) Unscoped() *Query[T] {
+	q.unscoped = true
+	return q
+}
+
+// LockWrite 加排他锁 (SELECT ... FOR UPDATE)
+// 阻止其他事务读取或修改，直到本事务结束
+func (q *Query[T]) LockWrite() *Query[T] {
+	q.lockStrength = "UPDATE"
+	return q
+}
+
+// LockRead 加共享锁 (SELECT ... FOR SHARE)
+// 允许其他事务读取，但阻止其他事务修改
+func (q *Query[T]) LockRead() *Query[T] {
+	q.lockStrength = "SHARE"
+	return q
+}
+
+// LockWithOpt 高级加锁 (支持 NOWAIT 或 SKIP LOCKED)
+// strength: "UPDATE" / "SHARE"
+// options: "NOWAIT" / "SKIP LOCKED"
+func (q *Query[T]) LockWithOpt(strength, options string) *Query[T] {
+	q.lockStrength = strength
+	q.lockOptions = options
+	return q
+}
+
+// And 开启一个带括号的 AND 嵌套块
+func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
+	if fn == nil {
+		q.errs = append(q.errs, fmt.Errorf("and error: fn is nil"))
+		return q
+	}
+	sub := &Query[T]{
+		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
+	}
+	fn(sub)
+	if len(sub.conditions) > 0 {
+		q.conditions = append(q.conditions, condition{
+			group: sub.conditions,
+			isOr:  false,
+		})
+	}
+	return q
+}
+
+// Having 添加分组过滤条件
+// 示例: q.Having("COUNT(id)", OpGt, 10)
+func (q *Query[T]) Having(col string, op string, val any) *Query[T] {
+	if col == "" || op == "" {
+		q.errs = append(q.errs, fmt.Errorf("having error: [col: %s] or [op: %s] is empty", col, op))
+		return q
+	}
+	q.havings = append(q.havings, condition{
+		column:   col,
+		operator: op,
+		value:    val,
+		isOr:     false,
+	})
+	return q
+}
+
+// OrHaving 添加 OR 分组过滤
+func (q *Query[T]) OrHaving(col string, op string, val any) *Query[T] {
+	if col == "" || op == "" {
+		q.errs = append(q.errs, fmt.Errorf("or having error: [col: %s] or [op: %s] is empty", col, op))
+		return q
+	}
+	q.havings = append(q.havings, condition{
+		column:   col,
+		operator: op,
+		value:    val,
+		isOr:     true,
+	})
+	return q
+}
+
+// HavingGroup 嵌套 Having
+func (q *Query[T]) HavingGroup(fn func(sub *Query[T])) *Query[T] {
+	if fn == nil {
+		q.errs = append(q.errs, fmt.Errorf("having group error: fn is nil"))
+		return q
+	}
+	sub := &Query[T]{ScopeBuilder: ScopeBuilder{havings: make([]condition, 0)}}
+	fn(sub) // 开发者在 sub 里调用 Having/OrHaving
+	if len(sub.havings) > 0 {
+		q.havings = append(q.havings, condition{
+			group: sub.havings,
+			isOr:  false,
+		})
+	}
+	return q
+}
+
+// Preload 预加载关联数据
+// column: 结构体中的关联字段名（通常是字符串，如 "Orders" 或 "User.Role"）
+// args: 可选的过滤条件，例如只预加载状态为已支付的订单
+func (q *Query[T]) Preload(column string, args ...any) *Query[T] {
+	if column == "" {
+		q.errs = append(q.errs, fmt.Errorf("preload error: [column: %s] is empty", column))
+		return q
+	}
+	if q.preloads == nil {
+		q.preloads = make([]preloadInfo, 0)
+	}
+	q.preloads = append(q.preloads, preloadInfo{
+		query: column,
+		args:  args,
+	})
+	return q
+}
+
+// Or 开启一个带括号的 OR 嵌套块
+func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
+	if fn == nil {
+		q.errs = append(q.errs, fmt.Errorf("or error: fn is nil"))
+		return q
+	}
+	sub := &Query[T]{
+		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
+	}
+	fn(sub)
+	if len(sub.conditions) > 0 {
+		q.conditions = append(q.conditions, condition{
+			group: sub.conditions,
+			isOr:  true,
+		})
+	}
+	return q
+}
+
+// DataRuleBuilder 从上下文中提取规则并应用到查询中
+func (q *Query[T]) DataRuleBuilder() *Query[T] {
+	if q.ctx == nil {
+		return q
+	}
+	// 从 Context 获取规则列表
+	val := q.ctx.Value(DataRuleKey)
+	rules, ok := val.([]DataRule)
+	if !ok || len(rules) == 0 {
+		return q
+	}
+
+	for _, rule := range rules {
+		column := rule.Column
+		c := strings.ToUpper(strings.TrimSpace(rule.Condition))
+		value := rule.Value
+
+		// 1. 处理空值情况
+		if value == "" && c != "IS NULL" && c != "IS NOT NULL" {
+			continue
+		}
+
+		// 2. 特殊规则：原生 SQL 支持 (USE_SQL_RULES)
+		if c == "SQL" || c == "USE_SQL_RULES" {
+			q.conditions = append(q.conditions, condition{
+				column: value, // 此时 Value 存的是完整的 SQL 片段
+				isRaw:  true,
+			})
+			continue
+		}
+
+		// 3. 映射常用操作符
+		switch c {
+		case "=", "EQ":
+			q.Eq(column, value)
+		case "<>", "!=", "NE":
+			q.Ne(column, value)
+		case ">", "GT":
+			q.Gt(column, value)
+		case ">=", "GE":
+			q.Ge(column, value)
+		case "<", "LT":
+			q.Lt(column, value)
+		case "<=", "LE":
+			q.Le(column, value)
+		case "IN":
+			// 自动处理逗号分隔的字符串
+			q.In(column, strings.Split(value, ","))
+		case "LIKE":
+			q.Like(column, value)
+		case "LEFT_LIKE":
+			q.LikeLeft(column, value)
+		case "RIGHT_LIKE":
+			q.LikeRight(column, value)
+		case "IS NULL":
+			q.IsNull(column)
+		case "IS NOT NULL":
+			q.IsNotNull(column)
+		case "BETWEEN":
+			parts := strings.Split(value, ",")
+			if len(parts) == 2 {
+				q.Between(column, parts[0], parts[1])
+			}
+		}
+	}
+	return q
+}
