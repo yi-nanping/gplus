@@ -103,7 +103,7 @@ func (r *Repository[D, T]) List(q *Query[T]) (data []T, err error) {
 }
 
 // Pluck 泛型 R 代表返回值的类型
-func Pluck[T any, R any, D any](r *Repository[D, T], q *Query[T], col any) ([]R, error) {
+func Pluck[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) ([]R, error) {
 	if q == nil {
 		return nil, ErrQueryNil
 	}
