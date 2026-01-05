@@ -58,7 +58,12 @@ func (q *Query[T]) GetError() error {
 	//	sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, err.Error()))
 	//}
 	//return fmt.Errorf(sb.String())
-	return errors.Join(q.errs...)
+	// 拼接一个带有统计信息的头部
+	summary := fmt.Errorf("gplus query builder failed with %d errors", len(q.errs))
+
+	// 将统计信息作为第一个错误，与其他错误一起 Join
+	allErrs := append([]error{summary}, q.errs...)
+	return errors.Join(allErrs...)
 }
 
 // Table 动态指定表名
@@ -76,7 +81,7 @@ func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 		// 生产环境建议结合日志库
 		//fmt.Printf("gplus error: %v\n", err)
 		// 记录错误，指明操作类型，但不中断链式调用
-		q.errs = append(q.errs, fmt.Errorf("addCond error [col: %s,op: %s]: %w", col, op, err))
+		q.errs = append(q.errs, fmt.Errorf("addCond error [col: %v,op: %s]: %w", col, op, err))
 		// 发生错误时，跳过添加该条件，避免生成错误的 SQL
 		return q
 	}
@@ -132,9 +137,24 @@ func (q *Query[T]) Ne(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpNe, val)
 }
 
+// OrEq 等于(或)
+func (q *Query[T]) OrEq(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpEq, val)
+}
+
+// OrNe 不等于(或)
+func (q *Query[T]) OrNe(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpNe, val)
+}
+
 // Ge 大于等于
 func (q *Query[T]) Ge(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpGe, val)
+}
+
+// OrGe 大于等于(或)
+func (q *Query[T]) OrGe(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpGe, val)
 }
 
 // Le 小于等于
@@ -142,9 +162,19 @@ func (q *Query[T]) Le(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpLe, val)
 }
 
+// OrLe 小于等于(或)
+func (q *Query[T]) OrLe(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpLe, val)
+}
+
 // Gt 大于
 func (q *Query[T]) Gt(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpGt, val)
+}
+
+// OrGt 大于(或)
+func (q *Query[T]) OrGt(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpGt, val)
 }
 
 // Lt 小于
@@ -152,9 +182,19 @@ func (q *Query[T]) Lt(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpLt, val)
 }
 
+// OrLt 小于(或)
+func (q *Query[T]) OrLt(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpLt, val)
+}
+
 // Like 模糊查询
 func (q *Query[T]) Like(col any, val string) *Query[T] {
 	return q.addCond(false, col, OpLike, "%"+val+"%")
+}
+
+// OrLike 模糊查询(或)
+func (q *Query[T]) OrLike(col any, val string) *Query[T] {
+	return q.addCond(true, col, OpLike, "%"+val+"%")
 }
 
 // In 包含
@@ -162,9 +202,19 @@ func (q *Query[T]) In(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpIn, val)
 }
 
+// OrIn 包含(或)
+func (q *Query[T]) OrIn(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpIn, val)
+}
+
 // OpNotIn 不包含
 func (q *Query[T]) OpNotIn(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpNotIn, val)
+}
+
+// OrNotIn 不包含(或)
+func (q *Query[T]) OrNotIn(col any, val any) *Query[T] {
+	return q.addCond(true, col, OpNotIn, val)
 }
 
 // IsNull 为空
@@ -172,9 +222,19 @@ func (q *Query[T]) IsNull(col any) *Query[T] {
 	return q.addCond(false, col, OpIsNull, nil)
 }
 
+// OrIsNull 为空(或)
+func (q *Query[T]) OrIsNull(col any) *Query[T] {
+	return q.addCond(true, col, OpIsNull, nil)
+}
+
 // IsNotNull 不为空
 func (q *Query[T]) IsNotNull(col any) *Query[T] {
 	return q.addCond(false, col, OpIsNotNull, nil)
+}
+
+// OrIsNotNull 不为空(或)
+func (q *Query[T]) OrIsNotNull(col any) *Query[T] {
+	return q.addCond(true, col, OpIsNotNull, nil)
 }
 
 // LikeLeft 左模糊查询
@@ -182,9 +242,19 @@ func (q *Query[T]) LikeLeft(col any, val string) *Query[T] {
 	return q.addCond(false, col, OpLike, "%"+val)
 }
 
+// OrLikeLeft 左模糊查询(或)
+func (q *Query[T]) OrLikeLeft(col any, val string) *Query[T] {
+	return q.addCond(true, col, OpLike, "%"+val)
+}
+
 // LikeRight 右模糊查询
 func (q *Query[T]) LikeRight(col any, val string) *Query[T] {
 	return q.addCond(false, col, OpLike, val+"%")
+}
+
+// OrLikeRight 右模糊查询(或)
+func (q *Query[T]) OrLikeRight(col any, val string) *Query[T] {
+	return q.addCond(true, col, OpLike, val+"%")
 }
 
 // OpNotLike 不包含
@@ -192,19 +262,29 @@ func (q *Query[T]) OpNotLike(col any, val string) *Query[T] {
 	return q.addCond(false, col, OpNotLike, "%"+val+"%")
 }
 
+// OrNotLike 不包含(或)
+func (q *Query[T]) OrNotLike(col any, val string) *Query[T] {
+	return q.addCond(true, col, OpNotLike, "%"+val+"%")
+}
+
 // Between 区间查询
 func (q *Query[T]) Between(col any, val1 any, val2 any) *Query[T] {
 	return q.addCond(false, col, OpBetween, []any{val1, val2})
 }
 
-// BetweenOR 区间查询（包含边界）
-func (q *Query[T]) BetweenOR(col any, val1 any, val2 any) *Query[T] {
+// OrBetween 区间查询(或)
+func (q *Query[T]) OrBetween(col any, val1 any, val2 any) *Query[T] {
 	return q.addCond(true, col, OpBetween, []any{val1, val2})
 }
 
 // NotBetween 区间查询（不包含边界）
 func (q *Query[T]) NotBetween(col any, val1 any, val2 any) *Query[T] {
 	return q.addCond(false, col, OpNotBetween, []any{val1, val2})
+}
+
+// OrNotBetween 区间查询（不包含边界）(或)
+func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
+	return q.addCond(true, col, OpNotBetween, []any{val1, val2})
 }
 
 // Order 排序
