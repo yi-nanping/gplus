@@ -161,11 +161,23 @@ func (u *Updater[T]) Le(col any, val any) *Updater[T] { return u.addCond(false, 
 // ---------------------模糊查询 ----------------------
 
 // Like 模糊查询
-func (u *Updater[T]) Like(col any, val any) *Updater[T] { return u.addCond(false, col, OpLike, val) }
+func (u *Updater[T]) Like(col any, val string) *Updater[T] {
+	return u.addCond(false, col, OpLike, "%"+val+"%")
+}
+
+// LeftLike 左模糊查询
+func (u *Updater[T]) LeftLike(col any, val string) *Updater[T] {
+	return u.addCond(false, col, OpLike, "%"+val)
+}
+
+// RightLike 右模糊查询
+func (u *Updater[T]) RightLike(col any, val string) *Updater[T] {
+	return u.addCond(false, col, OpLike, val+"%")
+}
 
 // NotLike 不模糊查询
-func (u *Updater[T]) NotLike(col any, val any) *Updater[T] {
-	return u.addCond(false, col, OpNotLike, val)
+func (u *Updater[T]) NotLike(col any, val string) *Updater[T] {
+	return u.addCond(false, col, OpNotLike, "%"+val+"%")
 }
 
 //	-----------------集合与空值------------------
@@ -173,14 +185,26 @@ func (u *Updater[T]) NotLike(col any, val any) *Updater[T] {
 // In 包含
 func (u *Updater[T]) In(col any, val any) *Updater[T] { return u.addCond(false, col, OpIn, val) }
 
+// OrIn 包含
+func (u *Updater[T]) OrIn(col any, val any) *Updater[T] { return u.addCond(true, col, OpIn, val) }
+
 // NotIn 不包含
 func (u *Updater[T]) NotIn(col any, val any) *Updater[T] { return u.addCond(false, col, OpNotIn, val) }
+
+// OrNotIn 不包含
+func (u *Updater[T]) OrNotIn(col any, val any) *Updater[T] { return u.addCond(true, col, OpNotIn, val) }
 
 // IsNull 为空
 func (u *Updater[T]) IsNull(col any) *Updater[T] { return u.addCond(false, col, OpIsNull, nil) }
 
+// OrIsNull 为空
+func (u *Updater[T]) OrIsNull(col any) *Updater[T] { return u.addCond(true, col, OpIsNull, nil) }
+
 // IsNotNull 不为空
 func (u *Updater[T]) IsNotNull(col any) *Updater[T] { return u.addCond(false, col, OpIsNotNull, nil) }
+
+// OrIsNotNull 不为空
+func (u *Updater[T]) OrIsNotNull(col any) *Updater[T] { return u.addCond(true, col, OpIsNotNull, nil) }
 
 // -----------区间查询 (注意：传入 slice 以适配 Builder 逻辑)------------------
 
@@ -189,9 +213,19 @@ func (u *Updater[T]) Between(col any, v1, v2 any) *Updater[T] {
 	return u.addCond(false, col, OpBetween, []any{v1, v2})
 }
 
+// OrBetween 区间查询
+func (u *Updater[T]) OrBetween(col any, v1, v2 any) *Updater[T] {
+	return u.addCond(true, col, OpBetween, []any{v1, v2})
+}
+
 // NotBetween 区间查询
 func (u *Updater[T]) NotBetween(col any, v1, v2 any) *Updater[T] {
 	return u.addCond(false, col, OpNotBetween, []any{v1, v2})
+}
+
+// OrNotBetween 区间查询
+func (u *Updater[T]) OrNotBetween(col any, v1, v2 any) *Updater[T] {
+	return u.addCond(true, col, OpNotBetween, []any{v1, v2})
 }
 
 // --- OR 条件支持 ---
@@ -215,7 +249,24 @@ func (u *Updater[T]) OrLt(col any, val any) *Updater[T] { return u.addCond(true,
 func (u *Updater[T]) OrLe(col any, val any) *Updater[T] { return u.addCond(true, col, OpLe, val) }
 
 // OrLike 模糊查询
-func (u *Updater[T]) OrLike(col any, val any) *Updater[T] { return u.addCond(true, col, OpLike, val) }
+func (u *Updater[T]) OrLike(col any, val string) *Updater[T] {
+	return u.addCond(true, col, OpLike, "%"+val+"%")
+}
+
+// OrLeftLike 左模糊查询
+func (u *Updater[T]) OrLeftLike(col any, val string) *Updater[T] {
+	return u.addCond(true, col, OpLike, "%"+val)
+}
+
+// OrRightLike 右模糊查询
+func (u *Updater[T]) OrRightLike(col any, val string) *Updater[T] {
+	return u.addCond(true, col, OpLike, val+"%")
+}
+
+// OrNotLike 不模糊查询
+func (u *Updater[T]) OrNotLike(col any, val string) *Updater[T] {
+	return u.addCond(true, col, OpNotLike, "%"+val+"%")
+}
 
 // --- 特殊操作 ---
 

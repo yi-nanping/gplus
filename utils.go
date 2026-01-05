@@ -1,6 +1,7 @@
 package gplus
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 	}
 
 	// 1. 尝试从缓存读取 (Key 可以是 Type + Tag + Label 的组合)
-	cacheKey := t.String() + tag + label
+	cacheKey := fmt.Sprintf("%s_%s_%s", t.String(), tag, label)
 	if val, ok := columnCache.Load(cacheKey); ok {
 		return val.(map[uintptr]string)
 	}
