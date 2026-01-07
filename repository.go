@@ -152,6 +152,19 @@ func (r *Repository[D, T]) Page(q *Query[T], skipCount bool) (data []T, total in
 	return data, total, err
 }
 
+// Count 统计数量
+func (r *Repository[D, T]) Count(q *Query[T]) (int64, error) {
+	if q == nil {
+		return 0, ErrQueryNil
+	}
+	if err := q.GetError(); err != nil {
+		return 0, err
+	}
+	var count int64
+	err := r.dbResolver(q.Context(), nil).Model(new(T)).Scopes(q.DataRuleBuilder().BuildCount()).Count(&count).Error
+	return count, err
+}
+
 // Save 新增
 func (r *Repository[D, T]) Save(ctx context.Context, entity *T) error {
 	return r.SaveTx(ctx, entity, nil)

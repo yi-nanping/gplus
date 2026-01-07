@@ -57,7 +57,6 @@ func TestBuilder_QuoteColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := quoteColumn(tt.input, qL, qR)
 			// 注意：具体的输出取决于你的 quoteColumn 实现细节
-			// 这里假设你使用了我之前提供的优化版逻辑
 			if got != tt.want {
 				t.Errorf("quoteColumn(%q) = %q, want %q", tt.input, got, tt.want)
 			}

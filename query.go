@@ -66,6 +66,23 @@ func (q *Query[T]) GetError() error {
 	return errors.Join(allErrs...)
 }
 
+// Page 针对page和pageSize的处理
+func (q *Query[T]) Page(page, pageSize int) *Query[T] {
+	// 默认page为第一页 pageSize为10
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	// limit 和 offset 是分页查询的关键参数
+	limit := pageSize
+	offset := pageSize * (page - 1)
+	q.limit = limit
+	q.offset = offset
+	return q
+}
+
 // Table 动态指定表名
 // 场景：分表查询或临时表操作
 func (q *Query[T]) Table(name string) *Query[T] {
