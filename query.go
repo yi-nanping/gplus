@@ -349,14 +349,12 @@ func (q *Query[T]) Omit(cols ...any) *Query[T] {
 // 支持传入字段指针或字符串，例如：q.Distinct(&user.Name, &user.Age)
 // 如果不传参数，则默认为 DISTINCT *
 func (q *Query[T]) Distinct(cols ...any) *Query[T] {
-	// 初始化 slice，标记 Distinct 被调用过
-	if q.distinctArgs == nil {
-		q.distinctArgs = make([]interface{}, 0)
-	}
-
+	// 调用去重方法 后 在这个生命周期中 去重都有效果
+	q.distinct = true
+	// 如果传入了特定列，将它们也作为 Select 字段处理
 	for _, c := range cols {
 		if name, err := resolveColumnName(c); err == nil {
-			q.distinctArgs = append(q.distinctArgs, name)
+			q.selects = append(q.selects, name)
 		} else {
 			q.errs = append(q.errs, fmt.Errorf("distinct error [col: %s]: %w", c, err))
 		}

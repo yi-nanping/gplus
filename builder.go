@@ -69,8 +69,8 @@ type ScopeBuilder struct {
 	offset int
 	// 是否使用软删除
 	unscoped bool
-	// distinctArgs 用于构建 Distinct 字段
-	distinctArgs []interface{}
+	// 是否去重
+	distinct bool
 	// 存储预加载列表
 	preloads []preloadInfo
 	// 悲观锁配置
@@ -107,7 +107,7 @@ func (b *ScopeBuilder) BuildQuery() func(*gorm.DB) *gorm.DB {
 		// 查询字段
 		db = b.applySelects(db, qL, qR)
 		// 去重
-		db = b.applyDistinct(db, qL, qR)
+		db = b.applyDistinct(db)
 		// 查询条件
 		db = b.applyWhere(db, qL, qR)
 		// 关联查询
@@ -163,6 +163,7 @@ func (b *ScopeBuilder) Clear() {
 	b.limit = 0
 	b.offset = 0
 	b.unscoped = false
+	b.distinct = false
 
 	// 2. 切片复位 (保留容量，高性能)
 	// 如果切片为 nil，[:0] 操作也是安全的
@@ -173,7 +174,6 @@ func (b *ScopeBuilder) Clear() {
 	b.groups = b.groups[:0]
 	b.havings = b.havings[:0]
 	b.joins = b.joins[:0]
-	b.distinctArgs = b.distinctArgs[:0]
 
 	// 清理锁状态
 	b.lockStrength = ""
@@ -225,19 +225,11 @@ func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 	return db
 }
 
-// applyDistinct 去重
-func (b *ScopeBuilder) applyDistinct(db *gorm.DB, qL, qR string) *gorm.DB {
-	// 去重
-	if b.distinctArgs != nil {
-		var quotedDistincts []interface{}
-		for _, arg := range b.distinctArgs {
-			if s, ok := arg.(string); ok {
-				quotedDistincts = append(quotedDistincts, quoteColumn(s, qL, qR))
-			} else {
-				quotedDistincts = append(quotedDistincts, arg)
-			}
-		}
-		db = db.Distinct(quotedDistincts...)
+// applyDistinct 去重 如果调用了 Distinct 方法 将对select 字段进行去重
+func (b *ScopeBuilder) applyDistinct(db *gorm.DB) *gorm.DB {
+	// 去重 distinctArgs 不为空 且 distinct 为 true
+	if b.distinct {
+		db = db.Distinct()
 	}
 	return db
 }
