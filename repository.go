@@ -254,8 +254,8 @@ func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) 
 	return db.RowsAffected, db.Error
 }
 
-// DeleteByCond 根据条件删除
-func (r *Repository[D, T]) DeleteByCond(q *Query[T], tx *gorm.DB) (int64, error) {
+// DeleteByCondTX 事务根据条件删除
+func (r *Repository[D, T]) DeleteByCondTX(q *Query[T], tx *gorm.DB) (int64, error) {
 	var model T
 	// 如果 q 没有任何条件且没有设置 Unscoped，拒绝执行，防止误删全表。
 	if q == nil || (q.IsEmpty() && !q.IsUnscoped()) {
@@ -268,6 +268,11 @@ func (r *Repository[D, T]) DeleteByCond(q *Query[T], tx *gorm.DB) (int64, error)
 		Scopes(q.BuildDelete()).
 		Delete(&model)
 	return db.RowsAffected, db.Error
+}
+
+// DeleteByCond 根据条件删除
+func (r *Repository[D, T]) DeleteByCond(q *Query[T]) (int64, error) {
+	return r.DeleteByCondTX(q, nil)
 }
 
 // --- 原生 SQL 封装部分 ---
