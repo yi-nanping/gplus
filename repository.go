@@ -177,7 +177,12 @@ func (r *Repository[D, T]) SaveTx(ctx context.Context, entity *T, tx *gorm.DB) e
 }
 
 // SaveBatch 批量新增
-func (r *Repository[D, T]) SaveBatch(ctx context.Context, entities []T, tx *gorm.DB) error {
+func (r *Repository[D, T]) SaveBatch(ctx context.Context, entities []T) error {
+	return r.SaveBatchTx(ctx, entities, nil)
+}
+
+// SaveBatchTx 事务批量新增
+func (r *Repository[D, T]) SaveBatchTx(ctx context.Context, entities []T, tx *gorm.DB) error {
 	return r.dbResolver(ctx, tx).Create(&entities).Error
 }
 
