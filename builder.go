@@ -131,7 +131,7 @@ func (b *ScopeBuilder) BuildUpdate() func(*gorm.DB) *gorm.DB {
 		qL, qR := getQuoteChar(db)
 		db = b.applyBaseTable(db)
 		// 更新字段
-		b.applySelects(db, qL, qR)
+		db = b.applySelects(db, qL, qR)
 
 		// 更新通常只依赖 Where 条件
 		db = b.applyWhere(db, qL, qR)
