@@ -14,6 +14,8 @@ type Query[T any] struct {
 	ctx context.Context
 	// errs 是错误列表，用于存储执行过程中出现的错误
 	errs []error
+	// dataRuleApplied 防止 DataRuleBuilder 对同一 Query 重复追加数据权限条件
+	dataRuleApplied bool
 }
 
 func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
@@ -555,7 +557,12 @@ func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
 }
 
 // DataRuleBuilder 从上下文中提取规则并应用到查询中
+// 对同一个 Query 对象只执行一次，防止多次调用（如 Page 内的 Count+Find）重复追加条件
 func (q *Query[T]) DataRuleBuilder() *Query[T] {
+	if q.dataRuleApplied {
+		return q
+	}
+	q.dataRuleApplied = true
 	if q.ctx == nil {
 		return q
 	}
