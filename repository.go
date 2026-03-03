@@ -215,7 +215,7 @@ func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 
 	var entity T
 	// 这里的 q.BuildQuery() 已经包含了 FOR UPDATE
-	err := tx.WithContext(q.Context()).Scopes(q.BuildQuery()).First(&entity).Error
+	err := tx.WithContext(q.Context()).Scopes(q.DataRuleBuilder().BuildQuery()).First(&entity).Error
 	if err != nil {
 		return nil, err
 	}
