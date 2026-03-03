@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	ErrQueryNil       = errors.New("gplus: query cannot be nil")
-	ErrRawSQLEmpty    = errors.New("gplus: raw sql cannot be empty")
-	ErrDeleteEmpty    = errors.New("gplus: delete content is empty")
-	ErrUpdateEmpty    = errors.New("gplus: update content is empty")
-	ErrTransactionReq = errors.New("gplus: locking query must be executed within a transaction")
+	ErrQueryNil          = errors.New("gplus: query cannot be nil")
+	ErrRawSQLEmpty       = errors.New("gplus: raw sql cannot be empty")
+	ErrDeleteEmpty       = errors.New("gplus: delete content is empty")
+	ErrUpdateEmpty       = errors.New("gplus: update content is empty")
+	ErrUpdateNoCondition = errors.New("gplus: update requires at least one condition to prevent full-table update")
+	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
 )
 
 // Repository 泛型仓储，提供标准 CRUD
@@ -226,6 +227,9 @@ func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 func (r *Repository[D, T]) Update(u *Updater[T], tx *gorm.DB) (int64, error) {
 	if u == nil || u.IsEmpty() {
 		return 0, ErrUpdateEmpty
+	}
+	if len(u.conditions) == 0 {
+		return 0, ErrUpdateNoCondition
 	}
 	if err := u.GetError(); err != nil {
 		return 0, err

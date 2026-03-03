@@ -55,9 +55,9 @@ func (u *Updater[T]) Table(name string) *Updater[T] {
 	return u
 }
 
-// IsEmpty 是否为空更新
+// IsEmpty 是否为空更新（没有设置任何更新字段）
 func (u *Updater[T]) IsEmpty() bool {
-	return len(u.setMap) == 0 || len(u.conditions) == 0
+	return len(u.setMap) == 0
 }
 
 // Set 设置更新值
