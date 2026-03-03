@@ -53,19 +53,8 @@ func (q *Query[T]) GetError() error {
 	if len(q.errs) == 0 {
 		return nil
 	}
-	// 建议在 Go 1.20+ 使用 errors.Join，这里为了兼容性手动拼接
-	//var sb strings.Builder
-	//sb.WriteString(fmt.Sprintf("gplus query builder errors (%d):", len(q.errs)))
-	//for i, err := range q.errs {
-	//	sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, err.Error()))
-	//}
-	//return fmt.Errorf(sb.String())
-	// 拼接一个带有统计信息的头部
 	summary := fmt.Errorf("gplus query builder failed with %d errors", len(q.errs))
-
-	// 将统计信息作为第一个错误，与其他错误一起 Join
-	allErrs := append([]error{summary}, q.errs...)
-	return errors.Join(allErrs...)
+	return errors.Join(append([]error{summary}, q.errs...)...)
 }
 
 // Page 针对page和pageSize的处理

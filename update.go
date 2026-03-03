@@ -39,14 +39,8 @@ func (u *Updater[T]) GetError() error {
 	if len(u.errs) == 0 {
 		return nil
 	}
-	// 建议在 Go 1.20+ 使用 errors.Join，这里为了兼容性手动拼接
-	//var sb strings.Builder
-	//sb.WriteString(fmt.Sprintf("gplus query builder errors (%d):", len(q.errs)))
-	//for i, err := range q.errs {
-	//	sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, err.Error()))
-	//}
-	//return fmt.Errorf(sb.String())
-	return errors.Join(u.errs...)
+	summary := fmt.Errorf("gplus updater failed with %d errors", len(u.errs))
+	return errors.Join(append([]error{summary}, u.errs...)...)
 }
 
 // Table 动态切换更新表名
