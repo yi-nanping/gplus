@@ -92,15 +92,14 @@ func registerModel(models ...any) {
 // getModelInstance 获取泛型对应的实例（用于获取字段指针）
 // 注意：返回的是单例，仅用于获取字段地址，不可修改值
 func getModelInstance[T any]() *T {
-	// 获取 T 的类型字符串
-	dummy := new(T)
-	typeStr := reflect.TypeOf(dummy).Elem().String()
-
+	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
 	if v, ok := modelInstanceCache.Load(typeStr); ok {
 		return v.(*T)
 	}
-
-	// 首次访问，注册模型
-	registerModel(dummy)
-	return dummy
+	ptr := new(T)
+	registerModel(ptr)
+	if v, ok := modelInstanceCache.Load(typeStr); ok {
+		return v.(*T)
+	}
+	return ptr
 }
