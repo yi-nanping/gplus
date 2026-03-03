@@ -9,7 +9,7 @@ import (
 
 var (
 	ErrQueryNil       = errors.New("gplus: query cannot be nil")
-	ErrNotFound       = errors.New("gplus: raw sql cannot be empty")
+	ErrRawSQLEmpty    = errors.New("gplus: raw sql cannot be empty")
 	ErrDeleteEmpty    = errors.New("gplus: delete content is empty")
 	ErrUpdateEmpty    = errors.New("gplus: update content is empty")
 	ErrTransactionReq = errors.New("gplus: locking query must be executed within a transaction")
@@ -282,7 +282,7 @@ func (r *Repository[D, T]) DeleteByCond(q *Query[T]) (int64, error) {
 func (r *Repository[D, T]) RawQuery(ctx context.Context, sql string, args ...any) ([]T, error) {
 	var results []T
 	if sql == "" {
-		return results, ErrNotFound
+		return results, ErrRawSQLEmpty
 	}
 	// 使用 dbResolver 确保如果当前在事务中，原生 SQL 也会走事务
 	err := r.dbResolver(ctx, nil).Raw(sql, args...).Scan(&results).Error
@@ -293,7 +293,7 @@ func (r *Repository[D, T]) RawQuery(ctx context.Context, sql string, args ...any
 // 返回受影响的行数
 func (r *Repository[D, T]) RawExec(ctx context.Context, sql string, args ...any) (int64, error) {
 	if sql == "" {
-		return 0, ErrNotFound
+		return 0, ErrRawSQLEmpty
 	}
 	// 使用 dbResolver 支持事务
 	result := r.dbResolver(ctx, nil).Exec(sql, args...)
@@ -304,7 +304,7 @@ func (r *Repository[D, T]) RawExec(ctx context.Context, sql string, args ...any)
 // 适用场景：聚合查询（如 SUM/COUNT）或统计类报表
 func (r *Repository[D, T]) RawScan(ctx context.Context, dest any, sql string, args ...any) error {
 	if sql == "" {
-		return ErrNotFound
+		return ErrRawSQLEmpty
 	}
 	return r.dbResolver(ctx, nil).Raw(sql, args...).Scan(dest).Error
 }
