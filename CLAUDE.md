@@ -1,89 +1,89 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 Claude Code（claude.ai/code）在该仓库中工作时提供指导。
 
-## Commands
+## 命令
 
 ```bash
-# Run all tests
+# 运行所有测试
 go test ./...
 
-# Run a specific test function
+# 运行指定测试函数
 go test -run TestRepository_CRUD_And_Errors ./...
 
-# Run a specific subtest
+# 运行指定子测试
 go test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
 
-# Run with verbose output (shows SQL logs via GORM logger)
+# 以详细模式运行（通过 GORM logger 显示 SQL 日志）
 go test -v ./...
 ```
 
-**Known pre-existing test failures** (do not fix without explicit request):
-- `TestBuilder_QuoteColumn/带别名(AS)` — `quoteColumn` exits early when it detects a space, so `"users.name AS u_name"` is not processed
-- `TestBuilder_QuoteColumn/表名.*` — `*` is listed in the early-exit special characters
+**已知的预存在测试失败**（未经明确要求不要修复）：
+- `TestBuilder_QuoteColumn/带别名(AS)` — `quoteColumn` 检测到空格时提前退出，因此 `"users.name AS u_name"` 不会被处理
+- `TestBuilder_QuoteColumn/表名.*` — `*` 在提前退出的特殊字符列表中
 
-## Architecture
+## 架构
 
-### Core Data Flow
+### 核心数据流
 
 ```
-User code
+用户代码
   → NewQuery[T](ctx) / NewUpdater[T](ctx)    (query.go / update.go)
-      → getModelInstance[T]()                  (schema.go)  ← triggers registerModel on first call
+      → getModelInstance[T]()                  (schema.go)  ← 首次调用时触发 registerModel
   → q.Eq(&model.Field, val).Order(...)        (query.go / update.go)
   → repo.List(q) / repo.Update(u, tx)         (repository.go)
       → q.DataRuleBuilder().BuildQuery()       (query.go → builder.go)
           → ScopeBuilder.applyWhere/Joins/...  (builder.go)
-      → GORM execution
+      → GORM 执行
 ```
 
-### Two-Level Schema Cache (`schema.go` + `utils.go`)
+### 两级 Schema 缓存（`schema.go` + `utils.go`）
 
-This is the core mechanism that enables type-safe field pointers:
+这是实现类型安全字段指针的核心机制：
 
-1. `utils.go / reflectStructSchema` — parses a struct type via reflection → `map[fieldOffset → columnName]`, cached by type string in `columnCache`
-2. `schema.go / registerModel` — takes a concrete `*T` instance, walks `reflectStructSchema`, converts `baseAddress + offset → absoluteFieldAddress`, stores in `columnNameCache (sync.Map)`
-3. `schema.go / getModelInstance[T]` — returns the **canonical cached pointer** for type `T`. The returned pointer is the exact instance whose base address was used in step 2. **Field pointers passed to query methods must come from this instance.**
-4. `schema.go / resolveColumnName` — looks up an absolute field address in `columnNameCache`. Also accepts a plain `string` for raw column names.
+1. `utils.go / reflectStructSchema` — 通过反射解析结构体类型 → `map[字段偏移量 → 列名]`，以类型字符串为键缓存在 `columnCache` 中
+2. `schema.go / registerModel` — 接收具体的 `*T` 实例，遍历 `reflectStructSchema`，将 `基地址 + 偏移量 → 绝对字段地址`，存入 `columnNameCache (sync.Map)`
+3. `schema.go / getModelInstance[T]` — 返回类型 `T` 的**规范缓存指针**。该指针正是步骤 2 中使用其基地址的实例。**传递给查询方法的字段指针必须来自该实例。**
+4. `schema.go / resolveColumnName` — 在 `columnNameCache` 中查找绝对字段地址。也接受普通 `string` 作为原始列名。
 
-**Critical invariant**: `NewQuery[T]` and `NewUpdater[T]` both return `(builder, *T)`. The `*T` is the registered singleton. All field address arguments (`&model.Name`) must come from that returned pointer — not from a separately created struct.
+**关键不变量**：`NewQuery[T]` 和 `NewUpdater[T]` 均返回 `(builder, *T)`。`*T` 是已注册的单例。所有字段地址参数（`&model.Name`）必须来自该返回的指针，而不是另外创建的结构体。
 
-### `ScopeBuilder` (builder.go)
+### `ScopeBuilder`（builder.go）
 
-The shared base embedded in both `Query[T]` and `Updater[T]`. Holds conditions, selects, joins, orders, groups, havings, preloads, lock config. Exposes three build paths:
+嵌入在 `Query[T]` 和 `Updater[T]` 中的共享基础结构。保存条件、select、join、排序、分组、having、预加载、锁配置。提供三种构建路径：
 
-- `BuildQuery()` — full SELECT (select + distinct + where + joins + group/having + order/limit + lock + preloads)
-- `BuildCount()` — COUNT path (where + joins + group/having only, no select/order/limit)
-- `BuildUpdate()` — UPDATE path (where + joins + selects for column restriction)
-- `BuildDelete()` — DELETE path (where only)
+- `BuildQuery()` — 完整 SELECT（select + distinct + where + joins + group/having + order/limit + lock + preloads）
+- `BuildCount()` — COUNT 路径（仅 where + joins + group/having，无 select/order/limit）
+- `BuildUpdate()` — UPDATE 路径（where + joins + selects 用于列限制）
+- `BuildDelete()` — DELETE 路径（仅 where）
 
-`quoteColumn` handles dialect-aware escaping: it detects `()+-*/, ` to skip complex expressions, and recursively handles `table.col` and `col AS alias` patterns.
+`quoteColumn` 处理方言感知的转义：检测 `()+-*/, ` 以跳过复杂表达式，递归处理 `table.col` 和 `col AS alias` 模式。
 
-### `DataRuleBuilder` (query.go)
+### `DataRuleBuilder`（query.go）
 
-Reads `[]DataRule` from `ctx.Value(DataRuleKey)` and appends conditions to the query. Protected by `dataRuleApplied bool` — calling it multiple times on the same `Query` is safe (idempotent). Always call it as `q.DataRuleBuilder().BuildQuery()`, never `q.BuildQuery()` directly in repository methods.
+从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule` 并将条件追加到查询中。由 `dataRuleApplied bool` 保护——对同一 `Query` 多次调用是安全的（幂等）。始终以 `q.DataRuleBuilder().BuildQuery()` 方式调用，在 repository 方法中不要直接调用 `q.BuildQuery()`。
 
-### Error Handling Pattern
+### 错误处理模式
 
-Both `Query[T]` and `Updater[T]` accumulate errors in an `errs []error` slice during chain calls (e.g., if `resolveColumnName` fails). `GetError()` returns a joined error with a summary prefix (`"gplus query builder failed with N errors"` / `"gplus updater failed with N errors"`). Repository methods call `GetError()` early and return immediately on failure.
+`Query[T]` 和 `Updater[T]` 在链式调用过程中将错误累积到 `errs []error` 切片中（例如 `resolveColumnName` 失败时）。`GetError()` 返回带有摘要前缀的合并错误（`"gplus query builder failed with N errors"` / `"gplus updater failed with N errors"`）。Repository 方法会提前调用 `GetError()` 并在失败时立即返回。
 
-### Repository Error Variables
+### Repository 错误变量
 
-| Variable | Meaning |
+| 变量 | 含义 |
 |---|---|
-| `ErrQueryNil` | nil Query/Updater passed |
-| `ErrRawSQLEmpty` | empty string passed to `RawQuery`/`RawExec`/`RawScan` |
-| `ErrDeleteEmpty` | `DeleteByCondTX` called with no conditions and not Unscoped |
-| `ErrUpdateEmpty` | `Update` called with no fields in `setMap` |
-| `ErrUpdateNoCondition` | `Update` called with fields but no WHERE conditions |
-| `ErrTransactionReq` | `GetByLock` called without a transaction |
+| `ErrQueryNil` | 传入了 nil 的 Query/Updater |
+| `ErrRawSQLEmpty` | 传入 `RawQuery`/`RawExec`/`RawScan` 的字符串为空 |
+| `ErrDeleteEmpty` | `DeleteByCondTX` 在无条件且非 Unscoped 时被调用 |
+| `ErrUpdateEmpty` | `Update` 被调用时 `setMap` 中没有字段 |
+| `ErrUpdateNoCondition` | `Update` 有字段但没有 WHERE 条件时被调用 |
+| `ErrTransactionReq` | `GetByLock` 在没有事务的情况下被调用 |
 
-### Test Helpers (`model_test.go`)
+### 测试辅助工具（`model_test.go`）
 
-Shared across all test files (same package `gplus`):
-- `TestUser` struct with `BaseUser` embedding — used for schema/query tests
-- `assertEqual(t, expected, actual, msg)` / `assertError(t, err, expectError, msg)` — standard assertion helpers
-- `setupTestDB[T](t)` in `repo_test.go` — creates in-memory SQLite DB and auto-migrates `T`
-- `setupAdvancedDB(t)` in `advanced_test.go` — creates DB with `UserWithDelete` + `Order` for join/preload/soft-delete tests
+在所有测试文件中共享（同属 `gplus` 包）：
+- `TestUser` 结构体，嵌入了 `BaseUser` — 用于 schema/query 测试
+- `assertEqual(t, expected, actual, msg)` / `assertError(t, err, expectError, msg)` — 标准断言辅助函数
+- `setupTestDB[T](t)` 在 `repo_test.go` 中 — 创建内存 SQLite DB 并自动迁移 `T`
+- `setupAdvancedDB(t)` 在 `advanced_test.go` 中 — 创建包含 `UserWithDelete` + `Order` 的 DB，用于 join/preload/软删除测试
 
-All tests run in-package (`package gplus`), giving access to unexported symbols like `quoteColumn` and `resolveColumnName`.
+所有测试在包内运行（`package gplus`），可访问未导出的符号，如 `quoteColumn` 和 `resolveColumnName`。
