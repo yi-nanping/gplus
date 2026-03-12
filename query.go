@@ -215,8 +215,8 @@ func (q *Query[T]) OrIn(col any, val any) *Query[T] {
 	return q.addCond(true, col, OpIn, val)
 }
 
-// OpNotIn 不包含
-func (q *Query[T]) OpNotIn(col any, val any) *Query[T] {
+// NotIn 不包含
+func (q *Query[T]) NotIn(col any, val any) *Query[T] {
 	return q.addCond(false, col, OpNotIn, val)
 }
 
@@ -265,8 +265,8 @@ func (q *Query[T]) OrLikeRight(col any, val string) *Query[T] {
 	return q.addCond(true, col, OpLike, val+"%")
 }
 
-// OpNotLike 不包含
-func (q *Query[T]) OpNotLike(col any, val string) *Query[T] {
+// NotLike 不包含
+func (q *Query[T]) NotLike(col any, val string) *Query[T] {
 	return q.addCond(false, col, OpNotLike, "%"+val+"%")
 }
 
