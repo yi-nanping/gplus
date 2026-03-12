@@ -331,6 +331,8 @@ func (q *Query[T]) Omit(cols ...any) *Query[T] {
 	for _, c := range cols {
 		if name, err := resolveColumnName(c); err == nil {
 			q.omits = append(q.omits, name)
+		} else {
+			q.errs = append(q.errs, fmt.Errorf("omit error [col: %v]: %w", c, err))
 		}
 	}
 	return q
