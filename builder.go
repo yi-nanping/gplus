@@ -165,21 +165,22 @@ func (b *ScopeBuilder) Clear() {
 	b.unscoped = false
 	b.distinct = false
 
-	// 2. 切片复位 (保留容量，高性能)
-	// 如果切片为 nil，[:0] 操作也是安全的
-	b.conditions = b.conditions[:0]
+	// 2. 切片复位
+	// 含嵌套引用的切片（condition.group、joinInfo.args、preloadInfo.args）
+	// 置 nil 以释放内部引用，避免 backing array 持续持有内存
+	b.conditions = nil
+	b.havings = nil
+	b.joins = nil
+	b.preloads = nil
+	// 纯 string 切片无嵌套引用，[:0] 保留容量可安全复用
 	b.selects = b.selects[:0]
 	b.omits = b.omits[:0]
 	b.orders = b.orders[:0]
 	b.groups = b.groups[:0]
-	b.havings = b.havings[:0]
-	b.joins = b.joins[:0]
 
 	// 清理锁状态
 	b.lockStrength = ""
 	b.lockOptions = ""
-	// 清理预加载
-	b.preloads = b.preloads[:0]
 }
 
 // --- 内部私有组件，用于复用代码 ---
