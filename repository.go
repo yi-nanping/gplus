@@ -233,11 +233,13 @@ func (r *Repository[D, T]) Update(u *Updater[T], tx *gorm.DB) (int64, error) {
 	if u == nil || u.IsEmpty() {
 		return 0, ErrUpdateEmpty
 	}
-	if len(u.conditions) == 0 {
-		return 0, ErrUpdateNoCondition
-	}
+	// GetError() 须先于条件数量检查：若 addCond 因 resolveColumnName 失败，
+	// 错误写入 u.errs 而非 u.conditions，此时应返回实际 builder 错误而非 ErrUpdateNoCondition
 	if err := u.GetError(); err != nil {
 		return 0, err
+	}
+	if len(u.conditions) == 0 {
+		return 0, ErrUpdateNoCondition
 	}
 	var model T
 	// 1. 初始化 DB 并绑定上下文
