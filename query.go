@@ -574,12 +574,14 @@ func (q *Query[T]) DataRuleBuilder() *Query[T] {
 			continue
 		}
 
-		// 2. 特殊规则：原生 SQL 支持 (USE_SQL_RULES)
+		// 2. 禁止原生 SQL 注入：SQL/USE_SQL_RULES 条件类型存在 SQL 注入风险，
+		// DataRule.Value 来自外部上下文，不可信任。
+		// 如需执行原生 SQL，请使用 Repository.RawQuery/RawScan 并通过参数绑定传值。
 		if c == "SQL" || c == "USE_SQL_RULES" {
-			q.conditions = append(q.conditions, condition{
-				column: value, // 此时 Value 存的是完整的 SQL 片段
-				isRaw:  true,
-			})
+			q.errs = append(q.errs, fmt.Errorf(
+				"data rule [col: %s]: condition type %q is not allowed, use RawQuery with parameterized args instead",
+				column, rule.Condition,
+			))
 			continue
 		}
 
