@@ -243,6 +243,8 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 		for _, cond := range conds {
 			// 如果是嵌套组
 			if len(cond.group) > 0 {
+				// 显式捕获循环变量，防止 Go < 1.22 下闭包捕获到最后一次迭代值
+				cond := cond
 				// 递归闭包
 				subQueryFunc := func(subDb *gorm.DB) *gorm.DB {
 					return buildCond(subDb.Session(&gorm.Session{NewDB: true}), cond.group)
@@ -363,6 +365,8 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 		for _, cond := range conds {
 			// --- A. 处理嵌套括号 (Group) ---
 			if len(cond.group) > 0 {
+				// 显式捕获循环变量，防止 Go < 1.22 下闭包捕获到最后一次迭代值
+				cond := cond
 				subQueryFunc := func(subDb *gorm.DB) *gorm.DB {
 					// 注意：Having 的嵌套闭包同样需要 NewDB Session 隔离
 					return buildHaving(subDb.Session(&gorm.Session{NewDB: true}), cond.group)
