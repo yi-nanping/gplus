@@ -16,6 +16,22 @@ var (
 	ErrInvalidPointer = errors.New("gplus: argument must be a struct field pointer")
 )
 
+// UnregisterModel 从缓存中移除指定模型的注册信息。
+// 适用场景：测试隔离、分表动态模型清理，避免全局缓存无限增长。
+func UnregisterModel[T any]() {
+	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
+	v, ok := modelInstanceCache.LoadAndDelete(typeStr)
+	if !ok {
+		return
+	}
+	// 清理该实例对应的所有字段地址缓存
+	baseAddr := reflect.ValueOf(v).Pointer()
+	offsetMap := reflectStructSchema(v, "gorm", "COLUMN")
+	for offset := range offsetMap {
+		columnNameCache.Delete(baseAddr + offset)
+	}
+}
+
 // resolveColumnName 解析字段名为数据库列名
 func resolveColumnName(v any) (string, error) {
 	if v == nil {
