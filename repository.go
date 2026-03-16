@@ -325,3 +325,31 @@ func (r *Repository[D, T]) RawScan(ctx context.Context, dest any, sql string, ar
 	}
 	return r.dbResolver(ctx, nil).Raw(sql, args...).Scan(dest).Error
 }
+
+// RawQueryTx 在事务中执行原生查询 SQL，并将结果映射到当前 Repository 的实体切片中
+func (r *Repository[D, T]) RawQueryTx(ctx context.Context, tx *gorm.DB, sql string, args ...any) ([]T, error) {
+	var results []T
+	if sql == "" {
+		return results, ErrRawSQLEmpty
+	}
+	err := r.dbResolver(ctx, tx).Raw(sql, args...).Scan(&results).Error
+	return results, err
+}
+
+// RawExecTx 在事务中执行原生 SQL（如 INSERT, UPDATE, DELETE 或 DDL 语句）
+// 返回受影响的行数
+func (r *Repository[D, T]) RawExecTx(ctx context.Context, tx *gorm.DB, sql string, args ...any) (int64, error) {
+	if sql == "" {
+		return 0, ErrRawSQLEmpty
+	}
+	result := r.dbResolver(ctx, tx).Exec(sql, args...)
+	return result.RowsAffected, result.Error
+}
+
+// RawScanTx 在事务中执行原生 SQL 并将结果映射到【任意】指定的结构体或变量中
+func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any, sql string, args ...any) error {
+	if sql == "" {
+		return ErrRawSQLEmpty
+	}
+	return r.dbResolver(ctx, tx).Raw(sql, args...).Scan(dest).Error
+}
