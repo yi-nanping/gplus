@@ -447,6 +447,9 @@ func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
 	}
 	fn(sub)
+	if len(sub.errs) > 0 {
+		q.errs = append(q.errs, sub.errs...)
+	}
 	if len(sub.conditions) > 0 {
 		q.conditions = append(q.conditions, condition{
 			group: sub.conditions,
@@ -495,6 +498,9 @@ func (q *Query[T]) HavingGroup(fn func(sub *Query[T])) *Query[T] {
 	}
 	sub := &Query[T]{ScopeBuilder: ScopeBuilder{havings: make([]condition, 0)}}
 	fn(sub) // 开发者在 sub 里调用 Having/OrHaving
+	if len(sub.errs) > 0 {
+		q.errs = append(q.errs, sub.errs...)
+	}
 	if len(sub.havings) > 0 {
 		q.havings = append(q.havings, condition{
 			group: sub.havings,

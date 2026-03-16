@@ -279,6 +279,9 @@ func (u *Updater[T]) And(fn func(sub *Updater[T])) *Updater[T] {
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
 	}
 	fn(sub)
+	if len(sub.errs) > 0 {
+		u.errs = append(u.errs, sub.errs...)
+	}
 	if len(sub.conditions) > 0 {
 		u.conditions = append(u.conditions, condition{
 			group: sub.conditions,
@@ -298,6 +301,9 @@ func (u *Updater[T]) Or(fn func(sub *Updater[T])) *Updater[T] {
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
 	}
 	fn(sub)
+	if len(sub.errs) > 0 {
+		u.errs = append(u.errs, sub.errs...)
+	}
 	if len(sub.conditions) > 0 {
 		u.conditions = append(u.conditions, condition{
 			group: sub.conditions,
