@@ -1,7 +1,6 @@
 package gplus
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -27,6 +26,9 @@ func init() {
 // 增加全局缓存，减少反射开销
 var columnCache sync.Map
 
+// schemaCacheKey 作为 columnCache 的复合 key，避免字符串拼接碰撞
+type schemaCacheKey struct{ typeName, tag, label string }
+
 // ColumnInfo 存储字段偏移量和列名的关系
 type ColumnInfo struct {
 	Offset     uintptr
@@ -40,8 +42,8 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 		t = t.Elem()
 	}
 
-	// 1. 尝试从缓存读取 (Key 可以是 Type + Tag + Label 的组合)
-	cacheKey := fmt.Sprintf("%s_%s_%s", t.String(), tag, label)
+	// 1. 尝试从缓存读取，使用结构体 key 避免字符串拼接碰撞
+	cacheKey := schemaCacheKey{t.String(), tag, label}
 	if val, ok := columnCache.Load(cacheKey); ok {
 		return val.(map[uintptr]string)
 	}
