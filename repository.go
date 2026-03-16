@@ -53,9 +53,8 @@ func (r *Repository[D, T]) WithTx(tx *gorm.DB) *Repository[D, T] {
 
 // Transaction 封装 GORM 的事务闭包模式
 // fn: 事务内的业务逻辑，如果返回 error，事务会自动回滚
-func (r *Repository[D, T]) Transaction(fn func(tx *gorm.DB) error) error {
-	// 使用当前 Repository 绑定的 db 开启事务
-	return r.db.Transaction(fn)
+func (r *Repository[D, T]) Transaction(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(fn)
 }
 
 // GetDB 获取当前 Repository 绑定的 DB 实例
