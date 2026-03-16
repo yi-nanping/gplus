@@ -547,8 +547,8 @@ func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
 	return q
 }
 
-// DataRuleBuilder 从上下文中提取规则并应用到查询中
-// 对同一个 Query 对象只执行一次，防止多次调用（如 Page 内的 Count+Find）重复追加条件
+// DataRuleBuilder 从上下文中提取规则并应用到查询中。
+// 对同一个 Query 对象只执行一次，防止多次调用（如 Page 内的 Count+Find）重复追加条件。
 func (q *Query[T]) DataRuleBuilder() *Query[T] {
 	if q.dataRuleApplied {
 		return q
@@ -557,67 +557,69 @@ func (q *Query[T]) DataRuleBuilder() *Query[T] {
 	if q.ctx == nil {
 		return q
 	}
-	// 从 Context 获取规则列表
-	val := q.ctx.Value(DataRuleKey)
-	rules, ok := val.([]DataRule)
+	rules, ok := q.ctx.Value(DataRuleKey).([]DataRule)
 	if !ok || len(rules) == 0 {
 		return q
 	}
-
 	for _, rule := range rules {
-		column := rule.Column
-		c := strings.ToUpper(strings.TrimSpace(rule.Condition))
-		value := rule.Value
-
-		// 1. 处理空值情况
-		if value == "" && c != "IS NULL" && c != "IS NOT NULL" {
-			continue
-		}
-
-		// 2. 禁止原生 SQL 注入：SQL/USE_SQL_RULES 条件类型存在 SQL 注入风险，
-		// DataRule.Value 来自外部上下文，不可信任。
-		// 如需执行原生 SQL，请使用 Repository.RawQuery/RawScan 并通过参数绑定传值。
-		if c == "SQL" || c == "USE_SQL_RULES" {
-			q.errs = append(q.errs, fmt.Errorf(
-				"data rule [col: %s]: condition type %q is not allowed, use RawQuery with parameterized args instead",
-				column, rule.Condition,
-			))
-			continue
-		}
-
-		// 3. 映射常用操作符
-		switch c {
-		case "=", "EQ":
-			q.Eq(column, value)
-		case "<>", "!=", "NE":
-			q.Ne(column, value)
-		case ">", "GT":
-			q.Gt(column, value)
-		case ">=", "GE":
-			q.Ge(column, value)
-		case "<", "LT":
-			q.Lt(column, value)
-		case "<=", "LE":
-			q.Le(column, value)
-		case "IN":
-			// 自动处理逗号分隔的字符串
-			q.In(column, strings.Split(value, ","))
-		case "LIKE":
-			q.Like(column, value)
-		case "LEFT_LIKE":
-			q.LikeLeft(column, value)
-		case "RIGHT_LIKE":
-			q.LikeRight(column, value)
-		case "IS NULL":
-			q.IsNull(column)
-		case "IS NOT NULL":
-			q.IsNotNull(column)
-		case "BETWEEN":
-			parts := strings.Split(value, ",")
-			if len(parts) == 2 {
-				q.Between(column, parts[0], parts[1])
-			}
-		}
+		q.applyDataRule(rule)
 	}
 	return q
+}
+
+// applyDataRule 将单条 DataRule 转换为查询条件追加到 Query 中
+func (q *Query[T]) applyDataRule(rule DataRule) {
+	column := rule.Column
+	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
+	value := rule.Value
+
+	// 1. 处理空值情况
+	if value == "" && c != "IS NULL" && c != "IS NOT NULL" {
+		return
+	}
+
+	// 2. 禁止原生 SQL 注入：SQL/USE_SQL_RULES 条件类型存在 SQL 注入风险，
+	// DataRule.Value 来自外部上下文，不可信任。
+	// 如需执行原生 SQL，请使用 Repository.RawQuery/RawScan 并通过参数绑定传值。
+	if c == "SQL" || c == "USE_SQL_RULES" {
+		q.errs = append(q.errs, fmt.Errorf(
+			"data rule [col: %s]: condition type %q is not allowed, use RawQuery with parameterized args instead",
+			column, rule.Condition,
+		))
+		return
+	}
+
+	// 3. 映射常用操作符
+	switch c {
+	case "=", "EQ":
+		q.Eq(column, value)
+	case "<>", "!=", "NE":
+		q.Ne(column, value)
+	case ">", "GT":
+		q.Gt(column, value)
+	case ">=", "GE":
+		q.Ge(column, value)
+	case "<", "LT":
+		q.Lt(column, value)
+	case "<=", "LE":
+		q.Le(column, value)
+	case "IN":
+		// 自动处理逗号分隔的字符串
+		q.In(column, strings.Split(value, ","))
+	case "LIKE":
+		q.Like(column, value)
+	case "LEFT_LIKE":
+		q.LikeLeft(column, value)
+	case "RIGHT_LIKE":
+		q.LikeRight(column, value)
+	case "IS NULL":
+		q.IsNull(column)
+	case "IS NOT NULL":
+		q.IsNotNull(column)
+	case "BETWEEN":
+		parts := strings.Split(value, ",")
+		if len(parts) == 2 {
+			q.Between(column, parts[0], parts[1])
+		}
+	}
 }
