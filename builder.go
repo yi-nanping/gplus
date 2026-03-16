@@ -10,7 +10,8 @@ import (
 
 // condition 内部结构，存储单个查询条件
 type condition struct {
-	column   string
+	// expr 双重语义：isRaw=false 时为列名；isRaw=true 时为完整 SQL 片段
+	expr     string
 	operator string // =, >, <, >=, <=, IN, LIKE, BETWEEN, EXISTS, NOT EXISTS, IS NULL, IS NOT NULL
 	value    any
 	isOr     bool // true 为 OR，false 为 AND
@@ -257,7 +258,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 				continue
 			}
 
-			clauseStr := cond.column
+			clauseStr := cond.expr
 			if clauseStr == "" {
 				continue
 			}
@@ -265,7 +266,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			// ---子查询核心逻辑 ---
 			// 检查 cond.value 是否为 *gorm.DB 类型 (即子查询对象)
 			if subQuery, ok := cond.value.(*gorm.DB); ok {
-				quotedCol := quoteColumn(cond.column, qL, qR)
+				quotedCol := quoteColumn(cond.expr, qL, qR)
 				// 生成类似于: `dept_id` IN (?) 的 SQL，GORM 会自动把 ? 替换为子查询 SQL
 				sqlStr := fmt.Sprintf("%s %s (?)", quotedCol, cond.operator)
 
@@ -281,9 +282,9 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			// 安全检查：如果是 Raw SQL，必须标记为 isRaw
 			if cond.isRaw {
 				if cond.isOr {
-					db = db.Or(cond.column, cond.value)
+					db = db.Or(cond.expr, cond.value)
 				} else {
-					db = db.Where(cond.column, cond.value)
+					db = db.Where(cond.expr, cond.value)
 				}
 				continue
 			}
@@ -291,7 +292,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			// 特殊处理 BETWEEN 和 NOT BETWEEN
 			// 必须生成 "col BETWEEN ? AND ?" 格式，并将参数切片展开
 			if cond.operator == OpBetween || cond.operator == OpNotBetween {
-				sqlStr := fmt.Sprintf("%s %s ? AND ?", quoteColumn(cond.column, qL, qR), cond.operator)
+				sqlStr := fmt.Sprintf("%s %s ? AND ?", quoteColumn(cond.expr, qL, qR), cond.operator)
 
 				// 断言 value 为切片 (Query.Between 传入的就是 []any)
 				if args, ok := cond.value.([]any); ok && len(args) == 2 {
@@ -307,7 +308,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 
 			// 特殊处理 IsNull / IsNotNull (不需要占位符 ?)
 			if cond.operator == OpIsNull || cond.operator == OpIsNotNull {
-				clauseStr = fmt.Sprintf("%s %s", quoteColumn(cond.column, qL, qR), cond.operator)
+				clauseStr = fmt.Sprintf("%s %s", quoteColumn(cond.expr, qL, qR), cond.operator)
 				if cond.isOr {
 					db = db.Or(clauseStr)
 				} else {
@@ -317,7 +318,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			}
 
 			// 智能转义
-			clauseStr = fmt.Sprintf("%s %s ?", quoteColumn(cond.column, qL, qR), cond.operator)
+			clauseStr = fmt.Sprintf("%s %s ?", quoteColumn(cond.expr, qL, qR), cond.operator)
 			if cond.isOr {
 				db = db.Or(clauseStr, cond.value)
 			} else {
@@ -380,16 +381,16 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 			}
 
 			// 如果没有 column 字段，则跳过
-			if cond.column == "" {
+			if cond.expr == "" {
 				continue
 			}
 
 			// --- B. 处理原生 SQL ---
 			if cond.isRaw {
 				if cond.isOr {
-					d = d.Or(cond.column, cond.value)
+					d = d.Or(cond.expr, cond.value)
 				} else {
-					d = d.Having(cond.column, cond.value)
+					d = d.Having(cond.expr, cond.value)
 				}
 				continue
 			}
@@ -398,7 +399,7 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 
 			// C1. Between (双参数)
 			if cond.operator == OpBetween || cond.operator == OpNotBetween {
-				quotedCol := quoteColumn(cond.column, qL, qR)
+				quotedCol := quoteColumn(cond.expr, qL, qR)
 				clause := fmt.Sprintf("%s %s ? AND ?", quotedCol, cond.operator)
 
 				// 尝试解构 slice 参数
@@ -414,7 +415,7 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 
 			// C2. IsNull / IsNotNull (无参数)
 			if cond.operator == OpIsNull || cond.operator == OpIsNotNull {
-				quotedCol := quoteColumn(cond.column, qL, qR)
+				quotedCol := quoteColumn(cond.expr, qL, qR)
 				clause := fmt.Sprintf("%s %s", quotedCol, cond.operator)
 				if cond.isOr {
 					d = d.Or(clause)
@@ -425,7 +426,7 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 			}
 
 			// --- D. 标准操作 (Eq, Gt, Lt, Like, In 等) ---
-			quotedCol := quoteColumn(cond.column, qL, qR)
+			quotedCol := quoteColumn(cond.expr, qL, qR)
 			clause := fmt.Sprintf("%s %s ?", quotedCol, cond.operator)
 
 			if cond.isOr {

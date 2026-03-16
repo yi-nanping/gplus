@@ -88,7 +88,7 @@ func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 		return q
 	}
 	q.conditions = append(q.conditions, condition{
-		column:   name,
+		expr:     name,
 		operator: op,
 		value:    val,
 		isOr:     isOr,
@@ -467,7 +467,7 @@ func (q *Query[T]) Having(col string, op string, val any) *Query[T] {
 		return q
 	}
 	q.havings = append(q.havings, condition{
-		column:   col,
+		expr:     col,
 		operator: op,
 		value:    val,
 		isOr:     false,
@@ -482,7 +482,7 @@ func (q *Query[T]) OrHaving(col string, op string, val any) *Query[T] {
 		return q
 	}
 	q.havings = append(q.havings, condition{
-		column:   col,
+		expr:     col,
 		operator: op,
 		value:    val,
 		isOr:     true,

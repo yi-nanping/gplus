@@ -121,7 +121,7 @@ func (u *Updater[T]) addCond(isOr bool, col any, op string, val any) *Updater[T]
 	name, err := resolveColumnName(col)
 	if err == nil {
 		u.conditions = append(u.conditions, condition{
-			column:   name,
+			expr:     name,
 			operator: op,
 			value:    val,
 			isOr:     isOr,
