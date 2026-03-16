@@ -316,10 +316,6 @@ func (q *Query[T]) Offset(offset int) *Query[T] {
 	return q
 }
 
-func (q *Query[T]) EqOr(col any, val any) *Query[T] {
-	return q.addCond(true, col, OpEq, val)
-}
-
 // Omit 排除某些字段（不查询某些字段）
 func (q *Query[T]) Omit(cols ...any) *Query[T] {
 	for _, c := range cols {
