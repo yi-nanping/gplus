@@ -21,13 +21,7 @@ type Query[T any] struct {
 func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 	// 确保模型已注册
 	model := getModelInstance[T]()
-	return &Query[T]{
-		ctx: ctx,
-		ScopeBuilder: ScopeBuilder{
-			conditions: make([]condition, 0, 8), // 预分配
-		},
-		errs: make([]error, 0, 8),
-	}, model
+	return &Query[T]{ctx: ctx}, model
 }
 
 // Context 获取上下文
