@@ -189,7 +189,12 @@ func (r *Repository[D, T]) SaveBatchTx(ctx context.Context, entities []T, tx *go
 
 // CreateBatch 批量插入
 func (r *Repository[D, T]) CreateBatch(ctx context.Context, entities []*T, batchSize int) error {
-	return r.dbResolver(ctx, nil).CreateInBatches(entities, batchSize).Error
+	return r.CreateBatchTx(ctx, entities, batchSize, nil)
+}
+
+// CreateBatchTx 事务批量插入
+func (r *Repository[D, T]) CreateBatchTx(ctx context.Context, entities []*T, batchSize int, tx *gorm.DB) error {
+	return r.dbResolver(ctx, tx).CreateInBatches(entities, batchSize).Error
 }
 
 // UpdateById 根据 ID 更新
