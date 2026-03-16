@@ -49,9 +49,9 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 	res := make(map[uintptr]string)
 	parseFields(t, tag, label, 0, res)
 
-	// 2. 存入缓存
-	columnCache.Store(cacheKey, res)
-	return res
+	// 2. LoadOrStore 防止并发重复写入，始终返回缓存中的权威副本
+	actual, _ := columnCache.LoadOrStore(cacheKey, res)
+	return actual.(map[uintptr]string)
 }
 
 func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[uintptr]string) {
