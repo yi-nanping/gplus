@@ -135,12 +135,12 @@ func toDBName(name string) string {
 
 		if curCase {
 			if lastCase && (nextCase || nextNumber) {
-				buf.WriteByte(v + 32)
+				buf.WriteByte(v + ('a' - 'A'))
 			} else {
 				if i > 0 && value[i-1] != '_' && value[i+1] != '_' {
 					buf.WriteByte('_')
 				}
-				buf.WriteByte(v + 32)
+				buf.WriteByte(v + ('a' - 'A'))
 			}
 		} else {
 			buf.WriteByte(v)
@@ -155,7 +155,7 @@ func toDBName(name string) string {
 		if !lastCase && len(value) > 1 {
 			buf.WriteByte('_')
 		}
-		buf.WriteByte(lastChar + 32)
+		buf.WriteByte(lastChar + ('a' - 'A'))
 	} else {
 		buf.WriteByte(lastChar)
 	}
