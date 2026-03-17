@@ -136,3 +136,34 @@ func TestSchema_ResolveColumnName(t *testing.T) {
 		})
 	}
 }
+
+// TestSchema_PtrEmbedField 验证指针嵌入字段的端到端行为：
+// 值字段可正常解析，指针嵌入的内层字段应返回 ErrColumnNotFound。
+func TestSchema_PtrEmbedField(t *testing.T) {
+	UnregisterModel[utilsPtrEmbed]()
+	u := &utilsPtrEmbed{
+		UtilsEmbedBaseSmall: &UtilsEmbedBaseSmall{ID: 1},
+	}
+	RegisterModel(u)
+	t.Cleanup(func() { UnregisterModel[utilsPtrEmbed]() })
+
+	t.Run("值字段Note可正常解析", func(t *testing.T) {
+		col, err := resolveColumnName(&u.Note)
+		assertError(t, err, false, "普通值字段应可解析")
+		assertEqual(t, "note", col, "列名应为 note")
+	})
+
+	t.Run("指针嵌入内层字段不可解析", func(t *testing.T) {
+		_, err := resolveColumnName(&u.ID)
+		assertError(t, err, true, "指针嵌入字段不应可解析")
+	})
+
+	t.Run("nil指针嵌入时注册不panic", func(t *testing.T) {
+		UnregisterModel[utilsPtrEmbed]()
+		uNil := &utilsPtrEmbed{} // UtilsEmbedBaseSmall 为 nil
+		RegisterModel(uNil)      // 不应 panic
+		col, err := resolveColumnName(&uNil.Note)
+		assertError(t, err, false, "nil嵌入时值字段仍应可解析")
+		assertEqual(t, "note", col, "列名应为 note")
+	})
+}

@@ -138,15 +138,16 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("指针嵌入结构体", func(t *testing.T) {
 		outerTy := reflect.TypeOf(utilsPtrEmbed{})
-		smallTy := reflect.TypeOf(UtilsEmbedBaseSmall{})
 		key := schemaCacheKey{outerTy.String(), "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsPtrEmbed{}, "gorm", "column")
-		assertEqual(t, 2, len(m), "字段数量")
-		baseOffset := outerTy.Field(0).Offset
-		assertEqual(t, "id", m[baseOffset+smallTy.Field(0).Offset], "ID 列名")
+		// 指针嵌入字段 (*UtilsEmbedBaseSmall) 的内层字段由独立堆分配，
+		// 无法通过 baseAddr+offset 推算，应被跳过，只保留值字段 Note。
+		assertEqual(t, 1, len(m), "字段数量")
 		assertEqual(t, "note", m[outerTy.Field(1).Offset], "Note 列名")
+		_, exists := m[outerTy.Field(0).Offset]
+		assertEqual(t, false, exists, "指针嵌入字段应被跳过")
 	})
 
 	t.Run("EMBEDDED标签嵌入", func(t *testing.T) {

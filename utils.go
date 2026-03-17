@@ -81,7 +81,9 @@ func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[
 		if field.Anonymous || isEmbedded {
 			fieldType := field.Type
 			if fieldType.Kind() == reflect.Ptr {
-				fieldType = fieldType.Elem()
+				// 指针嵌入字段（如 *EmbedStruct）：内层字段的真实地址由独立堆分配决定，
+				// 无法通过外层结构体 baseAddr+offset 推算，跳过以避免错误地址映射。
+				continue
 			}
 			if fieldType.Kind() == reflect.Struct {
 				parseFields(fieldType, tag, label, currentOffset, res)
