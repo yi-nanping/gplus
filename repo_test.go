@@ -71,7 +71,7 @@ func TestRepository_CRUD_And_Errors(t *testing.T) {
 		// 假设我们传入了一个错误的指针导致 Eq 失败
 		updater.Set(&u.Name, "NewName").Eq(new(int), 1)
 
-		affected, err := repo.Update(updater, nil)
+		affected, err := repo.UpdateByCond(updater)
 
 		// 预期：由于 Eq 报错，Update 应该拒绝执行，防止全表更新
 		assertError(t, err, true, "Update should be blocked due to builder error")

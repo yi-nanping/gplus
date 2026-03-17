@@ -87,7 +87,7 @@ func main() {
     updater, updaterModel := gplus.NewUpdater[User](ctx)
     updater.Set(&updaterModel.Name, "李四").Eq(&updaterModel.ID, user.ID)
     
-    affected, err := repo.Update(updater, nil)
+    affected, err := repo.UpdateByCond(updater)
     if err != nil {
         fmt.Printf("更新用户失败: %v\n", err)
     } else {
@@ -164,7 +164,7 @@ updater.Eq(&model.ID, 1)
        .Gt(&model.Status, 0)
 
 // 执行更新
-affected, err := repo.Update(updater, nil) // 第二个参数是事务，传nil表示不用事务
+affected, err := repo.UpdateByCond(updater) // 第二个参数是事务，传nil表示不用事务
 ```
 
 ### 事务支持

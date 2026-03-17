@@ -108,7 +108,7 @@ func TestAdvanced_Features(t *testing.T) {
 		updater.Set(&u.Name, "Changed").Eq(&u.ID, 1)
 
 		// 2. 在事务中执行更新
-		affected, err := repo.Update(updater, tx)
+		affected, err := repo.UpdateByCondTX(updater, tx)
 		assertError(t, err, false, "Update in tx should succeed initially")
 		assertEqual(t, int64(1), affected, "Should affect 1 row")
 

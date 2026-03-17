@@ -239,8 +239,13 @@ func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 	return &entity, nil
 }
 
-// Update 执行更新操作
-func (r *Repository[D, T]) Update(u *Updater[T], tx *gorm.DB) (int64, error) {
+// UpdateByCond 执行条件更新（不带事务）
+func (r *Repository[D, T]) UpdateByCond(u *Updater[T]) (int64, error) {
+	return r.UpdateByCondTX(u, nil)
+}
+
+// UpdateByCondTX 执行条件更新（支持事务）
+func (r *Repository[D, T]) UpdateByCondTX(u *Updater[T], tx *gorm.DB) (int64, error) {
 	if u == nil || u.IsEmpty() {
 		return 0, ErrUpdateEmpty
 	}
