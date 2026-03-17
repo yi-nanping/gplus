@@ -2,6 +2,7 @@ package gplus
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -91,6 +92,72 @@ func TestRepository_AdvancedFeatures(t *testing.T) {
 		assertError(t, err, false, "RawQuery should succeed")
 		if len(users) == 0 {
 			t.Error("RawQuery should return results")
+		}
+	})
+}
+
+// TestPluck 测试 Pluck 泛型函数
+func TestPluck(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	// 预置数据
+	seeds := []*TestUser{
+		{Name: "Alice", Age: 25, Email: "alice@example.com"},
+		{Name: "Bob", Age: 30, Email: "bob@example.com"},
+		{Name: "Charlie", Age: 25, Email: "charlie@example.com"},
+	}
+	for _, u := range seeds {
+		if err := repo.Save(ctx, u); err != nil {
+			t.Fatalf("预置数据失败: %v", err)
+		}
+	}
+
+	t.Run("提取所有用户名", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Order(&u.Name, true)
+		names, err := Pluck[TestUser, string, int64](repo, q, &u.Name)
+		assertError(t, err, false, "Pluck 应成功")
+		if len(names) != 3 {
+			t.Errorf("应返回 3 条记录，实际: %d", len(names))
+		}
+		assertEqual(t, "Alice", names[0], "首条应为 Alice")
+	})
+
+	t.Run("带条件提取年龄", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "Bob")
+		ages, err := Pluck[TestUser, int, int64](repo, q, &u.Age)
+		assertError(t, err, false, "Pluck 应成功")
+		if len(ages) != 1 {
+			t.Errorf("应返回 1 条记录，实际: %d", len(ages))
+		}
+		assertEqual(t, 30, ages[0], "Bob 年龄应为 30")
+	})
+
+	t.Run("字符串列名提取邮箱", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		emails, err := Pluck[TestUser, string, int64](repo, q, "email")
+		assertError(t, err, false, "Pluck 应成功")
+		if len(emails) != 3 {
+			t.Errorf("应返回 3 条邮箱，实际: %d", len(emails))
+		}
+	})
+
+	t.Run("条件不匹配返回空切片", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "NotExist")
+		names, err := Pluck[TestUser, string, int64](repo, q, &u.Name)
+		assertError(t, err, false, "Pluck 应成功")
+		if len(names) != 0 {
+			t.Errorf("应返回空切片，实际: %v", names)
+		}
+	})
+
+	t.Run("nil Query 返回 ErrQueryNil", func(t *testing.T) {
+		_, err := Pluck[TestUser, string, int64](repo, nil, "username")
+		if !errors.Is(err, ErrQueryNil) {
+			t.Errorf("nil Query 应返回 ErrQueryNil，实际: %v", err)
 		}
 	})
 }

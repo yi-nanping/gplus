@@ -131,7 +131,7 @@ func Pluck[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any
 	// 临时覆盖 selects 为指定列，执行后恢复，避免破坏调用方 Query 状态
 	origSelects := q.ScopeBuilder.selects
 	q.ScopeBuilder.selects = []string{colName}
-	err = r.dbResolver(q.Context(), nil).Scopes(q.DataRuleBuilder().BuildQuery()).Pluck(colName, &result).Error
+	err = r.dbResolver(q.Context(), nil).Model(new(T)).Scopes(q.DataRuleBuilder().BuildQuery()).Pluck(colName, &result).Error
 	q.ScopeBuilder.selects = origSelects
 	return result, err
 }
