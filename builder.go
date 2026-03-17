@@ -513,18 +513,12 @@ func quoteColumn(col string, qL, qR string) string {
 		return ""
 	}
 
-	// 1. 如果已经转义过，或者包含函数调用 (、算术运算符等，视为复杂表达式，直接返回
+	// 1. 已经转义过，直接返回
 	if strings.HasPrefix(col, qL) {
 		return col
 	}
 
-	// 增加对 + - * / 等符号的判断，防止转义 `a + b` 为 ``a + b``
-	if strings.ContainsAny(col, "()+-*/, ") {
-		return col
-	}
-
-	// 2. 处理带有别名的情况 (如 "name AS user_name" 或 "name user_name")
-	// 统一处理大小写不敏感的 " AS "
+	// 2. 处理带有别名的情况（须先于复杂表达式检查，否则空格会被误判为复杂表达式）
 	upperCol := strings.ToUpper(col)
 	if idx := strings.Index(upperCol, " AS "); idx != -1 {
 		left := quoteColumn(col[:idx], qL, qR)
@@ -532,7 +526,21 @@ func quoteColumn(col string, qL, qR string) string {
 		return left + " AS " + right
 	}
 
-	// 3. 处理带表名限定符的情况 (如 "users.name")
+	// 3. 特殊处理 table.* 形式（* 在 ContainsAny 中会被误判为复杂表达式）
+	if strings.HasSuffix(col, ".*") {
+		tablePart := col[:len(col)-2]
+		if !strings.ContainsAny(tablePart, "()+-*/, ") {
+			return quoteColumn(tablePart, qL, qR) + ".*"
+		}
+		return col
+	}
+
+	// 4. 包含函数调用、算术运算符等，视为复杂表达式，直接返回
+	if strings.ContainsAny(col, "()+-*/, ") {
+		return col
+	}
+
+	// 5. 处理带表名限定符的情况 (如 "users.name")
 	if strings.Contains(col, ".") {
 		parts := strings.Split(col, ".")
 		for i, part := range parts {
@@ -541,6 +549,6 @@ func quoteColumn(col string, qL, qR string) string {
 		return strings.Join(parts, ".")
 	}
 
-	// 4. 标准字段转义
+	// 6. 标准字段转义
 	return qL + col + qR
 }
