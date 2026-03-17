@@ -81,28 +81,36 @@ func (r *Repository[D, T]) GetByIdTx(ctx context.Context, id D, tx *gorm.DB) (da
 
 // GetOne 根据条件查询单条
 func (r *Repository[D, T]) GetOne(q *Query[T]) (data T, err error) {
+	return r.GetOneTx(q, nil)
+}
+
+// GetOneTx 支持事务的单条查询
+func (r *Repository[D, T]) GetOneTx(q *Query[T], tx *gorm.DB) (data T, err error) {
 	if q == nil {
 		return data, ErrQueryNil
 	}
-	// 获取链中产生的所有错误
 	if err = q.GetError(); err != nil {
 		return data, err
 	}
-	db := r.dbResolver(q.Context(), nil)
+	db := r.dbResolver(q.Context(), tx)
 	err = db.Scopes(q.DataRuleBuilder().BuildQuery()).First(&data).Error
 	return
 }
 
 // List 根据条件查询列表
 func (r *Repository[D, T]) List(q *Query[T]) (data []T, err error) {
+	return r.ListTx(q, nil)
+}
+
+// ListTx 支持事务的列表查询
+func (r *Repository[D, T]) ListTx(q *Query[T], tx *gorm.DB) (data []T, err error) {
 	if q == nil {
 		return nil, ErrQueryNil
 	}
-	// 获取链中产生的所有错误
 	if err = q.GetError(); err != nil {
 		return data, err
 	}
-	db := r.dbResolver(q.Context(), nil)
+	db := r.dbResolver(q.Context(), tx)
 	err = db.Scopes(q.DataRuleBuilder().BuildQuery()).Find(&data).Error
 	return
 }
@@ -130,18 +138,19 @@ func Pluck[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any
 
 // Page 分页查询
 func (r *Repository[D, T]) Page(q *Query[T], skipCount bool) (data []T, total int64, err error) {
+	return r.PageTx(q, skipCount, nil)
+}
+
+// PageTx 支持事务的分页查询
+func (r *Repository[D, T]) PageTx(q *Query[T], skipCount bool, tx *gorm.DB) (data []T, total int64, err error) {
 	if q == nil {
 		return nil, 0, ErrQueryNil
 	}
 	if err = q.GetError(); err != nil {
 		return nil, 0, err
 	}
-	// 1. 获取基础 DB 实例并绑定 Context
-	baseDb := r.dbResolver(q.Context(), nil).Model(new(T))
+	baseDb := r.dbResolver(q.Context(), tx).Model(new(T))
 
-	// 2. 执行 Count (仅包含过滤条件，不含 Select/Order/Limit)
-	// 使用 Session(&gorm.Session{}) 确保查询互不干扰
-	// 如果不跳过 Count 才执行计数
 	if !skipCount {
 		err = baseDb.Session(&gorm.Session{}).
 			Scopes(q.DataRuleBuilder().BuildCount()).
@@ -151,9 +160,8 @@ func (r *Repository[D, T]) Page(q *Query[T], skipCount bool) (data []T, total in
 		}
 	}
 
-	// 3. 执行 Find (包含 Select + 过滤条件 + 排序分页)
 	err = baseDb.Session(&gorm.Session{}).
-		Scopes(q.DataRuleBuilder().BuildQuery()). // 此处的 Build 包含完整的 Select/Where/Order/Limit
+		Scopes(q.DataRuleBuilder().BuildQuery()).
 		Find(&data).Error
 
 	return data, total, err
@@ -161,6 +169,11 @@ func (r *Repository[D, T]) Page(q *Query[T], skipCount bool) (data []T, total in
 
 // Count 统计数量
 func (r *Repository[D, T]) Count(q *Query[T]) (int64, error) {
+	return r.CountTx(q, nil)
+}
+
+// CountTx 支持事务的统计查询
+func (r *Repository[D, T]) CountTx(q *Query[T], tx *gorm.DB) (int64, error) {
 	if q == nil {
 		return 0, ErrQueryNil
 	}
@@ -168,7 +181,7 @@ func (r *Repository[D, T]) Count(q *Query[T]) (int64, error) {
 		return 0, err
 	}
 	var count int64
-	err := r.dbResolver(q.Context(), nil).Model(new(T)).Scopes(q.DataRuleBuilder().BuildCount()).Count(&count).Error
+	err := r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.DataRuleBuilder().BuildCount()).Count(&count).Error
 	return count, err
 }
 
