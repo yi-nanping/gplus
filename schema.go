@@ -30,6 +30,8 @@ func UnregisterModel[T any]() {
 	for offset := range offsetMap {
 		columnNameCache.Delete(baseAddr + offset)
 	}
+	// 清理 reflectStructSchema 的 schema 级缓存（须在 reflectStructSchema 调用之后）
+	columnCache.Delete(schemaCacheKey{typeStr, "gorm", "COLUMN"})
 }
 
 // resolveColumnName 解析字段名为数据库列名
