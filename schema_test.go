@@ -138,7 +138,7 @@ func TestSchema_ResolveColumnName(t *testing.T) {
 }
 
 // TestSchema_PtrEmbedField 验证指针嵌入字段的端到端行为：
-// 值字段可正常解析，指针嵌入的内层字段应返回 ErrColumnNotFound。
+// 值字段和指针嵌入的内层字段均可正常解析。
 func TestSchema_PtrEmbedField(t *testing.T) {
 	UnregisterModel[utilsPtrEmbed]()
 	u := &utilsPtrEmbed{
@@ -153,17 +153,29 @@ func TestSchema_PtrEmbedField(t *testing.T) {
 		assertEqual(t, "note", col, "列名应为 note")
 	})
 
-	t.Run("指针嵌入内层字段不可解析", func(t *testing.T) {
-		_, err := resolveColumnName(&u.ID)
-		assertError(t, err, true, "指针嵌入字段不应可解析")
+	t.Run("指针嵌入内层字段可正常解析", func(t *testing.T) {
+		col, err := resolveColumnName(&u.ID)
+		assertError(t, err, false, "指针嵌入字段应可解析")
+		assertEqual(t, "id", col, "列名应为 id")
 	})
 
-	t.Run("nil指针嵌入时注册不panic", func(t *testing.T) {
+	t.Run("nil指针嵌入时RegisterModel不panic且值字段可解析", func(t *testing.T) {
 		UnregisterModel[utilsPtrEmbed]()
 		uNil := &utilsPtrEmbed{} // UtilsEmbedBaseSmall 为 nil
-		RegisterModel(uNil)      // 不应 panic
+		RegisterModel(uNil)      // 不应 panic，nil 嵌入字段被跳过
 		col, err := resolveColumnName(&uNil.Note)
 		assertError(t, err, false, "nil嵌入时值字段仍应可解析")
 		assertEqual(t, "note", col, "列名应为 note")
+	})
+
+	t.Run("getModelInstance自动初始化指针嵌入并可解析", func(t *testing.T) {
+		UnregisterModel[utilsPtrEmbed]()
+		instance := getModelInstance[utilsPtrEmbed]()
+		col, err := resolveColumnName(&instance.Note)
+		assertError(t, err, false, "getModelInstance后值字段应可解析")
+		assertEqual(t, "note", col, "列名应为 note")
+		col2, err2 := resolveColumnName(&instance.ID)
+		assertError(t, err2, false, "getModelInstance后指针嵌入字段应可解析")
+		assertEqual(t, "id", col2, "列名应为 id")
 	})
 }

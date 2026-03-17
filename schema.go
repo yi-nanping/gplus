@@ -28,10 +28,63 @@ func UnregisterModel[T any]() {
 	baseAddr := reflect.ValueOf(v).Pointer()
 	offsetMap := reflectStructSchema(v, "gorm", "COLUMN")
 	for offset := range offsetMap {
-		columnNameCache.Delete(baseAddr + offset)
+		columnNameCache.Delete(baseAddr + offset) // 只清理值字段
+	}
+	// 清理指针嵌入字段注册的绝对地址
+	val := reflect.ValueOf(v)
+	if val.Kind() == reflect.Ptr && !val.IsNil() {
+		unregisterPtrEmbedFields(val.Elem(), "gorm", "COLUMN")
 	}
 	// 清理 reflectStructSchema 的 schema 级缓存（须在 reflectStructSchema 调用之后）
 	columnCache.Delete(schemaCacheKey{typeStr, "gorm", "COLUMN"})
+}
+
+// registerPtrEmbedFields 运行时注册指针嵌入字段的绝对地址到列名映射。
+// 指针嵌入的内层字段由独立堆分配，无法通过静态 baseAddr+offset 推算，
+// 必须在实例分配后解引用指针字段，取得真实地址再注册。支持多层嵌套递归。
+func registerPtrEmbedFields(val reflect.Value, tag, label string) {
+	t := val.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
+			continue // 只处理指针匿名嵌入字段
+		}
+		fv := val.Field(i)
+		if fv.IsNil() {
+			continue // nil 无地址，跳过
+		}
+		inner := fv.Elem()                                                   // 解引用，拿到内层实例
+		innerBaseAddr := inner.UnsafeAddr()                                  // 内层实例真实堆地址
+		innerOffsetMap := reflectStructSchema(inner.Interface(), tag, label) // 内层字段 offset → 列名
+		for offset, name := range innerOffsetMap {
+			columnNameCache.Store(innerBaseAddr+offset, name) // 注册绝对地址
+		}
+		registerPtrEmbedFields(inner, tag, label) // 递归，支持多层嵌套
+	}
+}
+
+// unregisterPtrEmbedFields 清理指针嵌入字段注册的绝对地址映射。
+// 与 registerPtrEmbedFields 配对使用，确保 UnregisterModel 完整清理缓存，不留悬空条目。
+func unregisterPtrEmbedFields(val reflect.Value, tag, label string) {
+	t := val.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		// 不是指针匿名嵌入
+		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
+			continue
+		}
+		fv := val.Field(i)
+		if fv.IsNil() {
+			continue
+		}
+		inner := fv.Elem()
+		innerBaseAddr := inner.UnsafeAddr()
+		innerOffsetMap := reflectStructSchema(inner.Interface(), tag, label)
+		for offset := range innerOffsetMap {
+			columnNameCache.Delete(innerBaseAddr + offset) // 删除绝对地址条目
+		}
+		unregisterPtrEmbedFields(inner, tag, label) // 递归清理多层嵌套
+	}
 }
 
 // resolveColumnName 解析字段名为数据库列名
@@ -102,6 +155,8 @@ func RegisterModel(models ...any) {
 		for offset, name := range offsetMap {
 			columnNameCache.Store(baseAddr+offset, name)
 		}
+		// 注册指针嵌入字段的运行时绝对地址
+		registerPtrEmbedFields(val.Elem(), "gorm", "COLUMN")
 	}
 }
 
@@ -123,11 +178,17 @@ func getModelInstance[T any]() *T {
 		return actual.(*T)
 	}
 
-	// 本 goroutine 赢得写入权，注册字段地址
+	// 本 goroutine 赢得写入权，先初始化指针嵌入字段（分配内层实例）
+	ptrVal := reflect.ValueOf(ptr).Elem()
+	initPtrEmbeds(ptrVal)
+
+	// 注册值字段的绝对地址
 	baseAddr := reflect.ValueOf(ptr).Pointer()
 	offsetMap := reflectStructSchema(ptr, "gorm", "COLUMN")
 	for offset, name := range offsetMap {
 		columnNameCache.Store(baseAddr+offset, name)
 	}
+	// 注册指针嵌入字段的运行时绝对地址
+	registerPtrEmbedFields(ptrVal, "gorm", "COLUMN")
 	return ptr
 }

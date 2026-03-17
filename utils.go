@@ -56,6 +56,26 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 	return actual.(map[uintptr]string)
 }
 
+// initPtrEmbeds 递归初始化结构体中所有 nil 指针匿名嵌入字段。
+// 确保规范单例的所有指针嵌入字段均已分配，以便在运行时获取真实内存地址。
+func initPtrEmbeds(v reflect.Value) {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		// 获取字段
+		f := t.Field(i)
+		//是匿名嵌入 && 是指针类型 && 指针指向结构体
+		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
+			continue
+		}
+		fv := v.Field(i)
+		if fv.IsNil() {
+			// 分配新实例
+			fv.Set(reflect.New(f.Type.Elem()))
+		}
+		initPtrEmbeds(fv.Elem())
+	}
+}
+
 func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[uintptr]string) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
