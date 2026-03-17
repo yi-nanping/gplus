@@ -35,9 +35,6 @@ func setupAdvancedDB(t *testing.T) (*Repository[int64, UserWithDelete], *gorm.DB
 		t.Fatalf("failed to connect database: %v", err)
 	}
 
-	// 开启详细日志以便调试 SQL
-	// db = db.Debug()
-
 	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}

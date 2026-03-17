@@ -94,3 +94,68 @@ func TestRepository_AdvancedFeatures(t *testing.T) {
 		}
 	})
 }
+
+// TestRepository_BasicCRUD 覆盖 Save/UpdateById/UpdateByCond/DeleteById/DeleteByCond/RecordNotFound
+func TestRepository_BasicCRUD(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	t.Run("Create_Save", func(t *testing.T) {
+		user := &TestUser{Name: "Alice", Age: 25, Email: "alice@example.com"}
+		err := repo.Save(ctx, user)
+		assertError(t, err, false, "Save 应成功")
+		if user.ID == 0 {
+			t.Error("Save 后 ID 应被赋值")
+		}
+	})
+
+	t.Run("Update_ById", func(t *testing.T) {
+		user := &TestUser{Name: "Bob", Age: 20}
+		_ = repo.Save(ctx, user)
+		user.Age = 30
+		err := repo.UpdateById(ctx, user)
+		assertError(t, err, false, "UpdateById 应成功")
+		got, err := repo.GetById(ctx, user.ID)
+		assertError(t, err, false, "GetById 应成功")
+		assertEqual(t, 30, got.Age, "Age 应已更新为 30")
+	})
+
+	t.Run("Update_ByCond", func(t *testing.T) {
+		user := &TestUser{Name: "Charlie", Age: 18}
+		_ = repo.Save(ctx, user)
+		upd, uu := NewUpdater[TestUser](ctx)
+		upd.Set(&uu.Age, 99).Eq(&uu.Name, "Charlie")
+		affected, err := repo.UpdateByCond(upd)
+		assertError(t, err, false, "UpdateByCond 应成功")
+		assertEqual(t, int64(1), affected, "UpdateByCond 应影响 1 行")
+	})
+
+	t.Run("Delete_ById", func(t *testing.T) {
+		user := &TestUser{Name: "Dave", Age: 22}
+		_ = repo.Save(ctx, user)
+		affected, err := repo.DeleteById(ctx, user.ID)
+		assertError(t, err, false, "DeleteById 应成功")
+		assertEqual(t, int64(1), affected, "DeleteById 应影响 1 行")
+		_, err = repo.GetById(ctx, user.ID)
+		if !IsNotFound(err) {
+			t.Errorf("删除后 GetById 应返回 RecordNotFound，实际: %v", err)
+		}
+	})
+
+	t.Run("Delete_ByCond", func(t *testing.T) {
+		user := &TestUser{Name: "Eve", Age: 28}
+		_ = repo.Save(ctx, user)
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "Eve")
+		affected, err := repo.DeleteByCond(q)
+		assertError(t, err, false, "DeleteByCond 应成功")
+		assertEqual(t, int64(1), affected, "DeleteByCond 应影响 1 行")
+	})
+
+	t.Run("RecordNotFound", func(t *testing.T) {
+		_, err := repo.GetById(ctx, 99999)
+		if !IsNotFound(err) {
+			t.Errorf("查询不存在的 ID 应返回 RecordNotFound，实际: %v", err)
+		}
+	})
+}
