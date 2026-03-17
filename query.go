@@ -47,7 +47,12 @@ func (q *Query[T]) GetError() error {
 	if len(q.errs) == 0 {
 		return nil
 	}
-	summary := fmt.Errorf("gplus query builder failed with %d errors", len(q.errs))
+	n := len(q.errs)
+	word := "errors"
+	if n == 1 {
+		word = "error"
+	}
+	summary := fmt.Errorf("gplus query builder failed with %d %s", n, word)
 	return errors.Join(append([]error{summary}, q.errs...)...)
 }
 
@@ -617,5 +622,10 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 		if len(parts) == 2 {
 			q.Between(column, parts[0], parts[1])
 		}
+	default:
+		q.errs = append(q.errs, fmt.Errorf(
+			"data rule [col: %s]: unsupported condition %q; allowed: =, <>, >, >=, <, <=, IN, LIKE, LEFT_LIKE, RIGHT_LIKE, IS NULL, IS NOT NULL, BETWEEN",
+			column, rule.Condition,
+		))
 	}
 }
