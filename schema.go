@@ -61,12 +61,17 @@ func resolveColumnName(v any) (string, error) {
 	return "", ErrColumnNotFound
 }
 
-// registerModel 注册模型，解析并缓存字段映射关系。
-// 通常在 Repository 初始化或首次查询时自动调用。
+// RegisterModel 注册模型，解析并缓存字段映射关系。
+// 通常在应用启动时显式调用，也可在首次查询时由框架自动触发。
 // 并发安全：多个 goroutine 同时注册同一类型时，只有第一个写入者的
 // 指针会成为规范单例，其余调用无副作用。
-func registerModel(models ...any) {
+// 传入 nil（无类型 nil）或 typed-nil 指针时会被静默跳过。
+func RegisterModel(models ...any) {
 	for _, model := range models {
+		// 跳过无类型 nil
+		if model == nil {
+			continue
+		}
 		val := reflect.ValueOf(model)
 		t := reflect.TypeOf(model)
 		if t.Kind() == reflect.Pointer {
@@ -75,6 +80,11 @@ func registerModel(models ...any) {
 
 		// 必须是指针才能获取基地址
 		if val.Kind() != reflect.Pointer {
+			continue
+		}
+
+		// 跳过 typed-nil 指针，避免 baseAddr=0 污染缓存
+		if val.IsNil() {
 			continue
 		}
 
