@@ -16,6 +16,11 @@ var (
 	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
 )
 
+// IsNotFound 判断错误是否为「记录不存在」
+func IsNotFound(err error) bool {
+	return errors.Is(err, gorm.ErrRecordNotFound)
+}
+
 // Repository 泛型仓储，提供标准 CRUD
 // D: ID类型 (int, string, etc.), T: 实体类型
 type Repository[D comparable, T any] struct {

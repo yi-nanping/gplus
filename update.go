@@ -39,7 +39,12 @@ func (u *Updater[T]) GetError() error {
 	if len(u.errs) == 0 {
 		return nil
 	}
-	summary := fmt.Errorf("gplus updater failed with %d errors", len(u.errs))
+	n := len(u.errs)
+	word := "errors"
+	if n == 1 {
+		word = "error"
+	}
+	summary := fmt.Errorf("gplus updater failed with %d %s", n, word)
 	return errors.Join(append([]error{summary}, u.errs...)...)
 }
 
