@@ -294,6 +294,11 @@ func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) 
 	return db.RowsAffected, db.Error
 }
 
+// DeleteByCond 根据条件删除
+func (r *Repository[D, T]) DeleteByCond(q *Query[T]) (int64, error) {
+	return r.DeleteByCondTX(q, nil)
+}
+
 // DeleteByCondTX 事务根据条件删除
 func (r *Repository[D, T]) DeleteByCondTX(q *Query[T], tx *gorm.DB) (int64, error) {
 	var model T
@@ -310,43 +315,24 @@ func (r *Repository[D, T]) DeleteByCondTX(q *Query[T], tx *gorm.DB) (int64, erro
 	return db.RowsAffected, db.Error
 }
 
-// DeleteByCond 根据条件删除
-func (r *Repository[D, T]) DeleteByCond(q *Query[T]) (int64, error) {
-	return r.DeleteByCondTX(q, nil)
-}
-
 // --- 原生 SQL 封装部分 ---
 
 // RawQuery 执行原生查询 SQL，并将结果映射到当前 Repository 的实体切片中
 // 适用场景：复杂的 JOIN 查询或存储过程
 func (r *Repository[D, T]) RawQuery(ctx context.Context, sql string, args ...any) ([]T, error) {
-	var results []T
-	if sql == "" {
-		return results, ErrRawSQLEmpty
-	}
-	// 使用 dbResolver 确保如果当前在事务中，原生 SQL 也会走事务
-	err := r.dbResolver(ctx, nil).Raw(sql, args...).Scan(&results).Error
-	return results, err
+	return r.RawQueryTx(ctx, nil, sql, args)
 }
 
 // RawExec 执行原生 SQL（如 INSERT, UPDATE, DELETE 或 DDL 语句）
 // 返回受影响的行数
 func (r *Repository[D, T]) RawExec(ctx context.Context, sql string, args ...any) (int64, error) {
-	if sql == "" {
-		return 0, ErrRawSQLEmpty
-	}
-	// 使用 dbResolver 支持事务
-	result := r.dbResolver(ctx, nil).Exec(sql, args...)
-	return result.RowsAffected, result.Error
+	return r.RawExecTx(ctx, nil, sql, args)
 }
 
 // RawScan 执行原生 SQL 并将结果映射到【任意】指定的结构体或变量中
 // 适用场景：聚合查询（如 SUM/COUNT）或统计类报表
 func (r *Repository[D, T]) RawScan(ctx context.Context, dest any, sql string, args ...any) error {
-	if sql == "" {
-		return ErrRawSQLEmpty
-	}
-	return r.dbResolver(ctx, nil).Raw(sql, args...).Scan(dest).Error
+	return r.RawScanTx(ctx, nil, dest, sql, args)
 }
 
 // RawQueryTx 在事务中执行原生查询 SQL，并将结果映射到当前 Repository 的实体切片中
