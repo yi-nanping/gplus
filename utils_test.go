@@ -63,7 +63,7 @@ func TestToDBName(t *testing.T) {
 		{"已是蛇形", "user_name", "user_name"},
 		{"缩写词UserID", "UserID", "user_id"},
 		{"缩写词APIKey", "APIKey", "api_key"},
-		{"缩写词HTTPSConfig", "HTTPSConfig", "http_s_config"},
+		{"缩写词HTTPSConfig", "HTTPSConfig", "https_config"},
 		{"缩写词XMLParser", "XMLParser", "xml_parser"},
 		{"内嵌缩写词MyXMLParser", "MyXMLParser", "my_xml_parser"},
 		{"数字后缀Version2", "Version2", "version2"},
