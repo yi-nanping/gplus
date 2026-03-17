@@ -80,20 +80,19 @@ func (q *Query[T]) Table(name string) *Query[T] {
 	return q
 }
 
-// addCond 内部辅助方法
-func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
+// mustColumn 解析字段指针为列名，失败则 panic（调用方传入了错误的字段指针）
+func mustColumn(col any) string {
 	name, err := resolveColumnName(col)
 	if err != nil {
-		// 记录错误或 Panic，取决于策略。这里选择不做静默失败，便于调试
-		// 生产环境建议结合日志库
-		//fmt.Printf("gplus error: %v\n", err)
-		// 记录错误，指明操作类型，但不中断链式调用
-		q.errs = append(q.errs, fmt.Errorf("addCond error [col: %v,op: %s]: %w", col, op, err))
-		// 发生错误时，跳过添加该条件，避免生成错误的 SQL
-		return q
+		panic(fmt.Sprintf("gplus: invalid column pointer: %v", err))
 	}
+	return name
+}
+
+// addCond 内部辅助方法
+func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 	q.conditions = append(q.conditions, condition{
-		expr:     name,
+		expr:     mustColumn(col),
 		operator: op,
 		value:    val,
 		isOr:     isOr,
@@ -104,12 +103,7 @@ func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 // Select 指定查询字段
 func (q *Query[T]) Select(cols ...any) *Query[T] {
 	for _, c := range cols {
-		if name, err := resolveColumnName(c); err == nil {
-			q.selects = append(q.selects, name)
-		} else {
-			// 记录错误，指明操作类型，但不中断链式调用
-			q.errs = append(q.errs, fmt.Errorf("select error [col: %s]: %w", c, err))
-		}
+		q.selects = append(q.selects, mustColumn(c))
 	}
 	return q
 }
@@ -296,11 +290,7 @@ func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
 
 // Order 排序
 func (q *Query[T]) Order(col any, isAsc bool) *Query[T] {
-	name, err := resolveColumnName(col)
-	if err != nil {
-		q.errs = append(q.errs, fmt.Errorf("order error [col: %s]: %w", col, err))
-		return q
-	}
+	name := mustColumn(col)
 	direction := KeyDesc
 	if isAsc {
 		direction = KeyAsc
@@ -324,11 +314,7 @@ func (q *Query[T]) Offset(offset int) *Query[T] {
 // Omit 排除某些字段（不查询某些字段）
 func (q *Query[T]) Omit(cols ...any) *Query[T] {
 	for _, c := range cols {
-		if name, err := resolveColumnName(c); err == nil {
-			q.omits = append(q.omits, name)
-		} else {
-			q.errs = append(q.errs, fmt.Errorf("omit error [col: %v]: %w", c, err))
-		}
+		q.omits = append(q.omits, mustColumn(c))
 	}
 	return q
 }
@@ -341,11 +327,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 	q.distinct = true
 	// 如果传入了特定列，将它们也作为 Select 字段处理
 	for _, c := range cols {
-		if name, err := resolveColumnName(c); err == nil {
-			q.selects = append(q.selects, name)
-		} else {
-			q.errs = append(q.errs, fmt.Errorf("distinct error [col: %s]: %w", c, err))
-		}
+		q.selects = append(q.selects, mustColumn(c))
 	}
 	return q
 }
@@ -353,11 +335,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 // Group 分组
 func (q *Query[T]) Group(cols ...any) *Query[T] {
 	for _, c := range cols {
-		if name, err := resolveColumnName(c); err == nil {
-			q.groups = append(q.groups, name)
-		} else {
-			q.errs = append(q.errs, fmt.Errorf("group error [col: %s]: %w", c, err))
-		}
+		q.groups = append(q.groups, mustColumn(c))
 	}
 	return q
 }
@@ -366,8 +344,7 @@ func (q *Query[T]) Group(cols ...any) *Query[T] {
 // 示例：q.Join("profiles", gplus.JoinLeft, "profiles.user_id = users.id")
 func (q *Query[T]) join(table, method, on string, args ...any) *Query[T] {
 	if table == "" || method == "" {
-		q.errs = append(q.errs, fmt.Errorf("join error: table or method is empty"))
-		return q
+		panic("gplus: join called with empty table or method")
 	}
 	q.joins = append(q.joins, joinInfo{method: method, table: table, on: on, args: args})
 	return q
@@ -441,8 +418,7 @@ func (q *Query[T]) LockWithOpt(strength, options string) *Query[T] {
 // And 开启一个带括号的 AND 嵌套块
 func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
 	if fn == nil {
-		q.errs = append(q.errs, fmt.Errorf("and error: fn is nil"))
-		return q
+		panic("gplus: And called with nil fn")
 	}
 	sub := &Query[T]{
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
@@ -464,8 +440,7 @@ func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
 // 示例: q.Having("COUNT(id)", OpGt, 10)
 func (q *Query[T]) Having(col string, op string, val any) *Query[T] {
 	if col == "" || op == "" {
-		q.errs = append(q.errs, fmt.Errorf("having error: [col: %s] or [op: %s] is empty", col, op))
-		return q
+		panic(fmt.Sprintf("gplus: Having called with empty col=%q or op=%q", col, op))
 	}
 	q.havings = append(q.havings, condition{
 		expr:     col,
@@ -479,8 +454,7 @@ func (q *Query[T]) Having(col string, op string, val any) *Query[T] {
 // OrHaving 添加 OR 分组过滤
 func (q *Query[T]) OrHaving(col string, op string, val any) *Query[T] {
 	if col == "" || op == "" {
-		q.errs = append(q.errs, fmt.Errorf("or having error: [col: %s] or [op: %s] is empty", col, op))
-		return q
+		panic(fmt.Sprintf("gplus: OrHaving called with empty col=%q or op=%q", col, op))
 	}
 	q.havings = append(q.havings, condition{
 		expr:     col,
@@ -494,8 +468,7 @@ func (q *Query[T]) OrHaving(col string, op string, val any) *Query[T] {
 // HavingGroup 嵌套 Having
 func (q *Query[T]) HavingGroup(fn func(sub *Query[T])) *Query[T] {
 	if fn == nil {
-		q.errs = append(q.errs, fmt.Errorf("having group error: fn is nil"))
-		return q
+		panic("gplus: HavingGroup called with nil fn")
 	}
 	sub := &Query[T]{ScopeBuilder: ScopeBuilder{havings: make([]condition, 0)}}
 	fn(sub) // 开发者在 sub 里调用 Having/OrHaving
@@ -516,8 +489,7 @@ func (q *Query[T]) HavingGroup(fn func(sub *Query[T])) *Query[T] {
 // args: 可选的过滤条件，例如只预加载状态为已支付的订单
 func (q *Query[T]) Preload(column string, args ...any) *Query[T] {
 	if column == "" {
-		q.errs = append(q.errs, fmt.Errorf("preload error: [column: %s] is empty", column))
-		return q
+		panic("gplus: Preload called with empty column")
 	}
 	if q.preloads == nil {
 		q.preloads = make([]preloadInfo, 0)
@@ -532,8 +504,7 @@ func (q *Query[T]) Preload(column string, args ...any) *Query[T] {
 // Or 开启一个带括号的 OR 嵌套块
 func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
 	if fn == nil {
-		q.errs = append(q.errs, fmt.Errorf("or error: fn is nil"))
-		return q
+		panic("gplus: Or called with nil fn")
 	}
 	sub := &Query[T]{
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},

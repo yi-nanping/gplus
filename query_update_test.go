@@ -2,49 +2,33 @@ package gplus
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
-// TestQuery_ErrorAccumulation 测试错误累积机制
-func TestQuery_ErrorAccumulation(t *testing.T) {
+// TestQuery_InvalidColumnPanics 验证编程错误（字段指针传错）会触发 panic
+func TestQuery_InvalidColumnPanics(t *testing.T) {
 	ctx := context.Background()
-	q, u := NewQuery[TestUser](ctx)
 
-	// 模拟场景：
-	// 1. 传入一个合法的字段指针
-	// 2. 传入一个 nil (错误1)
-	// 3. 传入一个外部变量指针 (错误2)
-	externalVar := 100
+	t.Run("nil 指针触发 panic", func(t *testing.T) {
+		assertPanics(t, func() {
+			q, _ := NewQuery[TestUser](ctx)
+			q.Eq(nil, "something")
+		}, "nil 指针应触发 panic")
+	})
 
-	q.Eq(&u.Name, "test"). // 正常
-				Eq(nil, "something"). // 错误 1
-				Gt(&u.Age, 18).       // 正常
-				Eq(&externalVar, 100) // 错误 2
+	t.Run("外部变量指针触发 panic", func(t *testing.T) {
+		assertPanics(t, func() {
+			externalVar := 100
+			q, _ := NewQuery[TestUser](ctx)
+			q.Eq(&externalVar, 100)
+		}, "外部变量指针应触发 panic")
+	})
 
-	err := q.GetError()
-
-	// 断言必须有错误
-	assertError(t, err, true, "Should have accumulated errors")
-
-	// 验证错误信息的完整性
-	errMsg := err.Error()
-	// 1. 验证是否包含 nil 指针引发的错误
-	if !strings.Contains(errMsg, "gplus: argument must be a struct field pointer") {
-		t.Errorf("Expected nil pointer error, got: %s", errMsg)
-	}
-
-	// 2. 验证是否包含地址解析失败引发的错误
-	if !strings.Contains(errMsg, "gplus: column name not found for pointer") {
-		t.Errorf("Expected column not found error, got: %s", errMsg)
-	}
-
-	// 3. 验证是否收集到了两个错误
-	// errors.Join 生成的错误可以通过 errors.Unwrap 拆解，或者直接数换行符
-	errCount := len(q.errs)
-	if errCount != 2 {
-		t.Errorf("Expected 2 errors in slice, got %d", errCount)
-	}
+	t.Run("合法字段无错误", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "test").Gt(&u.Age, 18)
+		assertError(t, q.GetError(), false, "合法字段不应有错误")
+	})
 }
 
 // TestQuery_NestedLogic 测试 And/Or 嵌套逻辑
@@ -92,18 +76,10 @@ func TestUpdater_Logic(t *testing.T) {
 		}
 	})
 
-	t.Run("异常更新流程-错误累积", func(t *testing.T) {
-		badUpdater, bu := NewUpdater[TestUser](ctx)
-
-		// 1. Set 错误字段
-		// 2. Where 错误字段
-		badUpdater.Set(nil, "Fail").Eq(&bu.Name, "Valid").Set(new(int), 1)
-
-		err := badUpdater.GetError()
-		assertError(t, err, true, "Should detect errors in Updater")
-
-		if !strings.Contains(err.Error(), "set error") {
-			t.Error("Should contain 'set error'")
-		}
+	t.Run("Set 错误字段触发 panic", func(t *testing.T) {
+		assertPanics(t, func() {
+			badUpdater, _ := NewUpdater[TestUser](ctx)
+			badUpdater.Set(nil, "Fail")
+		}, "Set nil 应触发 panic")
 	})
 }

@@ -62,30 +62,21 @@ func (u *Updater[T]) IsEmpty() bool {
 // Set 设置更新值
 // 示例: u.Set(&User.Name, "NewName")
 func (u *Updater[T]) Set(col any, val any) *Updater[T] {
-	if name, err := resolveColumnName(col); err == nil {
-		u.setMap[name] = val
-	} else {
-		u.errs = append(u.errs, fmt.Errorf("set error [col: %s]: %w", col, err))
-	}
+	u.setMap[mustColumn(col)] = val
 	return u
 }
 
 // SetExpr 设置 SQL 表达式更新 (原子更新)
 // 示例: u.SetExpr(&User.Age, "age + ?", 1) -> UPDATE ... SET age = age + 1
 func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
-	if name, err := resolveColumnName(col); err == nil {
-		u.setMap[name] = gorm.Expr(expr, args...)
-	} else {
-		u.errs = append(u.errs, fmt.Errorf("setExpr error [col: %s,expr: %s]: %w", col, expr, err))
-	}
+	u.setMap[mustColumn(col)] = gorm.Expr(expr, args...)
 	return u
 }
 
 // SetMap 批量设置更新内容
 func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 	if len(m) == 0 {
-		u.errs = append(u.errs, fmt.Errorf("setMap error [map: empty]"))
-		return u
+		panic("gplus: SetMap called with empty map")
 	}
 	for k, v := range m {
 		u.setMap[k] = v
@@ -98,11 +89,7 @@ func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 // Select 指定只更新哪些字段 (即使 setMap 里有其他字段也不会更新)
 func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 	for _, c := range cols {
-		if name, err := resolveColumnName(c); err == nil {
-			u.selects = append(u.selects, name)
-		} else {
-			u.errs = append(u.errs, fmt.Errorf("select error [col: %s]: %w", c, err))
-		}
+		u.selects = append(u.selects, mustColumn(c))
 	}
 	return u
 }
@@ -110,11 +97,7 @@ func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 // Omit 指定排除哪些字段不更新
 func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 	for _, c := range cols {
-		if name, err := resolveColumnName(c); err == nil {
-			u.omits = append(u.omits, name)
-		} else {
-			u.errs = append(u.errs, fmt.Errorf("omit error [col: %s]: %w", c, err))
-		}
+		u.omits = append(u.omits, mustColumn(c))
 	}
 	return u
 }
@@ -123,17 +106,12 @@ func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 
 // 私有辅助方法：统一添加条件
 func (u *Updater[T]) addCond(isOr bool, col any, op string, val any) *Updater[T] {
-	name, err := resolveColumnName(col)
-	if err == nil {
-		u.conditions = append(u.conditions, condition{
-			expr:     name,
-			operator: op,
-			value:    val,
-			isOr:     isOr,
-		})
-	} else {
-		u.errs = append(u.errs, fmt.Errorf("addCond error [col: %s,op: %s]: %w", col, op, err))
-	}
+	u.conditions = append(u.conditions, condition{
+		expr:     mustColumn(col),
+		operator: op,
+		value:    val,
+		isOr:     isOr,
+	})
 	return u
 }
 
@@ -276,8 +254,7 @@ func (u *Updater[T]) OrNotLike(col any, val string) *Updater[T] {
 //	})
 func (u *Updater[T]) And(fn func(sub *Updater[T])) *Updater[T] {
 	if fn == nil {
-		u.errs = append(u.errs, fmt.Errorf("and error [fn: nil]"))
-		return u
+		panic("gplus: And called with nil fn")
 	}
 	// 创建一个临时的子 Updater，共享泛型类型 T
 	sub := &Updater[T]{
@@ -299,8 +276,7 @@ func (u *Updater[T]) And(fn func(sub *Updater[T])) *Updater[T] {
 // Or 开启一个带括号的 OR 嵌套块
 func (u *Updater[T]) Or(fn func(sub *Updater[T])) *Updater[T] {
 	if fn == nil {
-		u.errs = append(u.errs, fmt.Errorf("or error [fn: nil]"))
-		return u
+		panic("gplus: Or called with nil fn")
 	}
 	sub := &Updater[T]{
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},

@@ -2,7 +2,6 @@ package gplus
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -47,35 +46,19 @@ func TestRepository_CRUD_And_Errors(t *testing.T) {
 		assertEqual(t, 1, len(users), "Should find 1 user")
 	})
 
-	t.Run("List 错误累积拦截", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		// 故意制造错误：传入 nil 和 非字段指针
-		q.Eq(nil, "fail").Order(new(int), true)
-
-		users, err := repo.List(q)
-		// 应该返回错误，且 users 为 nil
-		assertError(t, err, true, "Should catch accumulated errors")
-		if users != nil {
-			t.Error("Users should be nil when error occurs")
-		}
-		// 校验错误信息是否包含所有点
-		if !strings.Contains(err.Error(), "addCond error") || !strings.Contains(err.Error(), "order error") {
-			t.Errorf("Error message should list all faults, got: %v", err)
-		}
+	t.Run("List 错误列名触发 panic", func(t *testing.T) {
+		assertPanics(t, func() {
+			q, _ := NewQuery[TestUser](ctx)
+			q.Eq(nil, "fail")
+		}, "Eq(nil) 应触发 panic")
 	})
 
-	t.Run("Update 安全拦截（防止空条件全表更新）", func(t *testing.T) {
-		updater, u := NewUpdater[TestUser](ctx)
-
-		// 场景：开发者想更新 ID 为 1 的人，但 ID 字段写错了导致条件丢失
-		// 假设我们传入了一个错误的指针导致 Eq 失败
-		updater.Set(&u.Name, "NewName").Eq(new(int), 1)
-
-		affected, err := repo.UpdateByCond(updater)
-
-		// 预期：由于 Eq 报错，Update 应该拒绝执行，防止全表更新
-		assertError(t, err, true, "Update should be blocked due to builder error")
-		assertEqual(t, int64(0), affected, "No rows should be affected")
+	t.Run("Update 错误列名触发 panic", func(t *testing.T) {
+		_, u := NewUpdater[TestUser](ctx)
+		assertPanics(t, func() {
+			updater, _ := NewUpdater[TestUser](ctx)
+			updater.Set(&u.Name, "NewName").Eq(new(int), 1)
+		}, "Eq(new(int)) 应触发 panic")
 	})
 }
 

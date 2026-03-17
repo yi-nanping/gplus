@@ -39,3 +39,14 @@ func assertError(t testing.TB, err error, expectError bool, msg string) {
 		t.Errorf("%s: expected no error but got %v", msg, err)
 	}
 }
+
+// assertPanics 断言函数调用会触发 panic
+func assertPanics(t testing.TB, fn func(), msg string) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("%s: expected panic but did not panic", msg)
+		}
+	}()
+	fn()
+}
