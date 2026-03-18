@@ -11,6 +11,8 @@ var (
 	columnNameCache sync.Map
 	// 缓存类型名 -> 实例 (用于获取空结构体指针)
 	modelInstanceCache sync.Map
+	// 保护 getModelInstance 慢路径的初始化，确保 columnNameCache 全部写入后才对外暴露指针
+	modelInitMu sync.Mutex
 
 	ErrColumnNotFound = errors.New("gplus: column name not found for pointer")
 	ErrInvalidPointer = errors.New("gplus: argument must be a struct field pointer")
@@ -161,24 +163,26 @@ func RegisterModel(models ...any) {
 }
 
 // getModelInstance 获取泛型对应的规范单例指针（仅用于获取字段地址，不可修改值）。
-// 并发安全：通过 LoadOrStore 确保只有一个 new(T) 的结果成为单例。
+// 并发安全：快速路径无锁；慢路径通过 modelInitMu 互斥，确保 columnNameCache
+// 全部写入完成后才将指针写入 modelInstanceCache，消除半初始化竞态窗口。
 func getModelInstance[T any]() *T {
 	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
 
-	// 快速路径：已注册直接返回
+	// 快速路径：已注册直接返回，无锁
 	if v, ok := modelInstanceCache.Load(typeStr); ok {
 		return v.(*T)
 	}
 
-	// 慢路径：分配新实例，通过 LoadOrStore 竞争写入权
-	ptr := new(T)
-	actual, loaded := modelInstanceCache.LoadOrStore(typeStr, ptr)
-	if loaded {
-		// 另一个 goroutine 已写入，丢弃 ptr，使用已注册的单例
-		return actual.(*T)
+	// 慢路径：加锁，保证初始化原子完成
+	modelInitMu.Lock()
+	defer modelInitMu.Unlock()
+
+	// 双重检查：加锁后再确认一次，防止重复初始化
+	if v, ok := modelInstanceCache.Load(typeStr); ok {
+		return v.(*T)
 	}
 
-	// 本 goroutine 赢得写入权，先初始化指针嵌入字段（分配内层实例）
+	ptr := new(T)
 	ptrVal := reflect.ValueOf(ptr).Elem()
 	initPtrEmbeds(ptrVal)
 
@@ -190,5 +194,8 @@ func getModelInstance[T any]() *T {
 	}
 	// 注册指针嵌入字段的运行时绝对地址
 	registerPtrEmbedFields(ptrVal, "gorm", "COLUMN")
+
+	// 所有 columnNameCache 条目写入完成后，才对外暴露指针
+	modelInstanceCache.Store(typeStr, ptr)
 	return ptr
 }
