@@ -515,6 +515,9 @@ func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
 	}
 	fn(sub)
+	if len(sub.errs) > 0 {
+		q.errs = append(q.errs, sub.errs...)
+	}
 	if len(sub.conditions) > 0 {
 		q.conditions = append(q.conditions, condition{
 			group: sub.conditions,

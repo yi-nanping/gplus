@@ -142,6 +142,16 @@ func TestQuery_Or(t *testing.T) {
 			t.Errorf("OR 块内期望 2 个子条件，实际 %d", len(q.conditions[1].group))
 		}
 	})
+
+	t.Run("OR 块内错误应传播到外层", func(t *testing.T) {
+		// 子块内通过 applyDataRule 产生错误（不支持的 condition 类型），应传播到外层 q.errs
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "alice").Or(func(sub *Query[TestUser]) {
+			sub.applyDataRule(DataRule{Column: "age", Condition: "INVALID_OP", Value: "1"})
+		})
+
+		assertError(t, q.GetError(), true, "Or 块内的错误应传播到外层")
+	})
 }
 
 // TestUpdater_Logic 测试更新器的逻辑和错误处理
