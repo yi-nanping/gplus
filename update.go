@@ -294,9 +294,14 @@ func (u *Updater[T]) Or(fn func(sub *Updater[T])) *Updater[T] {
 	return u
 }
 
-// UpdateMap 获取最终的更新 Map
+// UpdateMap 获取最终的更新 Map 的只读副本
+// 返回副本而非原始引用，防止调用方绕过 Set/SetMap 的列名校验直接修改内部状态
 func (u *Updater[T]) UpdateMap() map[string]any {
-	return u.setMap
+	cp := make(map[string]any, len(u.setMap))
+	for k, v := range u.setMap {
+		cp[k] = v
+	}
+	return cp
 }
 
 // Unscoped 物理更新，允许更新已被软删除的数据
