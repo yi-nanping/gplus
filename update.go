@@ -31,8 +31,13 @@ func NewUpdater[T any](ctx context.Context) (*Updater[T], *T) {
 	}, model
 }
 
-// Context 返回上下文信息
-func (u *Updater[T]) Context() context.Context { return u.ctx }
+// Context 返回上下文信息，若未设置则返回 context.Background()
+func (u *Updater[T]) Context() context.Context {
+	if u.ctx == nil {
+		return context.Background()
+	}
+	return u.ctx
+}
 
 // GetError 将所有累积的错误合并为一个返回
 func (u *Updater[T]) GetError() error {
