@@ -187,21 +187,37 @@ func (u *Updater[T]) OrIsNotNull(col any) *Updater[T] { return u.addCond(true, c
 
 // Between 区间查询
 func (u *Updater[T]) Between(col any, v1, v2 any) *Updater[T] {
+	if v1 == nil || v2 == nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: Between 参数 v1/v2 不能为 nil"))
+		return u
+	}
 	return u.addCond(false, col, OpBetween, []any{v1, v2})
 }
 
 // OrBetween 区间查询
 func (u *Updater[T]) OrBetween(col any, v1, v2 any) *Updater[T] {
+	if v1 == nil || v2 == nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: OrBetween 参数 v1/v2 不能为 nil"))
+		return u
+	}
 	return u.addCond(true, col, OpBetween, []any{v1, v2})
 }
 
 // NotBetween 区间查询
 func (u *Updater[T]) NotBetween(col any, v1, v2 any) *Updater[T] {
+	if v1 == nil || v2 == nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: NotBetween 参数 v1/v2 不能为 nil"))
+		return u
+	}
 	return u.addCond(false, col, OpNotBetween, []any{v1, v2})
 }
 
 // OrNotBetween 区间查询
 func (u *Updater[T]) OrNotBetween(col any, v1, v2 any) *Updater[T] {
+	if v1 == nil || v2 == nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: OrNotBetween 参数 v1/v2 不能为 nil"))
+		return u
+	}
 	return u.addCond(true, col, OpNotBetween, []any{v1, v2})
 }
 

@@ -302,7 +302,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 					}
 					continue // 处理完毕，跳过通用逻辑
 				}
-				// 参数类型或数量不符（防御性代码），跳过该条件，避免落入通用逻辑生成语义错误的 SQL
+				// 防御性代码：正常 API 调用不会走到此处（Between 层已校验 nil 并写入 errs）
 				continue
 			}
 
