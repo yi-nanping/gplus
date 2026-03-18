@@ -3,6 +3,7 @@ package gplus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"gorm.io/gorm"
@@ -278,4 +279,245 @@ func TestRepository_UpdateByCondTX(t *testing.T) {
 	}
 
 	_ = ctx
+}
+
+// ---- 复杂 SQL 场景测试辅助结构体 ----
+
+type AgeGroup struct {
+	Age int `gorm:"column:age"`
+	Cnt int `gorm:"column:cnt"`
+}
+
+type AggregateStat struct {
+	TotalAge float64 `gorm:"column:total_age"`
+	AvgScore float64 `gorm:"column:avg_score"`
+}
+
+type UserOrderResult struct {
+	Username  string `gorm:"column:username"`
+	OrderName string `gorm:"column:order_name"`
+}
+
+// TestRepository_RawScan_GroupBy GROUP BY + COUNT
+func TestRepository_RawScan_GroupBy(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Create(&TestUser{Name: "A", Age: 20})
+	db.Create(&TestUser{Name: "B", Age: 20})
+	db.Create(&TestUser{Name: "C", Age: 30})
+
+	var groups []AgeGroup
+	err := repo.RawScan(ctx, &groups,
+		"SELECT age, COUNT(*) as cnt FROM test_users GROUP BY age ORDER BY age")
+	if err != nil {
+		t.Fatalf("RawScan GroupBy failed: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+	if groups[0].Age != 20 || groups[0].Cnt != 2 {
+		t.Fatalf("unexpected group[0]: %+v", groups[0])
+	}
+	if groups[1].Age != 30 || groups[1].Cnt != 1 {
+		t.Fatalf("unexpected group[1]: %+v", groups[1])
+	}
+}
+
+// TestRepository_RawScan_Having GROUP BY + HAVING 过滤分组
+func TestRepository_RawScan_Having(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Create(&TestUser{Name: "A", Age: 20})
+	db.Create(&TestUser{Name: "B", Age: 20})
+	db.Create(&TestUser{Name: "C", Age: 30})
+
+	var groups []AgeGroup
+	err := repo.RawScan(ctx, &groups,
+		"SELECT age, COUNT(*) as cnt FROM test_users GROUP BY age HAVING cnt > ?", 1)
+	if err != nil {
+		t.Fatalf("RawScan Having failed: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group with cnt>1, got %d", len(groups))
+	}
+	if groups[0].Age != 20 {
+		t.Fatalf("expected age=20, got %d", groups[0].Age)
+	}
+}
+
+// TestRepository_RawQuery_Subquery 子查询：age 大于全表平均值
+func TestRepository_RawQuery_Subquery(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Create(&TestUser{Name: "Young", Age: 10})
+	db.Create(&TestUser{Name: "Mid", Age: 20})
+	db.Create(&TestUser{Name: "Old", Age: 30})
+
+	// avg=20，仅 age=30 满足
+	results, err := repo.RawQuery(ctx,
+		"SELECT * FROM test_users WHERE age > (SELECT AVG(age) FROM test_users) ORDER BY age")
+	if err != nil {
+		t.Fatalf("RawQuery subquery failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Name != "Old" {
+		t.Fatalf("expected Old, got %s", results[0].Name)
+	}
+}
+
+// TestRepository_RawQuery_MultiCondition AND + OR 多条件组合
+func TestRepository_RawQuery_MultiCondition(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Create(&TestUser{Name: "Alice", Age: 25})
+	db.Create(&TestUser{Name: "Bob", Age: 30})
+	db.Create(&TestUser{Name: "Charlie", Age: 35})
+
+	results, err := repo.RawQuery(ctx,
+		"SELECT * FROM test_users WHERE age > ? AND (username = ? OR username = ?) ORDER BY username",
+		24, "Alice", "Bob")
+	if err != nil {
+		t.Fatalf("RawQuery multi-condition failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Name != "Alice" || results[1].Name != "Bob" {
+		t.Fatalf("unexpected names: %s, %s", results[0].Name, results[1].Name)
+	}
+}
+
+// TestRepository_RawScan_Aggregate 聚合函数：SUM + AVG
+func TestRepository_RawScan_Aggregate(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Create(&TestUser{Name: "A", Age: 10, Score: 1.5})
+	db.Create(&TestUser{Name: "B", Age: 20, Score: 2.5})
+	db.Create(&TestUser{Name: "C", Age: 30, Score: 3.0})
+
+	var stat AggregateStat
+	err := repo.RawScan(ctx, &stat,
+		"SELECT SUM(age) as total_age, AVG(score) as avg_score FROM test_users")
+	if err != nil {
+		t.Fatalf("RawScan aggregate failed: %v", err)
+	}
+	if stat.TotalAge != 60 {
+		t.Fatalf("expected total_age=60, got %v", stat.TotalAge)
+	}
+	// avg_score = (1.5+2.5+3.0)/3 ≈ 2.333
+	if stat.AvgScore < 2.3 || stat.AvgScore > 2.4 {
+		t.Fatalf("unexpected avg_score: %v", stat.AvgScore)
+	}
+}
+
+// TestRepository_RawQuery_LimitOffset 分页：LIMIT + OFFSET
+func TestRepository_RawQuery_LimitOffset(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	for i := 1; i <= 5; i++ {
+		db.Create(&TestUser{Name: fmt.Sprintf("User%d", i), Age: i * 10})
+	}
+
+	// offset=1 跳过 age=10，取 age=20,30
+	results, err := repo.RawQuery(ctx,
+		"SELECT * FROM test_users ORDER BY age LIMIT ? OFFSET ?", 2, 1)
+	if err != nil {
+		t.Fatalf("RawQuery LimitOffset failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Age != 20 {
+		t.Fatalf("expected age=20, got %d", results[0].Age)
+	}
+	if results[1].Age != 30 {
+		t.Fatalf("expected age=30, got %d", results[1].Age)
+	}
+}
+
+// TestRepository_RawScan_Join 多表 INNER JOIN
+func TestRepository_RawScan_Join(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS test_orders (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER,
+		order_name TEXT
+	)`)
+
+	user := &TestUser{Name: "Alice", Age: 25}
+	db.Create(user)
+	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", user.ID, "OrderA")
+	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", user.ID, "OrderB")
+
+	var results []UserOrderResult
+	err := repo.RawScan(ctx, &results,
+		`SELECT u.username, o.order_name
+		 FROM test_users u
+		 INNER JOIN test_orders o ON o.user_id = u.id
+		 ORDER BY o.order_name`)
+	if err != nil {
+		t.Fatalf("RawScan join failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 join results, got %d", len(results))
+	}
+	if results[0].Username != "Alice" || results[0].OrderName != "OrderA" {
+		t.Fatalf("unexpected result[0]: %+v", results[0])
+	}
+	if results[1].OrderName != "OrderB" {
+		t.Fatalf("unexpected result[1]: %+v", results[1])
+	}
+}
+
+// TestRepository_RawScan_JoinGroupBy 多表 JOIN + GROUP BY + HAVING
+func TestRepository_RawScan_JoinGroupBy(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS test_orders (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER,
+		order_name TEXT
+	)`)
+
+	u1 := &TestUser{Name: "Alice", Age: 25}
+	u2 := &TestUser{Name: "Bob", Age: 30}
+	db.Create(u1)
+	db.Create(u2)
+	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", u1.ID, "O1")
+	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", u1.ID, "O2")
+	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", u2.ID, "O3")
+
+	// 只返回订单数 > 1 的用户
+	type UserOrderCount struct {
+		Username   string `gorm:"column:username"`
+		OrderCount int    `gorm:"column:order_count"`
+	}
+	var results []UserOrderCount
+	err := repo.RawScan(ctx, &results,
+		`SELECT u.username, COUNT(o.id) as order_count
+		 FROM test_users u
+		 INNER JOIN test_orders o ON o.user_id = u.id
+		 GROUP BY u.id, u.username
+		 HAVING order_count > ?
+		 ORDER BY u.username`, 1)
+	if err != nil {
+		t.Fatalf("RawScan JoinGroupBy failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Username != "Alice" || results[0].OrderCount != 2 {
+		t.Fatalf("unexpected result: %+v", results[0])
+	}
 }
