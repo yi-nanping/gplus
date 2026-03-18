@@ -198,6 +198,8 @@ go.work
 
 !README.md
 !LICENSE
+!CHANGELOG.md
+!*.yml
 
 # !Makefile
 

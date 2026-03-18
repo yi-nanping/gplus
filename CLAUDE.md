@@ -18,9 +18,7 @@ go test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
 go test -v ./...
 ```
 
-**已知的预存在测试失败**（未经明确要求不要修复）：
-- `TestBuilder_QuoteColumn/带别名(AS)` — `quoteColumn` 检测到空格时提前退出，因此 `"users.name AS u_name"` 不会被处理
-- `TestBuilder_QuoteColumn/表名.*` — `*` 在提前退出的特殊字符列表中
+**已知的预存在测试失败**：无（所有测试均通过，包括 `TestBuilder_QuoteColumn` 全部子测试）
 
 ## 架构
 
