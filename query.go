@@ -602,6 +602,8 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 	case "IN":
 		// 自动处理逗号分隔的字符串
 		q.In(column, strings.Split(value, ","))
+	case "NOT IN":
+		q.NotIn(column, strings.Split(value, ","))
 	case "LIKE":
 		q.Like(column, value)
 	case "LEFT_LIKE":
@@ -614,12 +616,17 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 		q.IsNotNull(column)
 	case "BETWEEN":
 		parts := strings.Split(value, ",")
-		if len(parts) == 2 {
-			q.Between(column, parts[0], parts[1])
+		if len(parts) != 2 {
+			q.errs = append(q.errs, fmt.Errorf(
+				"data rule [col: %s]: BETWEEN 需要逗号分隔的两个值，实际得到 %q",
+				column, value,
+			))
+			return
 		}
+		q.Between(column, parts[0], parts[1])
 	default:
 		q.errs = append(q.errs, fmt.Errorf(
-			"data rule [col: %s]: unsupported condition %q; allowed: =, <>, >, >=, <, <=, IN, LIKE, LEFT_LIKE, RIGHT_LIKE, IS NULL, IS NOT NULL, BETWEEN",
+			"data rule [col: %s]: unsupported condition %q; allowed: =, <>, >, >=, <, <=, IN, NOT IN, LIKE, LEFT_LIKE, RIGHT_LIKE, IS NULL, IS NOT NULL, BETWEEN",
 			column, rule.Condition,
 		))
 	}
