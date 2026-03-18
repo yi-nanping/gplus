@@ -108,8 +108,13 @@ func (r *Repository[D, T]) ListTx(q *Query[T], tx *gorm.DB) (data []T, err error
 	return
 }
 
-// Pluck 泛型 R 代表返回值的类型
+// Pluck 提取单列值到泛型切片中
 func Pluck[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) ([]R, error) {
+	return PluckTx[T, R, D](r, q, col, nil)
+}
+
+// PluckTx 在指定事务中提取单列值到泛型切片中
+func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any, tx *gorm.DB) ([]R, error) {
 	if q == nil {
 		return nil, ErrQueryNil
 	}
@@ -124,7 +129,7 @@ func Pluck[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any
 	// 临时覆盖 selects 为指定列，执行后恢复，避免破坏调用方 Query 状态
 	origSelects := q.ScopeBuilder.selects
 	q.ScopeBuilder.selects = []string{colName}
-	err = r.dbResolver(q.Context(), nil).Model(new(T)).Scopes(q.DataRuleBuilder().BuildQuery()).Pluck(colName, &result).Error
+	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.DataRuleBuilder().BuildQuery()).Pluck(colName, &result).Error
 	q.ScopeBuilder.selects = origSelects
 	return result, err
 }
