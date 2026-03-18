@@ -302,7 +302,8 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 					}
 					continue // 处理完毕，跳过通用逻辑
 				}
-				// 如果参数不对，回退到通用逻辑或者报错，这里选择继续走通用逻辑防止Panic，但在Query层应该保证正确
+				// 参数类型或数量不符（防御性代码），跳过该条件，避免落入通用逻辑生成语义错误的 SQL
+				continue
 			}
 
 			// 特殊处理 IsNull / IsNotNull (不需要占位符 ?)
