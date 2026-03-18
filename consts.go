@@ -33,9 +33,10 @@ const (
 	JoinNatural = "NATURAL JOIN"
 	// JoinFull 全连接 返回左表中的所有记录，即使右表中没有匹配的记录。
 	JoinFull = "FULL OUTER JOIN"
-	// JoinUnion UNION 连接 返回两个表中的所有记录，不论它们是否匹配。
-	// 请注意，UNION 内部的 SELECT 语句必须拥有相同数量的列。列也必须拥有相似的数据类型。
-	// 同时，每条 SELECT 语句中的列的顺序必须相同。UNION 只选取记录，而UNION ALL会列出所有记录。
+	// JoinUnion 仅作语义标识，当前不支持通过 Join 方法执行 UNION 操作。
+	// UNION 需要合并两个独立的 SELECT 语句，无法用 joinInfo 结构表达。
+	// 若需要 UNION，请使用 RawQuery / RawScan 直接编写完整 SQL，例如：
+	//   repo.RawScan(ctx, &result, "SELECT ... FROM a UNION SELECT ... FROM b")
 	JoinUnion = "UNION"
 	// JoinCross 交叉连接 返回两个表中的所有记录，不论它们是否匹配。
 	// 因为其就是把表A和表B的数据进行一个N*M的组合，即笛卡尔积。
