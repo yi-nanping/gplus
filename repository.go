@@ -302,8 +302,9 @@ func (r *Repository[D, T]) DeleteByCond(q *Query[T]) (int64, error) {
 // DeleteByCondTX 事务根据条件删除
 func (r *Repository[D, T]) DeleteByCondTX(q *Query[T], tx *gorm.DB) (int64, error) {
 	var model T
-	// 如果 q 没有任何条件且没有设置 Unscoped，拒绝执行，防止误删全表。
-	if q == nil || (q.IsEmpty() && !q.IsUnscoped()) {
+	// 无论是否设置 Unscoped，空条件一律拒绝执行，防止物理全表删除。
+	// 如需全表物理删除，请使用 RawExec 显式执行 DELETE FROM table。
+	if q == nil || q.IsEmpty() {
 		return 0, ErrDeleteEmpty
 	}
 	if err := q.GetError(); err != nil {
