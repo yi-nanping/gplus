@@ -253,12 +253,12 @@ func TestUpdater_LikeOps(t *testing.T) {
 		wantValue string
 	}{
 		{"Like", func(u *Updater[TestUser], m *TestUser) { u.Like(&m.Name, "Alice") }, false, "%Alice%"},
-		{"LeftLike", func(u *Updater[TestUser], m *TestUser) { u.LeftLike(&m.Name, "Alice") }, false, "%Alice"},
-		{"RightLike", func(u *Updater[TestUser], m *TestUser) { u.RightLike(&m.Name, "Alice") }, false, "Alice%"},
+		{"LikeLeft", func(u *Updater[TestUser], m *TestUser) { u.LikeLeft(&m.Name, "Alice") }, false, "%Alice"},
+		{"LikeRight", func(u *Updater[TestUser], m *TestUser) { u.LikeRight(&m.Name, "Alice") }, false, "Alice%"},
 		{"NotLike", func(u *Updater[TestUser], m *TestUser) { u.NotLike(&m.Name, "Alice") }, false, "%Alice%"},
 		{"OrLike", func(u *Updater[TestUser], m *TestUser) { u.OrLike(&m.Name, "Alice") }, true, "%Alice%"},
-		{"OrLeftLike", func(u *Updater[TestUser], m *TestUser) { u.OrLeftLike(&m.Name, "Alice") }, true, "%Alice"},
-		{"OrRightLike", func(u *Updater[TestUser], m *TestUser) { u.OrRightLike(&m.Name, "Alice") }, true, "Alice%"},
+		{"OrLikeLeft", func(u *Updater[TestUser], m *TestUser) { u.OrLikeLeft(&m.Name, "Alice") }, true, "%Alice"},
+		{"OrLikeRight", func(u *Updater[TestUser], m *TestUser) { u.OrLikeRight(&m.Name, "Alice") }, true, "Alice%"},
 		{"OrNotLike", func(u *Updater[TestUser], m *TestUser) { u.OrNotLike(&m.Name, "Alice") }, true, "%Alice%"},
 	}
 

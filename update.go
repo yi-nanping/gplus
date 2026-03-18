@@ -142,13 +142,13 @@ func (u *Updater[T]) Like(col any, val string) *Updater[T] {
 	return u.addCond(false, col, OpLike, "%"+val+"%")
 }
 
-// LeftLike 左模糊查询
-func (u *Updater[T]) LeftLike(col any, val string) *Updater[T] {
+// LikeLeft 左模糊查询
+func (u *Updater[T]) LikeLeft(col any, val string) *Updater[T] {
 	return u.addCond(false, col, OpLike, "%"+val)
 }
 
-// RightLike 右模糊查询
-func (u *Updater[T]) RightLike(col any, val string) *Updater[T] {
+// LikeRight 右模糊查询
+func (u *Updater[T]) LikeRight(col any, val string) *Updater[T] {
 	return u.addCond(false, col, OpLike, val+"%")
 }
 
@@ -246,13 +246,13 @@ func (u *Updater[T]) OrLike(col any, val string) *Updater[T] {
 	return u.addCond(true, col, OpLike, "%"+val+"%")
 }
 
-// OrLeftLike 左模糊查询
-func (u *Updater[T]) OrLeftLike(col any, val string) *Updater[T] {
+// OrLikeLeft 左模糊查询(或)
+func (u *Updater[T]) OrLikeLeft(col any, val string) *Updater[T] {
 	return u.addCond(true, col, OpLike, "%"+val)
 }
 
-// OrRightLike 右模糊查询
-func (u *Updater[T]) OrRightLike(col any, val string) *Updater[T] {
+// OrLikeRight 右模糊查询(或)
+func (u *Updater[T]) OrLikeRight(col any, val string) *Updater[T] {
 	return u.addCond(true, col, OpLike, val+"%")
 }
 
