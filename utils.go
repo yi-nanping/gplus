@@ -61,21 +61,24 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 func initPtrEmbeds(v reflect.Value) {
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
-		// 获取字段
+		// 获取字段类型
 		f := t.Field(i)
-		//是匿名嵌入 && 是指针类型 && 指针指向结构体
+		// 是匿名嵌入 && 是指针类型 && 指针指向结构体
 		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
 			continue
 		}
+		// 获取字段值
 		fv := v.Field(i)
 		if fv.IsNil() {
 			// 分配新实例
 			fv.Set(reflect.New(f.Type.Elem()))
 		}
+		// 递归处理
 		initPtrEmbeds(fv.Elem())
 	}
 }
 
+// parseFields 解析字段
 func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[uintptr]string) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
