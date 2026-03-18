@@ -188,22 +188,25 @@ func (r *Repository[D, T]) SaveTx(ctx context.Context, entity *T, tx *gorm.DB) e
 	return r.dbResolver(ctx, tx).Create(entity).Error
 }
 
-// SaveBatch 批量新增
+// SaveBatch 批量新增（一次性插入，适合小批量数据）。
+// 注意：底层调用 GORM Create，执行纯插入而非 upsert。
+// 大批量数据请使用 CreateBatch 以控制每批插入数量。
 func (r *Repository[D, T]) SaveBatch(ctx context.Context, entities []T) error {
 	return r.SaveBatchTx(ctx, entities, nil)
 }
 
-// SaveBatchTx 事务批量新增
+// SaveBatchTx 事务批量新增（一次性插入，适合小批量数据）。
 func (r *Repository[D, T]) SaveBatchTx(ctx context.Context, entities []T, tx *gorm.DB) error {
 	return r.dbResolver(ctx, tx).Create(&entities).Error
 }
 
-// CreateBatch 批量插入
+// CreateBatch 批量插入（分批执行，适合大批量数据）。
+// batchSize 控制每批插入的记录数，防止超出数据库单次 SQL 参数限制。
 func (r *Repository[D, T]) CreateBatch(ctx context.Context, entities []*T, batchSize int) error {
 	return r.CreateBatchTx(ctx, entities, batchSize, nil)
 }
 
-// CreateBatchTx 事务批量插入
+// CreateBatchTx 事务批量插入（分批执行，适合大批量数据）。
 func (r *Repository[D, T]) CreateBatchTx(ctx context.Context, entities []*T, batchSize int, tx *gorm.DB) error {
 	return r.dbResolver(ctx, tx).CreateInBatches(entities, batchSize).Error
 }
