@@ -26,11 +26,12 @@ func TestUpdater_Logic(t *testing.T) {
 		}
 	})
 
-	t.Run("Set 错误字段触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			badUpdater, _ := NewUpdater[TestUser](ctx)
-			badUpdater.Set(nil, "Fail")
-		}, "Set nil 应触发 panic")
+	t.Run("Set 无效列指针写入 errs", func(t *testing.T) {
+		badUpdater, _ := NewUpdater[TestUser](ctx)
+		badUpdater.Set(nil, "Fail")
+		if badUpdater.GetError() == nil {
+			t.Error("Set nil 应将错误写入 errs")
+		}
 	})
 }
 
@@ -127,11 +128,12 @@ func TestUpdater_SetMap(t *testing.T) {
 		}
 	})
 
-	t.Run("空 map 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			u, _ := NewUpdater[TestUser](ctx)
-			u.SetMap(map[string]any{})
-		}, "SetMap 空 map 应触发 panic")
+	t.Run("空 map 写入 errs", func(t *testing.T) {
+		u, _ := NewUpdater[TestUser](ctx)
+		u.SetMap(map[string]any{})
+		if u.GetError() == nil {
+			t.Error("SetMap 空 map 应将错误写入 errs")
+		}
 	})
 }
 

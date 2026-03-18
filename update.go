@@ -62,21 +62,32 @@ func (u *Updater[T]) IsEmpty() bool {
 // Set 设置更新值
 // 示例: u.Set(&User.Name, "NewName")
 func (u *Updater[T]) Set(col any, val any) *Updater[T] {
-	u.setMap[mustColumn(col)] = val
+	name, err := resolveColumnName(col)
+	if err != nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: Set 无效列指针: %w", err))
+		return u
+	}
+	u.setMap[name] = val
 	return u
 }
 
 // SetExpr 设置 SQL 表达式更新 (原子更新)
 // 示例: u.SetExpr(&User.Age, "age + ?", 1) -> UPDATE ... SET age = age + 1
 func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
-	u.setMap[mustColumn(col)] = gorm.Expr(expr, args...)
+	name, err := resolveColumnName(col)
+	if err != nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: SetExpr 无效列指针: %w", err))
+		return u
+	}
+	u.setMap[name] = gorm.Expr(expr, args...)
 	return u
 }
 
 // SetMap 批量设置更新内容
 func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 	if len(m) == 0 {
-		panic("gplus: SetMap called with empty map")
+		u.errs = append(u.errs, fmt.Errorf("gplus: SetMap 不能传入空 map"))
+		return u
 	}
 	for k, v := range m {
 		u.setMap[k] = v
@@ -89,7 +100,12 @@ func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 // Select 指定只更新哪些字段 (即使 setMap 里有其他字段也不会更新)
 func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 	for _, c := range cols {
-		u.selects = append(u.selects, mustColumn(c))
+		name, err := resolveColumnName(c)
+		if err != nil {
+			u.errs = append(u.errs, fmt.Errorf("gplus: Select 无效列指针: %w", err))
+			continue
+		}
+		u.selects = append(u.selects, name)
 	}
 	return u
 }
@@ -97,7 +113,12 @@ func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 // Omit 指定排除哪些字段不更新
 func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 	for _, c := range cols {
-		u.omits = append(u.omits, mustColumn(c))
+		name, err := resolveColumnName(c)
+		if err != nil {
+			u.errs = append(u.errs, fmt.Errorf("gplus: Omit 无效列指针: %w", err))
+			continue
+		}
+		u.omits = append(u.omits, name)
 	}
 	return u
 }
