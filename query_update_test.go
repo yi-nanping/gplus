@@ -57,6 +57,93 @@ func TestQuery_NestedLogic(t *testing.T) {
 	}
 }
 
+// TestQuery_Or 测试 Or 开启带括号的 OR 嵌套块
+func TestQuery_Or(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("基本 OR 嵌套块", func(t *testing.T) {
+		// WHERE name = 'alice' OR (age > 18 AND score > 90)
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "alice").Or(func(sub *Query[TestUser]) {
+			sub.Gt(&u.Age, 18).Gt(&u.Score, 90)
+		})
+
+		assertError(t, q.GetError(), false, "Or 嵌套块不应有错误")
+
+		if len(q.conditions) != 2 {
+			t.Fatalf("期望 2 个顶层条件，实际 %d", len(q.conditions))
+		}
+		group := q.conditions[1]
+		if !group.isOr {
+			t.Error("第二个条件应为 OR 类型")
+		}
+		if len(group.group) != 2 {
+			t.Errorf("OR 块内期望 2 个子条件，实际 %d", len(group.group))
+		}
+	})
+
+	t.Run("OR 块为空时不追加条件", func(t *testing.T) {
+		// fn 内不加任何条件，空块应被忽略
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "alice").Or(func(sub *Query[TestUser]) {
+			// 故意不添加任何条件
+		})
+
+		assertError(t, q.GetError(), false, "空 Or 块不应有错误")
+		if len(q.conditions) != 1 {
+			t.Errorf("空 Or 块不应追加条件，期望 1 个顶层条件，实际 %d", len(q.conditions))
+		}
+	})
+
+	t.Run("nil fn 触发 panic", func(t *testing.T) {
+		assertPanics(t, func() {
+			q, _ := NewQuery[TestUser](ctx)
+			q.Or(nil)
+		}, "Or(nil) 应触发 panic")
+	})
+
+	t.Run("多个 OR 嵌套块", func(t *testing.T) {
+		// WHERE name = 'alice' OR (age < 10) OR (score > 99)
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "alice").
+			Or(func(sub *Query[TestUser]) {
+				sub.Lt(&u.Age, 10)
+			}).
+			Or(func(sub *Query[TestUser]) {
+				sub.Gt(&u.Score, 99)
+			})
+
+		assertError(t, q.GetError(), false, "多个 Or 块不应有错误")
+		if len(q.conditions) != 3 {
+			t.Fatalf("期望 3 个顶层条件，实际 %d", len(q.conditions))
+		}
+		for i := 1; i <= 2; i++ {
+			if !q.conditions[i].isOr {
+				t.Errorf("conditions[%d] 应为 OR 类型", i)
+			}
+			if len(q.conditions[i].group) != 1 {
+				t.Errorf("conditions[%d] 期望 1 个子条件，实际 %d", i, len(q.conditions[i].group))
+			}
+		}
+	})
+
+	t.Run("OR 块内支持多种条件类型", func(t *testing.T) {
+		// WHERE is_active = true OR (age BETWEEN 18 AND 30 AND email IS NOT NULL)
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.IsActive, true).Or(func(sub *Query[TestUser]) {
+			sub.Between(&u.Age, 18, 30).IsNotNull(&u.Email)
+		})
+
+		assertError(t, q.GetError(), false, "Or 块内混合条件不应有错误")
+		if len(q.conditions) != 2 {
+			t.Fatalf("期望 2 个顶层条件，实际 %d", len(q.conditions))
+		}
+		if len(q.conditions[1].group) != 2 {
+			t.Errorf("OR 块内期望 2 个子条件，实际 %d", len(q.conditions[1].group))
+		}
+	})
+}
+
 // TestUpdater_Logic 测试更新器的逻辑和错误处理
 func TestUpdater_Logic(t *testing.T) {
 	ctx := context.Background()
