@@ -27,13 +27,6 @@ type Repository[D comparable, T any] struct {
 	db *gorm.DB
 }
 
-// PageResult 分页查询结果
-type PageResult[T any] struct {
-	Total    int64 `json:"total"`
-	Records  []T   `json:"records"`
-	Page     int   `json:"page"`
-	PageSize int   `json:"pageSize"`
-}
 
 // NewRepository 构造函数
 func NewRepository[D comparable, T any](db *gorm.DB) *Repository[D, T] {
