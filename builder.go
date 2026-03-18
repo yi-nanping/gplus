@@ -12,7 +12,7 @@ import (
 type condition struct {
 	// expr 双重语义：isRaw=false 时为列名；isRaw=true 时为完整 SQL 片段
 	expr     string
-	operator string // =, >, <, >=, <=, IN, LIKE, BETWEEN, EXISTS, NOT EXISTS, IS NULL, IS NOT NULL
+	operator string // =, <>, >, >=, <, <=, IN, NOT IN, LIKE, NOT LIKE, BETWEEN, NOT BETWEEN, IS NULL, IS NOT NULL
 	value    any
 	isOr     bool // true 为 OR，false 为 AND
 	isRaw    bool // 是否为原生 SQL
