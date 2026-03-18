@@ -246,14 +246,13 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			if len(cond.group) > 0 {
 				// 显式捕获循环变量，防止 Go < 1.22 下闭包捕获到最后一次迭代值
 				cond := cond
-				// 递归闭包
-				subQueryFunc := func(subDb *gorm.DB) *gorm.DB {
-					return buildCond(subDb.Session(&gorm.Session{NewDB: true}), cond.group)
-				}
+				// GORM v2 分组条件需传入 *gorm.DB，不支持 func(*gorm.DB)*gorm.DB 签名
+				subDb := db.Session(&gorm.Session{NewDB: true})
+				subDb = buildCond(subDb, cond.group)
 				if cond.isOr {
-					d = d.Or(subQueryFunc)
+					d = d.Or(subDb)
 				} else {
-					d = d.Where(subQueryFunc)
+					d = d.Where(subDb)
 				}
 				continue
 			}
@@ -355,8 +354,8 @@ func (b *ScopeBuilder) applyJoins(db *gorm.DB) *gorm.DB {
 func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 	// 1. 处理 Group By
 	for _, group := range b.groups {
-		// Group 字段转义 (quoteColumn 已处理过函数识别，如 COUNT(id) 不会被错误转义)
-		db = db.Group(quoteColumn(group, qL, qR))
+		// db.Group() 内部会用方言引号转义，直接传原始列名即可
+		db = db.Group(group)
 	}
 
 	// 2. 处理 Having (逻辑与 applyWhere 高度一致)
