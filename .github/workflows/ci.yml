@@ -40,5 +40,5 @@ jobs:
 
       - name: 运行测试
         env:
-          TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/test
+          TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local
         run: go test -v -race ./...
