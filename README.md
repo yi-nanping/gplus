@@ -264,6 +264,81 @@ query.CrossJoin("settings")
 query.NaturalJoin("user_settings")
 ```
 
+## 集成方式
+
+### 方式一：直接内嵌 Repository（推荐）
+
+将 `gplus.Repository` 内嵌到你的业务 Repository 结构体中，即可直接使用所有 CRUD 方法，同时可以在结构体上添加自定义业务方法。
+
+```go
+type UserRepository struct {
+    gplus.Repository[uint, User]
+}
+
+func NewUserRepository(db *gorm.DB) *UserRepository {
+    return &UserRepository{
+        Repository: gplus.NewRepository[uint, User](db),
+    }
+}
+
+// 添加自定义业务方法
+func (r *UserRepository) FindActiveVips(ctx context.Context) ([]User, error) {
+    q, m := gplus.NewQuery[User](ctx)
+    q.Eq(&m.IsVip, true).Eq(&m.Status, "active")
+    return r.List(q)
+}
+```
+
+使用时：
+
+```go
+repo := NewUserRepository(db)
+
+// 直接使用内嵌的通用方法
+user, err := repo.GetById(ctx, 1)
+
+// 使用自定义业务方法
+vips, err := repo.FindActiveVips(ctx)
+```
+
+### 方式二：依赖注入（适合 DI 框架）
+
+将 `*gplus.Repository` 作为字段注入，适合 Wire、Fx 等依赖注入框架。
+
+```go
+type UserService struct {
+    userRepo *gplus.Repository[uint, User]
+    orderRepo *gplus.Repository[uint, Order]
+}
+
+func NewUserService(
+    userRepo *gplus.Repository[uint, User],
+    orderRepo *gplus.Repository[uint, Order],
+) *UserService {
+    return &UserService{
+        userRepo:  userRepo,
+        orderRepo: orderRepo,
+    }
+}
+
+func (s *UserService) GetUserOrders(ctx context.Context, userID uint) ([]Order, error) {
+    q, m := gplus.NewQuery[Order](ctx)
+    q.Eq(&m.UserID, userID).Order("created_at DESC")
+    return s.orderRepo.List(q)
+}
+```
+
+### 方式三：全局单例（简单项目）
+
+适合小型项目或脚本，直接在包级别声明 Repository 变量。
+
+```go
+var (
+    UserRepo  = gplus.NewRepository[uint, User](db)
+    OrderRepo = gplus.NewRepository[uint, Order](db)
+)
+```
+
 ## 项目结构
 
 ```
