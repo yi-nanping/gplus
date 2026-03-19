@@ -574,4 +574,14 @@ func TestQuery_ToDB(t *testing.T) {
 			t.Fatal("空 Query 的 ToDB 不应返回 nil")
 		}
 	})
+
+	t.Run("ToDB 有错误时将错误注入 DB", func(t *testing.T) {
+		db := setupToDBTestDB(t)
+		q, _ := NewQuery[TestUser](ctx)
+		q.Eq(nil, "bad") // 触发 builder 错误
+		result := q.ToDB(db)
+		if result.Error == nil {
+			t.Error("ToDB 有 builder 错误时，返回的 DB 应携带错误")
+		}
+	})
 }

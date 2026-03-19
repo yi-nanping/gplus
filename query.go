@@ -135,7 +135,13 @@ func (q *Query[T]) Select(cols ...any) *Query[T] {
 func (q *Query[T]) ToDB(db *gorm.DB) *gorm.DB {
 	// 1. 使用 Session(&gorm.Session{}) 创建一个干净的 DB 会话，避免污染传入的 db
 	// 2. 调用 BuildQuery() 获取闭包，并立即执行该闭包应用条件
-	return q.BuildQuery()(db.Session(&gorm.Session{}))
+	session := db.Session(&gorm.Session{})
+	if err := q.GetError(); err != nil {
+		// 将 builder 错误注入 DB 链，确保后续 GORM 操作返回该错误而非执行错误 SQL
+		_ = session.AddError(err)
+		return session
+	}
+	return q.BuildQuery()(session)
 }
 
 // Eq 等于
