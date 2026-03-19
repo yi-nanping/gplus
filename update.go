@@ -359,22 +359,6 @@ func (u *Updater[T]) Unscoped() *Updater[T] {
 
 // Clear 重写 Updater 的清除逻辑
 func (u *Updater[T]) Clear() {
-	// 1. 调用基类的 Clear 清除 Where/Join 等条件
 	u.ScopeBuilder.Clear()
-
-	// 2. 清除 Updater 特有的更新值 Map
-	// 方式 A: 直接创建新 map (简单，GC 压力稍大)
-	// u.setMap = make(map[string]any)
-
-	// 方式 B: 遍历删除 (如果 map 很大，性能较差，但保留了 map 内存)
-	// for k := range u.setMap {
-	//    delete(u.setMap, k)
-	// }
-
-	// 方式 C (推荐): Go 1.21+ 提供了 clear() 内置函数
-	// 如果你的 Go 版本 >= 1.21
 	clear(u.setMap)
-
-	// 兼容老版本的通用做法 (由于 map 无法像 slice 那样 [:0]，通常重新 make 是最安全的)
-	// u.setMap = make(map[string]any)
 }

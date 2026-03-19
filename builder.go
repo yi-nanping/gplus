@@ -31,9 +31,10 @@ type joinInfo struct {
 
 // DataRule 对外开放的核心规则字段
 type DataRule struct {
-	Column    string // 规则字段 (例如: "dept_id")
-	Condition string // 规则条件 (例如: "=", "IN", "LIKE")
-	Value     string // 规则值   (例如: "1001" 或 "1,2,3")
+	Column    string   // 规则字段 (例如: "dept_id")
+	Condition string   // 规则条件 (例如: "=", "IN", "LIKE")
+	Value     string   // 规则值   (例如: "1001"）；IN/NOT IN/BETWEEN 建议使用 Values
+	Values    []string // IN/NOT IN/BETWEEN 的多值列表，优先于 Value 的逗号分隔解析
 }
 
 // preloadInfo 存储预加载信息
