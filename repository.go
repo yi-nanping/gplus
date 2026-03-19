@@ -132,13 +132,9 @@ func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col a
 	if err != nil {
 		return nil, err
 	}
-	// 临时覆盖 selects 为指定列，执行后恢复，避免破坏调用方 Query 状态
 	if err = q.DataRuleBuilder().GetError(); err != nil {
 		return nil, err
 	}
-	origSelects := q.selects
-	q.selects = []string{colName}
-	defer func() { q.selects = origSelects }()
 	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildQuery()).Pluck(colName, &result).Error
 	return result, err
 }

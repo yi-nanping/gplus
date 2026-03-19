@@ -16,6 +16,7 @@ var (
 
 	ErrColumnNotFound = errors.New("gplus: column name not found for pointer")
 	ErrInvalidPointer = errors.New("gplus: argument must be a struct field pointer")
+	ErrColumnEmpty    = errors.New("gplus: column name cannot be empty")
 )
 
 // unregisterModel 从缓存中移除指定模型的注册信息（仅供包内测试使用）。
@@ -100,7 +101,7 @@ func resolveColumnName(v any) (string, error) {
 	// 如果直接传字符串，直接返回 但字符串不能为空
 	if s, ok := v.(string); ok {
 		if s == "" {
-			return "", ErrInvalidPointer
+			return "", ErrColumnEmpty
 		}
 		return s, nil
 	}
