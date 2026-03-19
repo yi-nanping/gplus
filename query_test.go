@@ -215,25 +215,28 @@ func TestQuery_Having(t *testing.T) {
 		}
 	})
 
-	t.Run("Having 空 col 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.Having("", OpGt, 18)
-		}, "Having 空 col 应触发 panic")
+	t.Run("Having 空 col 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Having("", OpGt, 18)
+		assertError(t, q.GetError(), true, "Having 空 col 应写入 errs")
+		if len(q.havings) != 0 {
+			t.Errorf("Having 空 col 不应追加条件，实际 %d", len(q.havings))
+		}
 	})
 
-	t.Run("Having 空 op 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.Having("age", "", 18)
-		}, "Having 空 op 应触发 panic")
+	t.Run("Having 空 op 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Having("age", "", 18)
+		assertError(t, q.GetError(), true, "Having 空 op 应写入 errs")
 	})
 
-	t.Run("OrHaving 空 col 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.OrHaving("", OpGt, 18)
-		}, "OrHaving 空 col 应触发 panic")
+	t.Run("OrHaving 空 col 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.OrHaving("", OpGt, 18)
+		assertError(t, q.GetError(), true, "OrHaving 空 col 应写入 errs")
+		if len(q.havings) != 0 {
+			t.Errorf("OrHaving 空 col 不应追加条件，实际 %d", len(q.havings))
+		}
 	})
 }
 

@@ -386,7 +386,8 @@ func (q *Query[T]) Group(cols ...any) *Query[T] {
 // 示例：q.Join("profiles", gplus.JoinLeft, "profiles.user_id = users.id")
 func (q *Query[T]) join(table, method, on string, args ...any) *Query[T] {
 	if table == "" || method == "" {
-		panic("gplus: join called with empty table or method")
+		q.errs = append(q.errs, fmt.Errorf("gplus: join called with empty table=%q or method=%q", table, method))
+		return q
 	}
 	q.joins = append(q.joins, joinInfo{method: method, table: table, on: on, args: args})
 	return q
@@ -483,7 +484,8 @@ func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
 // 示例: q.Having("COUNT(id)", OpGt, 10)
 func (q *Query[T]) Having(col string, op string, val any) *Query[T] {
 	if col == "" || op == "" {
-		panic(fmt.Sprintf("gplus: Having called with empty col=%q or op=%q", col, op))
+		q.errs = append(q.errs, fmt.Errorf("gplus: Having called with empty col=%q or op=%q", col, op))
+		return q
 	}
 	q.havings = append(q.havings, condition{
 		expr:     col,
@@ -497,7 +499,8 @@ func (q *Query[T]) Having(col string, op string, val any) *Query[T] {
 // OrHaving 添加 OR 分组过滤
 func (q *Query[T]) OrHaving(col string, op string, val any) *Query[T] {
 	if col == "" || op == "" {
-		panic(fmt.Sprintf("gplus: OrHaving called with empty col=%q or op=%q", col, op))
+		q.errs = append(q.errs, fmt.Errorf("gplus: OrHaving called with empty col=%q or op=%q", col, op))
+		return q
 	}
 	q.havings = append(q.havings, condition{
 		expr:     col,
@@ -533,7 +536,8 @@ func (q *Query[T]) HavingGroup(fn func(sub *Query[T])) *Query[T] {
 // args: 可选的过滤条件，例如只预加载状态为已支付的订单
 func (q *Query[T]) Preload(column string, args ...any) *Query[T] {
 	if column == "" {
-		panic("gplus: Preload called with empty column")
+		q.errs = append(q.errs, errors.New("gplus: Preload called with empty column"))
+		return q
 	}
 	if q.preloads == nil {
 		q.preloads = make([]preloadInfo, 0)

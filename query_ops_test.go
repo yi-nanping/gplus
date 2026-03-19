@@ -519,11 +519,13 @@ func TestQuery_Preload(t *testing.T) {
 		}
 	})
 
-	t.Run("Preload 空 column 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.Preload("")
-		}, "Preload 空 column 应触发 panic")
+	t.Run("Preload 空 column 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Preload("")
+		assertError(t, q.GetError(), true, "Preload 空 column 应写入 errs")
+		if len(q.preloads) != 0 {
+			t.Errorf("Preload 空 column 不应追加条件，实际 %d", len(q.preloads))
+		}
 	})
 }
 
