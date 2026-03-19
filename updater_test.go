@@ -197,6 +197,18 @@ func TestUpdater_Clear(t *testing.T) {
 	if len(u.conditions) != 0 {
 		t.Error("Clear 后 conditions 应为空")
 	}
+
+	t.Run("Clear 后 errs 应清空", func(t *testing.T) {
+		u2, _ := NewUpdater[TestUser](ctx)
+		u2.Set(nil, "bad") // 触发错误
+		if u2.GetError() == nil {
+			t.Fatal("期望有错误")
+		}
+		u2.Clear()
+		if u2.GetError() != nil {
+			t.Error("Clear 后 errs 应为空")
+		}
+	})
 }
 
 // TestUpdater_CompareOps 测试 WHERE 条件方法
