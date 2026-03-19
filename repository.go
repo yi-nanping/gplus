@@ -324,6 +324,9 @@ func (r *Repository[D, T]) DeleteByCondTX(q *Query[T], tx *gorm.DB) (int64, erro
 	if err := q.GetError(); err != nil {
 		return 0, err
 	}
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
 	db := r.dbResolver(q.Context(), tx).Model(&model).
 		Scopes(q.BuildDelete()).
 		Delete(&model)
