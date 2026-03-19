@@ -777,3 +777,55 @@ func TestApplyWhere_IsRaw(t *testing.T) {
 		}
 	})
 }
+
+// TestUpdater_applyDataRule_AllBranches 覆盖 Updater.applyDataRule 全分支
+func TestUpdater_applyDataRule_AllBranches(t *testing.T) {
+	tests := []struct {
+		name      string
+		rule      DataRule
+		wantError bool
+	}{
+		{"EQ 别名", DataRule{Column: "age", Condition: "EQ", Value: "18"}, false},
+		{"NE", DataRule{Column: "age", Condition: "<>", Value: "18"}, false},
+		{"NE 别名", DataRule{Column: "age", Condition: "NE", Value: "18"}, false},
+		{"GT", DataRule{Column: "age", Condition: ">", Value: "18"}, false},
+		{"GT 别名", DataRule{Column: "age", Condition: "GT", Value: "18"}, false},
+		{"GE 别名", DataRule{Column: "age", Condition: "GE", Value: "18"}, false},
+		{"LT", DataRule{Column: "age", Condition: "<", Value: "18"}, false},
+		{"LT 别名", DataRule{Column: "age", Condition: "LT", Value: "18"}, false},
+		{"LE", DataRule{Column: "age", Condition: "<=", Value: "18"}, false},
+		{"LE 别名", DataRule{Column: "age", Condition: "LE", Value: "18"}, false},
+		{"IN 逗号分割", DataRule{Column: "age", Condition: "IN", Value: "18,25"}, false},
+		{"IN Values", DataRule{Column: "age", Condition: "IN", Values: []string{"18", "25"}}, false},
+		{"NOT IN 逗号分割", DataRule{Column: "age", Condition: "NOT IN", Value: "18,25"}, false},
+		{"NOT IN Values", DataRule{Column: "age", Condition: "NOT IN", Values: []string{"18"}}, false},
+		{"LIKE", DataRule{Column: "username", Condition: "LIKE", Value: "test"}, false},
+		{"LEFT_LIKE", DataRule{Column: "username", Condition: "LEFT_LIKE", Value: "test"}, false},
+		{"RIGHT_LIKE", DataRule{Column: "username", Condition: "RIGHT_LIKE", Value: "test"}, false},
+		{"IS NULL", DataRule{Column: "age", Condition: "IS NULL"}, false},
+		{"IS NOT NULL", DataRule{Column: "age", Condition: "IS NOT NULL"}, false},
+		{"BETWEEN Values", DataRule{Column: "age", Condition: "BETWEEN", Values: []string{"10", "30"}}, false},
+		{"BETWEEN 逗号分割", DataRule{Column: "age", Condition: "BETWEEN", Value: "10,30"}, false},
+		{"BETWEEN 值不足", DataRule{Column: "age", Condition: "BETWEEN", Value: "10"}, true},
+		{"SQL 注入防护", DataRule{Column: "age", Condition: "SQL", Value: "1=1"}, true},
+		{"USE_SQL_RULES 防护", DataRule{Column: "age", Condition: "USE_SQL_RULES", Value: "x"}, true},
+		{"空 value 提前返回", DataRule{Column: "age", Condition: "=", Value: ""}, false},
+		{"未知 condition", DataRule{Column: "age", Condition: "UNKNOWN", Value: "1"}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{tc.rule})
+			u, model := NewUpdater[TestUser](ctx)
+			u.Eq(&model.ID, 1) // 确保有条件，不触发 ErrUpdateNoCondition
+			u.DataRuleBuilder()
+			err := u.GetError()
+			if tc.wantError && err == nil {
+				t.Errorf("期望错误，实际无错误")
+			}
+			if !tc.wantError && err != nil {
+				t.Errorf("不期望错误，实际: %v", err)
+			}
+		})
+	}
+}
