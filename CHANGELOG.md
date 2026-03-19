@@ -45,21 +45,36 @@
 
 ---
 
-## [Unreleased]
+## [0.2.0] - 2026-03-19
 
 ### 新增
 
 - `Upsert` / `UpsertTx`：单条 insert-or-update，底层调用 GORM `db.Save()`
 - `UpsertBatch` / `UpsertBatchTx`：批量 insert-or-update
 - `WhereRaw` / `OrWhereRaw`：`Query[T]` 和 `Updater[T]` 支持原生 SQL 条件片段
+- `OrderRaw`：支持复杂原生 ORDER BY 表达式（FIELD/CASE WHEN/NULLS LAST 等），与 `Order` 混用时保留调用顺序
 - `Updater[T].DataRuleBuilder()`：数据权限规则同步支持 UPDATE 操作
 - `CreateBatchTx` 新增 `batchSize <= 0` 参数校验
 
+### 修复（安全）
+
+- `DeleteByCondTx` / `UpdateByCondTx` 未应用 DataRule，导致数据权限对写操作完全不生效（**安全漏洞**）
+
 ### 修复
 
-- `DeleteByCondTX` / `UpdateByCondTX` 未应用 DataRule 导致数据权限对写操作不生效
 - `Updater.Clear()` 保留 backing array 导致复用时旧错误残留
+- `buildLeafSQL` 多参数 `WhereRaw` 展开错误，导致参数绑定失效
+
+### 破坏性变更
+
+- `UpdateByCondTX` 重命名为 `UpdateByCondTx`，统一 Tx 后缀大小写规范
+- `DeleteByCondTX` 重命名为 `DeleteByCondTx`，统一 Tx 后缀大小写规范
+- 所有内部错误信息由中文改为英文
 
 ### 文档
 
-- `Save` / `SaveBatch` godoc 明确标注
+- `Save` / `SaveBatch` godoc 明确标注为纯 INSERT（非 upsert）
+- `Page` / `PageTx` 补充 `skipCount=true` 时 `total` 恒为 0 的说明
+- `RegisterModel` 补充并发使用时序警告
+- `JoinOuter` / `OuterJoin` 标注非标准 SQL 警告
+- README 修正错误示例代码，补充 Upsert/WhereRaw/OrderRaw 使用说明
