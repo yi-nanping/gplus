@@ -478,3 +478,104 @@ func TestQuoteColumn_Dialects(t *testing.T) {
 		})
 	}
 }
+
+// --- Repository nil q 分支 ---
+
+func TestRepository_NilQuery(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+
+	t.Run("GetOne nil q", func(t *testing.T) {
+		_, err := repo.GetOne(nil)
+		if err != ErrQueryNil {
+			t.Errorf("期望 ErrQueryNil，实际: %v", err)
+		}
+	})
+
+	t.Run("List nil q", func(t *testing.T) {
+		_, err := repo.List(nil)
+		if err != ErrQueryNil {
+			t.Errorf("期望 ErrQueryNil，实际: %v", err)
+		}
+	})
+
+	t.Run("Count nil q", func(t *testing.T) {
+		_, err := repo.Count(nil)
+		if err != ErrQueryNil {
+			t.Errorf("期望 ErrQueryNil，实际: %v", err)
+		}
+	})
+
+	t.Run("Page nil q", func(t *testing.T) {
+		_, _, err := repo.Page(nil, false)
+		if err != ErrQueryNil {
+			t.Errorf("期望 ErrQueryNil，实际: %v", err)
+		}
+	})
+
+	t.Run("DeleteByCond nil q", func(t *testing.T) {
+		_, err := repo.DeleteByCond(nil)
+		if err != ErrDeleteEmpty {
+			t.Errorf("期望 ErrDeleteEmpty，实际: %v", err)
+		}
+	})
+}
+
+// --- Query/Updater 无效列指针分支（Select/Omit/Group/Order/Distinct/join）---
+
+func TestQuery_InvalidPointer_Branches(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("Order 无效指针写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Order(nil, true)
+		assertError(t, q.GetError(), true, "Order nil 应写入 errs")
+		if len(q.orders) != 0 {
+			t.Errorf("Order nil 不应追加 orders，实际 %d", len(q.orders))
+		}
+	})
+
+	t.Run("Distinct 无效指针写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Distinct(nil)
+		assertError(t, q.GetError(), true, "Distinct nil 应写入 errs")
+	})
+
+	t.Run("Group 无效指针写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Group(nil)
+		assertError(t, q.GetError(), true, "Group nil 应写入 errs")
+		if len(q.groups) != 0 {
+			t.Errorf("Group nil 不应追加 groups，实际 %d", len(q.groups))
+		}
+	})
+
+	t.Run("join 空 table 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.LeftJoin("", "on condition")
+		assertError(t, q.GetError(), true, "LeftJoin 空 table 应写入 errs")
+		if len(q.joins) != 0 {
+			t.Errorf("join 空 table 不应追加 joins，实际 %d", len(q.joins))
+		}
+	})
+}
+
+// --- Updater.Context nil ctx 分支 / SetExpr 无效指针 ---
+
+func TestUpdater_Context_NilCtx(t *testing.T) {
+	u := &Updater[TestUser]{}
+	if u.Context() == nil {
+		t.Error("nil ctx 应返回 context.Background()")
+	}
+}
+
+func TestUpdater_SetExpr_InvalidPointer(t *testing.T) {
+	ctx := context.Background()
+	u, _ := NewUpdater[TestUser](ctx)
+	u.SetExpr(nil, "age + ?", 1)
+	if u.GetError() == nil {
+		t.Error("SetExpr nil 应写入 errs")
+	}
+	if len(u.setMap) != 0 {
+		t.Errorf("SetExpr nil 不应写入 setMap，实际 %d", len(u.setMap))
+	}
+}
