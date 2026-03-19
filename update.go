@@ -301,7 +301,8 @@ func (u *Updater[T]) OrNotLike(col any, val string) *Updater[T] {
 //	})
 func (u *Updater[T]) And(fn func(sub *Updater[T])) *Updater[T] {
 	if fn == nil {
-		panic("gplus: And called with nil fn")
+		u.errs = append(u.errs, errors.New("gplus: And called with nil fn"))
+		return u
 	}
 	// 创建一个临时的子 Updater，共享泛型类型 T
 	sub := &Updater[T]{
@@ -323,7 +324,8 @@ func (u *Updater[T]) And(fn func(sub *Updater[T])) *Updater[T] {
 // Or 开启一个带括号的 OR 嵌套块
 func (u *Updater[T]) Or(fn func(sub *Updater[T])) *Updater[T] {
 	if fn == nil {
-		panic("gplus: Or called with nil fn")
+		u.errs = append(u.errs, errors.New("gplus: Or called with nil fn"))
+		return u
 	}
 	sub := &Updater[T]{
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},

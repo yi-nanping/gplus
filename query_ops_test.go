@@ -440,11 +440,13 @@ func TestQuery_HavingGroup(t *testing.T) {
 		}
 	})
 
-	t.Run("HavingGroup nil fn 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.HavingGroup(nil)
-		}, "HavingGroup(nil) 应触发 panic")
+	t.Run("HavingGroup nil fn 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.HavingGroup(nil)
+		assertError(t, q.GetError(), true, "HavingGroup(nil) 应写入 errs")
+		if len(q.havings) != 0 {
+			t.Errorf("HavingGroup(nil) 不应追加条件，实际 %d", len(q.havings))
+		}
 	})
 }
 

@@ -86,11 +86,13 @@ func TestQuery_Or(t *testing.T) {
 		}
 	})
 
-	t.Run("nil fn 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.Or(nil)
-		}, "Or(nil) 应触发 panic")
+	t.Run("nil fn 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Or(nil)
+		assertError(t, q.GetError(), true, "Or(nil) 应写入 errs")
+		if len(q.conditions) != 0 {
+			t.Errorf("Or(nil) 不应追加条件，实际 %d", len(q.conditions))
+		}
 	})
 
 	t.Run("多个 OR 嵌套块", func(t *testing.T) {
@@ -166,11 +168,13 @@ func TestQuery_And(t *testing.T) {
 		}
 	})
 
-	t.Run("nil fn 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.And(nil)
-		}, "And(nil) 应触发 panic")
+	t.Run("nil fn 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.And(nil)
+		assertError(t, q.GetError(), true, "And(nil) 应写入 errs")
+		if len(q.conditions) != 0 {
+			t.Errorf("And(nil) 不应追加条件，实际 %d", len(q.conditions))
+		}
 	})
 
 	t.Run("AND 块内错误应传播到外层", func(t *testing.T) {

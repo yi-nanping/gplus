@@ -460,7 +460,8 @@ func (q *Query[T]) LockWithOpt(strength, options string) *Query[T] {
 // And 开启一个带括号的 AND 嵌套块
 func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
 	if fn == nil {
-		panic("gplus: And called with nil fn")
+		q.errs = append(q.errs, errors.New("gplus: And called with nil fn"))
+		return q
 	}
 	sub := &Query[T]{
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
@@ -510,7 +511,8 @@ func (q *Query[T]) OrHaving(col string, op string, val any) *Query[T] {
 // HavingGroup 嵌套 Having
 func (q *Query[T]) HavingGroup(fn func(sub *Query[T])) *Query[T] {
 	if fn == nil {
-		panic("gplus: HavingGroup called with nil fn")
+		q.errs = append(q.errs, errors.New("gplus: HavingGroup called with nil fn"))
+		return q
 	}
 	sub := &Query[T]{ScopeBuilder: ScopeBuilder{havings: make([]condition, 0)}}
 	fn(sub) // 开发者在 sub 里调用 Having/OrHaving
@@ -546,7 +548,8 @@ func (q *Query[T]) Preload(column string, args ...any) *Query[T] {
 // Or 开启一个带括号的 OR 嵌套块
 func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
 	if fn == nil {
-		panic("gplus: Or called with nil fn")
+		q.errs = append(q.errs, errors.New("gplus: Or called with nil fn"))
+		return q
 	}
 	sub := &Query[T]{
 		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},

@@ -415,11 +415,15 @@ func TestUpdater_And_Or(t *testing.T) {
 		}
 	})
 
-	t.Run("And nil fn 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			u, _ := NewUpdater[TestUser](ctx)
-			u.And(nil)
-		}, "And nil 应触发 panic")
+	t.Run("And nil fn 写入 errs", func(t *testing.T) {
+		u, _ := NewUpdater[TestUser](ctx)
+		u.And(nil)
+		if u.GetError() == nil {
+			t.Error("And(nil) 应写入 errs")
+		}
+		if len(u.conditions) != 0 {
+			t.Errorf("And(nil) 不应追加条件，实际 %d", len(u.conditions))
+		}
 	})
 
 	t.Run("Or 正常嵌套", func(t *testing.T) {
@@ -436,11 +440,15 @@ func TestUpdater_And_Or(t *testing.T) {
 		}
 	})
 
-	t.Run("Or nil fn 触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			u, _ := NewUpdater[TestUser](ctx)
-			u.Or(nil)
-		}, "Or nil 应触发 panic")
+	t.Run("Or nil fn 写入 errs", func(t *testing.T) {
+		u, _ := NewUpdater[TestUser](ctx)
+		u.Or(nil)
+		if u.GetError() == nil {
+			t.Error("Or(nil) 应写入 errs")
+		}
+		if len(u.conditions) != 0 {
+			t.Errorf("Or(nil) 不应追加条件，实际 %d", len(u.conditions))
+		}
 	})
 
 	t.Run("And 子块错误传播到外层", func(t *testing.T) {
