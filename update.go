@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -17,6 +18,8 @@ type Updater[T any] struct {
 	setMap map[string]any
 	// errs 是错误列表，用于存储执行过程中出现的错误
 	errs []error
+	// dataRuleApplied 防止 DataRuleBuilder 对同一 Updater 重复追加数据权限条件
+	dataRuleApplied bool
 }
 
 // NewUpdater 创建泛型更新构建器，同时返回类型 T 的规范实例指针。
@@ -364,9 +367,107 @@ func (u *Updater[T]) Unscoped() *Updater[T] {
 	return u
 }
 
+// DataRuleBuilder 从上下文中提取规则并应用到更新条件中。
+// 对同一个 Updater 对象只执行一次，防止多次调用重复追加条件。
+func (u *Updater[T]) DataRuleBuilder() *Updater[T] {
+	if u.dataRuleApplied {
+		return u
+	}
+	u.dataRuleApplied = true
+	if u.ctx == nil {
+		return u
+	}
+	rules, ok := u.ctx.Value(DataRuleKey).([]DataRule)
+	if !ok || len(rules) == 0 {
+		return u
+	}
+	for _, rule := range rules {
+		u.applyDataRule(rule)
+	}
+	return u
+}
+
+// applyDataRule 将单条 DataRule 转换为更新条件追加到 Updater 中
+func (u *Updater[T]) applyDataRule(rule DataRule) {
+	column := rule.Column
+	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
+	value := rule.Value
+
+	if value == "" && len(rule.Values) == 0 && c != "IS NULL" && c != "IS NOT NULL" {
+		return
+	}
+
+	// 禁止原生 SQL 注入
+	if c == "SQL" || c == "USE_SQL_RULES" {
+		u.errs = append(u.errs, fmt.Errorf(
+			"data rule [col: %s]: condition type %q is not allowed, use RawExec with parameterized args instead",
+			column, rule.Condition,
+		))
+		return
+	}
+
+	switch c {
+	case "=", "EQ":
+		u.Eq(column, value)
+	case "<>", "!=", "NE":
+		u.Ne(column, value)
+	case ">", "GT":
+		u.Gt(column, value)
+	case ">=", "GE":
+		u.Ge(column, value)
+	case "<", "LT":
+		u.Lt(column, value)
+	case "<=", "LE":
+		u.Le(column, value)
+	case "IN":
+		vals := rule.Values
+		if len(vals) == 0 {
+			vals = splitTrimmed(value)
+		}
+		u.In(column, vals)
+	case "NOT IN":
+		vals := rule.Values
+		if len(vals) == 0 {
+			vals = splitTrimmed(value)
+		}
+		u.NotIn(column, vals)
+	case "LIKE":
+		u.Like(column, value)
+	case "LEFT_LIKE":
+		u.LikeLeft(column, value)
+	case "RIGHT_LIKE":
+		u.LikeRight(column, value)
+	case "IS NULL":
+		u.IsNull(column)
+	case "IS NOT NULL":
+		u.IsNotNull(column)
+	case "BETWEEN":
+		var parts []string
+		if len(rule.Values) == 2 {
+			parts = rule.Values
+		} else {
+			parts = splitTrimmed(value)
+		}
+		if len(parts) != 2 {
+			u.errs = append(u.errs, fmt.Errorf(
+				"data rule [col: %s]: BETWEEN 需要两个值，实际得到 %d 个",
+				column, len(parts),
+			))
+			return
+		}
+		u.Between(column, parts[0], parts[1])
+	default:
+		u.errs = append(u.errs, fmt.Errorf(
+			"data rule [col: %s]: unsupported condition %q; allowed: =, <>, >, >=, <, <=, IN, NOT IN, LIKE, LEFT_LIKE, RIGHT_LIKE, IS NULL, IS NOT NULL, BETWEEN",
+			column, rule.Condition,
+		))
+	}
+}
+
 // Clear 重写 Updater 的清除逻辑
 func (u *Updater[T]) Clear() {
 	u.ScopeBuilder.Clear()
 	clear(u.setMap)
 	u.errs = u.errs[:0:0]
+	u.dataRuleApplied = false
 }

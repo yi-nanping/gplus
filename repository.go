@@ -282,6 +282,9 @@ func (r *Repository[D, T]) UpdateByCondTX(u *Updater[T], tx *gorm.DB) (int64, er
 	if err := u.GetError(); err != nil {
 		return 0, err
 	}
+	if err := u.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
 	if len(u.conditions) == 0 {
 		return 0, ErrUpdateNoCondition
 	}
