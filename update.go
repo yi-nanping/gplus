@@ -366,5 +366,5 @@ func (u *Updater[T]) Unscoped() *Updater[T] {
 func (u *Updater[T]) Clear() {
 	u.ScopeBuilder.Clear()
 	clear(u.setMap)
-	u.errs = u.errs[:0]
+	u.errs = u.errs[:0:0]
 }
