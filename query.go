@@ -584,6 +584,15 @@ func (q *Query[T]) DataRuleBuilder() *Query[T] {
 	return q
 }
 
+// splitTrimmed 按逗号分割字符串并对每个元素去除首尾空格
+func splitTrimmed(s string) []string {
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
+	}
+	return parts
+}
+
 // applyDataRule 将单条 DataRule 转换为查询条件追加到 Query 中
 func (q *Query[T]) applyDataRule(rule DataRule) {
 	column := rule.Column
@@ -591,7 +600,7 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 	value := rule.Value
 
 	// 1. 处理空值情况
-	if value == "" && c != "IS NULL" && c != "IS NOT NULL" {
+	if value == "" && len(rule.Values) == 0 && c != "IS NULL" && c != "IS NOT NULL" {
 		return
 	}
 
@@ -623,13 +632,13 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 	case "IN":
 		vals := rule.Values
 		if len(vals) == 0 {
-			vals = strings.Split(value, ",")
+			vals = splitTrimmed(value)
 		}
 		q.In(column, vals)
 	case "NOT IN":
 		vals := rule.Values
 		if len(vals) == 0 {
-			vals = strings.Split(value, ",")
+			vals = splitTrimmed(value)
 		}
 		q.NotIn(column, vals)
 	case "LIKE":
@@ -647,7 +656,7 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 		if len(rule.Values) == 2 {
 			parts = rule.Values
 		} else {
-			parts = strings.Split(value, ",")
+			parts = splitTrimmed(value)
 		}
 		if len(parts) != 2 {
 			q.errs = append(q.errs, fmt.Errorf(
