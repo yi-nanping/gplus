@@ -1034,3 +1034,43 @@ func TestWhereRaw_Updater(t *testing.T) {
 		}
 	})
 }
+
+// --- OrderRaw 集成测试 ---
+
+func TestRepository_OrderRaw(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	// 插入三条记录，age 分别为 30, 18, 25
+	db.Create(&TestUser{Name: "C", Age: 30})
+	db.Create(&TestUser{Name: "A", Age: 18})
+	db.Create(&TestUser{Name: "B", Age: 25})
+
+	t.Run("OrderRaw 按指定顺序排序", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		// SQLite 支持 CASE WHEN 排序
+		q.OrderRaw("CASE age WHEN 18 THEN 0 WHEN 25 THEN 1 ELSE 2 END")
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("OrderRaw 不应报错: %v", err)
+		}
+		if len(list) != 3 {
+			t.Fatalf("期望 3 条，实际 %d", len(list))
+		}
+		// 第一条应为 age=18
+		if list[0].Age != 18 {
+			t.Errorf("期望第一条 age=18，实际 %d", list[0].Age)
+		}
+	})
+
+	t.Run("OrderRaw 与 Order 共存按预期生效", func(t *testing.T) {
+		q, m := NewQuery[TestUser](ctx)
+		q.OrderRaw("CASE age WHEN 18 THEN 0 ELSE 1 END").Order(&m.Age, true)
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("OrderRaw+Order 不应报错: %v", err)
+		}
+		if len(list) != 3 {
+			t.Fatalf("期望 3 条，实际 %d", len(list))
+		}
+	})
+}

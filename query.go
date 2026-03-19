@@ -377,7 +377,22 @@ func (q *Query[T]) Order(col any, isAsc bool) *Query[T] {
 	if isAsc {
 		direction = KeyAsc
 	}
-	q.orders = append(q.orders, fmt.Sprintf("%s %s", name, direction))
+	q.orders = append(q.orders, orderItem{expr: fmt.Sprintf("%s %s", name, direction)})
+	return q
+}
+
+// OrderRaw 添加原生 ORDER BY 表达式，不经转义直接传入 GORM。
+// 适用于含函数调用、CASE WHEN、NULLS LAST 等复杂排序场景。
+// 调用顺序即为最终 SQL ORDER BY 的顺序，可与 Order 混用。
+// 示例：q.OrderRaw("FIELD(status, 'active', 'pending')")
+// 示例：q.OrderRaw("score DESC NULLS LAST")
+// 注意：expr 参数由调用方负责安全性，不可直接拼接用户输入。
+func (q *Query[T]) OrderRaw(expr string) *Query[T] {
+	if expr == "" {
+		q.errs = append(q.errs, errors.New("gplus: OrderRaw expr cannot be empty"))
+		return q
+	}
+	q.orders = append(q.orders, orderItem{expr: expr, isRaw: true})
 	return q
 }
 

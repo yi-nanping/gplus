@@ -20,6 +20,12 @@ type condition struct {
 	group []condition
 }
 
+// orderItem 存储单个排序项，isRaw=true 时 expr 为原生表达式，不经转义
+type orderItem struct {
+	expr  string
+	isRaw bool
+}
+
 // joinInfo 结构化 Join 存储，优化性能
 // joinInfo 结构化存储 Join 信息，避免闭包带来的额外开销
 type joinInfo struct {
@@ -61,8 +67,8 @@ type ScopeBuilder struct {
 	selects []string
 	// omits 用于构建 Omit 字段
 	omits []string
-	// orders 用于构建 Order 字段
-	orders []string
+	// orders 统一存储所有排序项，保留调用顺序；isRaw=true 时不经转义直接传给 GORM
+	orders []orderItem
 	// groups 用于构建 Group 字段
 	groups []string
 	// havings 用于构建 Having 字段
@@ -404,15 +410,19 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 
 // applyOrderLimit order limit
 func (b *ScopeBuilder) applyOrderLimit(db *gorm.DB, qL, qR string) *gorm.DB {
-	for _, order := range b.orders {
-		// Order 字段转义
-		parts := strings.Split(strings.TrimSpace(order), " ")
+	for _, item := range b.orders {
+		if item.isRaw {
+			// 原生表达式：不经转义直接传入
+			db = db.Order(item.expr)
+			continue
+		}
+		// 普通字段：转义列名，保留 ASC/DESC
+		parts := strings.Split(strings.TrimSpace(item.expr), " ")
 		if len(parts) >= 1 {
 			col := quoteColumn(parts[0], qL, qR)
-			// 重新拼装，例如 `created_at` DESC
 			newOrder := col
 			if len(parts) > 1 {
-				newOrder += " " + parts[1] // DESC/ASC 保持原样
+				newOrder += " " + parts[1]
 			}
 			db = db.Order(newOrder)
 		}

@@ -255,8 +255,8 @@ func TestQuery_QueryModifiers(t *testing.T) {
 		if len(q.orders) != 1 {
 			t.Fatalf("期望 1 个排序条件，实际 %d", len(q.orders))
 		}
-		if !strings.Contains(q.orders[0], KeyAsc) {
-			t.Errorf("ASC 排序应包含 %q，实际 %q", KeyAsc, q.orders[0])
+		if !strings.Contains(q.orders[0].expr, KeyAsc) {
+			t.Errorf("ASC 排序应包含 %q，实际 %q", KeyAsc, q.orders[0].expr)
 		}
 	})
 
@@ -266,8 +266,8 @@ func TestQuery_QueryModifiers(t *testing.T) {
 		if len(q.orders) != 1 {
 			t.Fatalf("期望 1 个排序条件，实际 %d", len(q.orders))
 		}
-		if !strings.Contains(q.orders[0], KeyDesc) {
-			t.Errorf("DESC 排序应包含 %q，实际 %q", KeyDesc, q.orders[0])
+		if !strings.Contains(q.orders[0].expr, KeyDesc) {
+			t.Errorf("DESC 排序应包含 %q，实际 %q", KeyDesc, q.orders[0].expr)
 		}
 	})
 
@@ -276,6 +276,42 @@ func TestQuery_QueryModifiers(t *testing.T) {
 		q.Order(&u.Age, true).Order(&u.Name, false)
 		if len(q.orders) != 2 {
 			t.Errorf("期望 2 个排序条件，实际 %d", len(q.orders))
+		}
+	})
+
+	t.Run("OrderRaw 追加原生表达式", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.OrderRaw("FIELD(age, 18, 25, 30)")
+		if len(q.orders) != 1 {
+			t.Fatalf("期望 1 个 order 项，实际 %d", len(q.orders))
+		}
+		if !q.orders[0].isRaw {
+			t.Error("OrderRaw 项 isRaw 应为 true")
+		}
+		if q.orders[0].expr != "FIELD(age, 18, 25, 30)" {
+			t.Errorf("expr 不符，实际 %q", q.orders[0].expr)
+		}
+	})
+
+	t.Run("OrderRaw 空表达式返回错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.OrderRaw("")
+		if q.GetError() == nil {
+			t.Error("空 expr 应累积错误")
+		}
+	})
+
+	t.Run("OrderRaw 与 Order 共存保留调用顺序", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Order(&u.Age, false).OrderRaw("FIELD(age, 18, 25)")
+		if len(q.orders) != 2 {
+			t.Fatalf("期望 2 个 order 项，实际 %d", len(q.orders))
+		}
+		if q.orders[0].isRaw {
+			t.Error("第一项应为普通 Order")
+		}
+		if !q.orders[1].isRaw {
+			t.Error("第二项应为 OrderRaw")
 		}
 	})
 
