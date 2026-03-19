@@ -2,9 +2,12 @@ package gplus
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 // --- BETWEEN nil 参数写入 errs ---
@@ -271,4 +274,207 @@ func TestDataRule_InvalidCondition_Repository(t *testing.T) {
 			t.Error("非法 DataRule 应使 Page 返回错误")
 		}
 	})
+}
+
+// --- SaveBatch / CreateBatch 批量写 ---
+
+func TestRepository_SaveBatch(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	t.Run("SaveBatch 正常插入", func(t *testing.T) {
+		users := []TestUser{{Name: "Batch1", Age: 10}, {Name: "Batch2", Age: 20}}
+		if err := repo.SaveBatch(ctx, users); err != nil {
+			t.Fatalf("SaveBatch 不应报错: %v", err)
+		}
+		q, _ := NewQuery[TestUser](ctx)
+		list, _ := repo.List(q)
+		if len(list) != 2 {
+			t.Errorf("期望 2 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("SaveBatchTx 事务插入", func(t *testing.T) {
+		repo2, db := setupTestDB[TestUser](t)
+		more := []TestUser{{Name: "TxBatch", Age: 99}}
+		if err := repo2.SaveBatchTx(ctx, more, db); err != nil {
+			t.Fatalf("SaveBatchTx 不应报错: %v", err)
+		}
+	})
+}
+
+func TestRepository_CreateBatch(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	t.Run("CreateBatch 分批插入", func(t *testing.T) {
+		users := []*TestUser{{Name: "CB1", Age: 11}, {Name: "CB2", Age: 22}, {Name: "CB3", Age: 33}}
+		if err := repo.CreateBatch(ctx, users, 2); err != nil {
+			t.Fatalf("CreateBatch 不应报错: %v", err)
+		}
+		q, _ := NewQuery[TestUser](ctx)
+		list, _ := repo.List(q)
+		if len(list) != 3 {
+			t.Errorf("期望 3 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("CreateBatchTx 事务分批插入", func(t *testing.T) {
+		repo2, db := setupTestDB[TestUser](t)
+		more := []*TestUser{{Name: "CBTx", Age: 55}}
+		if err := repo2.CreateBatchTx(ctx, more, 1, db); err != nil {
+			t.Fatalf("CreateBatchTx 不应报错: %v", err)
+		}
+	})
+}
+
+// --- GetByLock 悲观锁 ---
+
+var errTestSentinel = errors.New("test error")
+
+func TestRepository_GetByLock(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tx 为 nil 返回 ErrTransactionReq", func(t *testing.T) {
+		repo, _ := setupTestDB[TestUser](t)
+		q, _ := NewQuery[TestUser](ctx)
+		_, err := repo.GetByLock(q, nil)
+		if err != ErrTransactionReq {
+			t.Errorf("期望 ErrTransactionReq，实际: %v", err)
+		}
+	})
+
+	t.Run("q 为 nil 返回 ErrQueryNil", func(t *testing.T) {
+		repo, db := setupTestDB[TestUser](t)
+		_, err := repo.GetByLock(nil, db)
+		if err != ErrQueryNil {
+			t.Errorf("期望 ErrQueryNil，实际: %v", err)
+		}
+	})
+
+	t.Run("q 有错误返回 builder 错误", func(t *testing.T) {
+		repo, db := setupTestDB[TestUser](t)
+		q, _ := NewQuery[TestUser](ctx)
+		q.errs = append(q.errs, errTestSentinel)
+		_, err := repo.GetByLock(q, db)
+		if err == nil {
+			t.Error("builder 有错误时应返回错误")
+		}
+	})
+
+	t.Run("正常带锁查询（自动补 LockWrite）", func(t *testing.T) {
+		repo, db := setupTestDB[TestUser](t)
+		db.Create(&TestUser{Name: "LockUser", Age: 30})
+		var found *TestUser
+		var lockErr error
+		db.Transaction(func(tx *gorm.DB) error {
+			q, m := NewQuery[TestUser](ctx)
+			q.Eq(&m.Name, "LockUser")
+			found, lockErr = repo.GetByLock(q, tx)
+			return lockErr
+		})
+		if lockErr != nil {
+			t.Fatalf("GetByLock 不应报错: %v", lockErr)
+		}
+		if found == nil || found.Name != "LockUser" {
+			t.Error("GetByLock 应返回正确记录")
+		}
+	})
+}
+
+// --- LeftJoin / RightJoin / LockWithOpt ---
+
+func TestQuery_LeftRightJoin(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("LeftJoin 追加 LEFT JOIN 条件", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.LeftJoin("orders", "orders.user_id = test_users.id")
+		if len(q.joins) != 1 || q.joins[0].method != JoinLeft {
+			t.Errorf("期望 LEFT JOIN，实际 %+v", q.joins)
+		}
+	})
+
+	t.Run("RightJoin 追加 RIGHT JOIN 条件", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.RightJoin("orders", "orders.user_id = test_users.id")
+		if len(q.joins) != 1 || q.joins[0].method != JoinRight {
+			t.Errorf("期望 RIGHT JOIN，实际 %+v", q.joins)
+		}
+	})
+}
+
+func TestQuery_LockWithOpt(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("UPDATE NOWAIT", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.LockWithOpt("UPDATE", "NOWAIT")
+		if q.lockStrength != "UPDATE" || q.lockOptions != "NOWAIT" {
+			t.Errorf("lockStrength=%q lockOptions=%q", q.lockStrength, q.lockOptions)
+		}
+	})
+
+	t.Run("SHARE SKIP LOCKED", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.LockWithOpt("SHARE", "SKIP LOCKED")
+		if q.lockOptions != "SKIP LOCKED" {
+			t.Errorf("期望 SKIP LOCKED，实际 %q", q.lockOptions)
+		}
+	})
+}
+
+// --- applyDataRule 未覆盖分支 ---
+
+func TestDataRule_LeftRightLike_IsNull(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		condition string
+	}{
+		{"LEFT_LIKE", "LEFT_LIKE"},
+		{"RIGHT_LIKE", "RIGHT_LIKE"},
+		{"IS NULL", "IS NULL"},
+		{"IS NOT NULL", "IS NOT NULL"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rules := []DataRule{{Column: "age", Condition: c.condition, Value: "ali"}}
+			ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+			q, _ := NewQuery[TestUser](ctx2)
+			q.DataRuleBuilder()
+			assertError(t, q.GetError(), false, c.name+" 不应报错")
+			if len(q.conditions) != 1 {
+				t.Errorf("%s 期望 1 个条件，实际 %d", c.name, len(q.conditions))
+			}
+		})
+	}
+}
+
+// --- quoteColumn 方言转义 ---
+
+func TestQuoteColumn_Dialects(t *testing.T) {
+	cases := []struct {
+		name string
+		qL   string
+		qR   string
+		col  string
+		want string
+	}{
+		{"sqlite 双引号", `"`, `"`, "name", `"name"`},
+		{"mysql 反引号", "`", "`", "name", "`name`"},
+		{"sqlserver 方括号", "[", "]", "name", "[name]"},
+		{"已转义不重复", `"`, `"`, `"name"`, `"name"`},
+		{"table.*", `"`, `"`, "users.*", `"users".*`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := quoteColumn(c.col, c.qL, c.qR)
+			if got != c.want {
+				t.Errorf("期望 %q，实际 %q", c.want, got)
+			}
+		})
+	}
 }
