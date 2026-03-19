@@ -68,7 +68,7 @@ func (r *Repository[D, T]) GetById(ctx context.Context, id D) (T, error) {
 
 // GetByIdTx 支持事务的查询
 func (r *Repository[D, T]) GetByIdTx(ctx context.Context, id D, tx *gorm.DB) (data T, err error) {
-	err = r.dbResolver(ctx, tx).Where("id = ?", id).First(&data).Error
+	err = r.dbResolver(ctx, tx).First(&data, id).Error
 	return
 }
 
@@ -85,8 +85,11 @@ func (r *Repository[D, T]) GetOneTx(q *Query[T], tx *gorm.DB) (data T, err error
 	if err = q.GetError(); err != nil {
 		return data, err
 	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return data, err
+	}
 	db := r.dbResolver(q.Context(), tx)
-	err = db.Scopes(q.DataRuleBuilder().BuildQuery()).First(&data).Error
+	err = db.Scopes(q.BuildQuery()).First(&data).Error
 	return
 }
 
@@ -103,8 +106,11 @@ func (r *Repository[D, T]) ListTx(q *Query[T], tx *gorm.DB) (data []T, err error
 	if err = q.GetError(); err != nil {
 		return data, err
 	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return data, err
+	}
 	db := r.dbResolver(q.Context(), tx)
-	err = db.Scopes(q.DataRuleBuilder().BuildQuery()).Find(&data).Error
+	err = db.Scopes(q.BuildQuery()).Find(&data).Error
 	return
 }
 
@@ -127,9 +133,12 @@ func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col a
 		return nil, err
 	}
 	// 临时覆盖 selects 为指定列，执行后恢复，避免破坏调用方 Query 状态
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return nil, err
+	}
 	origSelects := q.selects
 	q.selects = []string{colName}
-	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.DataRuleBuilder().BuildQuery()).Pluck(colName, &result).Error
+	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildQuery()).Pluck(colName, &result).Error
 	q.selects = origSelects
 	return result, err
 }
@@ -147,11 +156,14 @@ func (r *Repository[D, T]) PageTx(q *Query[T], skipCount bool, tx *gorm.DB) (dat
 	if err = q.GetError(); err != nil {
 		return nil, 0, err
 	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return nil, 0, err
+	}
 	baseDb := r.dbResolver(q.Context(), tx).Model(new(T))
 
 	if !skipCount {
 		err = baseDb.Session(&gorm.Session{}).
-			Scopes(q.DataRuleBuilder().BuildCount()).
+			Scopes(q.BuildCount()).
 			Count(&total).Error
 		if err != nil || total == 0 {
 			return nil, total, err
@@ -159,7 +171,7 @@ func (r *Repository[D, T]) PageTx(q *Query[T], skipCount bool, tx *gorm.DB) (dat
 	}
 
 	err = baseDb.Session(&gorm.Session{}).
-		Scopes(q.DataRuleBuilder().BuildQuery()).
+		Scopes(q.BuildQuery()).
 		Find(&data).Error
 
 	return data, total, err
@@ -178,8 +190,11 @@ func (r *Repository[D, T]) CountTx(q *Query[T], tx *gorm.DB) (int64, error) {
 	if err := q.GetError(); err != nil {
 		return 0, err
 	}
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
 	var count int64
-	err := r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.DataRuleBuilder().BuildCount()).Count(&count).Error
+	err := r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildCount()).Count(&count).Error
 	return count, err
 }
 
@@ -244,9 +259,12 @@ func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 		q.LockWrite() // 默认给加上写锁
 	}
 
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return nil, err
+	}
 	var entity T
 	// 这里的 q.BuildQuery() 已经包含了 FOR UPDATE
-	err := tx.WithContext(q.Context()).Scopes(q.DataRuleBuilder().BuildQuery()).First(&entity).Error
+	err := tx.WithContext(q.Context()).Scopes(q.BuildQuery()).First(&entity).Error
 	if err != nil {
 		return nil, err
 	}
@@ -290,8 +308,7 @@ func (r *Repository[D, T]) DeleteById(ctx context.Context, id D) (int64, error) 
 
 // DeleteByIdTx 事务删除
 func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) (int64, error) {
-	var dummy T
-	db := r.dbResolver(ctx, tx).Model(&dummy).Where("id = ?", id).Delete(&dummy)
+	db := r.dbResolver(ctx, tx).Delete(new(T), id)
 	return db.RowsAffected, db.Error
 }
 
