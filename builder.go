@@ -239,6 +239,30 @@ func (b *ScopeBuilder) applyDistinct(db *gorm.DB) *gorm.DB {
 	return db
 }
 
+// buildLeafSQL 为叶子条件（非嵌套组、非子查询）生成 SQL 片段和参数列表。
+// ok=false 表示应跳过（BETWEEN 参数校验失败的防御性情况）。
+func buildLeafSQL(cond condition, qL, qR string) (sqlStr string, args []any, ok bool) {
+	if cond.isRaw {
+		if cond.value != nil {
+			return cond.expr, []any{cond.value}, true
+		}
+		return cond.expr, nil, true
+	}
+	quotedCol := quoteColumn(cond.expr, qL, qR)
+	switch cond.operator {
+	case OpBetween, OpNotBetween:
+		a, isSlice := cond.value.([]any)
+		if !isSlice || len(a) != 2 {
+			return "", nil, false
+		}
+		return fmt.Sprintf("%s %s ? AND ?", quotedCol, cond.operator), a, true
+	case OpIsNull, OpIsNotNull:
+		return fmt.Sprintf("%s %s", quotedCol, cond.operator), nil, true
+	default:
+		return fmt.Sprintf("%s %s ?", quotedCol, cond.operator), []any{cond.value}, true
+	}
+}
+
 // applyWhere where
 func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 	// 抽离一个递归内部函数
@@ -280,52 +304,15 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 				continue
 			}
 
-			// ------------- 原生SQL -------------
-			// 安全检查：如果是 Raw SQL，必须标记为 isRaw
-			if cond.isRaw {
-				if cond.isOr {
-					d = d.Or(cond.expr, cond.value)
-				} else {
-					d = d.Where(cond.expr, cond.value)
-				}
+			// 叶子条件：isRaw / BETWEEN / IS NULL / 标准操作
+			sqlStr, leafArgs, leafOK := buildLeafSQL(cond, qL, qR)
+			if !leafOK {
 				continue
 			}
-
-			// 特殊处理 BETWEEN 和 NOT BETWEEN
-			// 必须生成 "col BETWEEN ? AND ?" 格式，并将参数切片展开
-			if cond.operator == OpBetween || cond.operator == OpNotBetween {
-				sqlStr := fmt.Sprintf("%s %s ? AND ?", quoteColumn(cond.expr, qL, qR), cond.operator)
-
-				// 断言 value 为切片 (Query.Between 传入的就是 []any)
-				if args, ok := cond.value.([]any); ok && len(args) == 2 {
-					if cond.isOr {
-						d = d.Or(sqlStr, args[0], args[1])
-					} else {
-						d = d.Where(sqlStr, args[0], args[1])
-					}
-					continue // 处理完毕，跳过通用逻辑
-				}
-				// 防御性代码：正常 API 调用不会走到此处（Between 层已校验 nil 并写入 errs）
-				continue
-			}
-
-			// 特殊处理 IsNull / IsNotNull (不需要占位符 ?)
-			if cond.operator == OpIsNull || cond.operator == OpIsNotNull {
-				clauseStr = fmt.Sprintf("%s %s", quoteColumn(cond.expr, qL, qR), cond.operator)
-				if cond.isOr {
-					d = d.Or(clauseStr)
-				} else {
-					d = d.Where(clauseStr)
-				}
-				continue
-			}
-
-			// 智能转义
-			clauseStr = fmt.Sprintf("%s %s ?", quoteColumn(cond.expr, qL, qR), cond.operator)
 			if cond.isOr {
-				d = d.Or(clauseStr, cond.value)
+				d = d.Or(sqlStr, leafArgs...)
 			} else {
-				d = d.Where(clauseStr, cond.value)
+				d = d.Where(sqlStr, leafArgs...)
 			}
 		}
 		return d
@@ -387,54 +374,15 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 				continue
 			}
 
-			// --- B. 处理原生 SQL ---
-			if cond.isRaw {
-				if cond.isOr {
-					d = d.Or(cond.expr, cond.value)
-				} else {
-					d = d.Having(cond.expr, cond.value)
-				}
+			// 叶子条件：isRaw / BETWEEN / IS NULL / 标准操作
+			sqlStr, leafArgs, leafOK := buildLeafSQL(cond, qL, qR)
+			if !leafOK {
 				continue
 			}
-
-			// --- C. 处理特殊操作符 ---
-
-			// C1. Between (双参数)
-			if cond.operator == OpBetween || cond.operator == OpNotBetween {
-				quotedCol := quoteColumn(cond.expr, qL, qR)
-				sprintf := fmt.Sprintf("%s %s ? AND ?", quotedCol, cond.operator)
-
-				// 尝试解构 slice 参数
-				if args, ok := cond.value.([]any); ok && len(args) == 2 {
-					if cond.isOr {
-						d = d.Or(sprintf, args[0], args[1])
-					} else {
-						d = d.Having(sprintf, args[0], args[1])
-					}
-					continue
-				}
-			}
-
-			// C2. IsNull / IsNotNull (无参数)
-			if cond.operator == OpIsNull || cond.operator == OpIsNotNull {
-				quotedCol := quoteColumn(cond.expr, qL, qR)
-				sprintf := fmt.Sprintf("%s %s", quotedCol, cond.operator)
-				if cond.isOr {
-					d = d.Or(sprintf)
-				} else {
-					d = d.Having(sprintf)
-				}
-				continue
-			}
-
-			// --- D. 标准操作 (Eq, Gt, Lt, Like, In 等) ---
-			quotedCol := quoteColumn(cond.expr, qL, qR)
-			sprintf := fmt.Sprintf("%s %s ?", quotedCol, cond.operator)
-
 			if cond.isOr {
-				d = d.Or(sprintf, cond.value)
+				d = d.Or(sqlStr, leafArgs...)
 			} else {
-				d = d.Having(sprintf, cond.value)
+				d = d.Having(sqlStr, leafArgs...)
 			}
 		}
 		return d
