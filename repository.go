@@ -140,12 +140,14 @@ func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col a
 	return result, err
 }
 
-// Page 分页查询
+// Page 分页查询。
+// skipCount=true 时跳过 COUNT 查询，total 恒为 0，适合已知总数或不需要总数的场景（性能更优）。
+// skipCount=false 时先执行 COUNT，若总数为 0 则直接返回，不再执行 Find。
 func (r *Repository[D, T]) Page(q *Query[T], skipCount bool) (data []T, total int64, err error) {
 	return r.PageTx(q, skipCount, nil)
 }
 
-// PageTx 支持事务的分页查询
+// PageTx 支持事务的分页查询。skipCount 语义同 Page。
 func (r *Repository[D, T]) PageTx(q *Query[T], skipCount bool, tx *gorm.DB) (data []T, total int64, err error) {
 	if q == nil {
 		return nil, 0, ErrQueryNil
