@@ -274,6 +274,58 @@ func TestDataRule_InvalidCondition_Repository(t *testing.T) {
 			t.Error("非法 DataRule 应使 Page 返回错误")
 		}
 	})
+
+	t.Run("UpdateByCond 返回 DataRule 错误", func(t *testing.T) {
+		u, model := NewUpdater[TestUser](ctx)
+		u.Set(&model.Name, "x").Eq(&model.ID, 1)
+		_, err := repo.UpdateByCond(u)
+		if err == nil {
+			t.Error("非法 DataRule 应使 UpdateByCond 返回错误")
+		}
+	})
+
+	t.Run("DeleteByCond 返回 DataRule 错误", func(t *testing.T) {
+		q, model := NewQuery[TestUser](ctx)
+		q.Eq(&model.ID, 1)
+		_, err := repo.DeleteByCond(q)
+		if err == nil {
+			t.Error("非法 DataRule 应使 DeleteByCond 返回错误")
+		}
+	})
+}
+
+// TestDataRule_UpdateByCond_Applied 验证 DataRule 条件正确追加到 UPDATE WHERE 子句
+func TestDataRule_UpdateByCond_Applied(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	// 插入两条数据
+	_ = repo.SaveBatch(ctx, []TestUser{{Name: "Alice", Age: 20}, {Name: "Bob", Age: 30}})
+
+	// 注入 DataRule：只允许操作 age >= 25 的记录
+	rules := []DataRule{{Column: "age", Condition: ">=", Value: "25"}}
+	ctxWithRule := context.WithValue(ctx, DataRuleKey, rules)
+
+	u, model := NewUpdater[TestUser](ctxWithRule)
+	u.Set(&model.Name, "Updated").
+		Ge(&model.Age, 1) // 宽泛条件，DataRule 会追加 age >= 25
+
+	affected, err := repo.UpdateByCond(u)
+	if err != nil {
+		t.Fatalf("UpdateByCond 不应报错: %v", err)
+	}
+	// DataRule age >= 25 只命中 Bob(30)，Alice(20) 不受影响
+	if affected != 1 {
+		t.Errorf("期望影响 1 行，实际 %d", affected)
+	}
+
+	// 验证 Alice 未被更新
+	q, qModel := NewQuery[TestUser](ctx)
+	q.Eq(&qModel.Name, "Alice")
+	list, _ := repo.List(q)
+	if len(list) != 1 {
+		t.Errorf("Alice 应仍存在，实际找到 %d 条", len(list))
+	}
 }
 
 // --- SaveBatch / CreateBatch 批量写 ---
