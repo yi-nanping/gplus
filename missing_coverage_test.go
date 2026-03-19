@@ -231,3 +231,44 @@ func TestUpdater_Omit_InvalidPointer(t *testing.T) {
 		}
 	})
 }
+
+// --- 非法 DataRule 通过 Repository 方法应返回错误（回归测试）---
+
+func TestDataRule_InvalidCondition_Repository(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+
+	invalidRules := []DataRule{{Column: "age", Condition: "INVALID_OP", Value: "18"}}
+	ctx := context.WithValue(context.Background(), DataRuleKey, invalidRules)
+
+	t.Run("List 返回 DataRule 错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		_, err := repo.List(q)
+		if err == nil {
+			t.Error("非法 DataRule 应使 List 返回错误")
+		}
+	})
+
+	t.Run("GetOne 返回 DataRule 错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		_, err := repo.GetOne(q)
+		if err == nil {
+			t.Error("非法 DataRule 应使 GetOne 返回错误")
+		}
+	})
+
+	t.Run("Count 返回 DataRule 错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		_, err := repo.Count(q)
+		if err == nil {
+			t.Error("非法 DataRule 应使 Count 返回错误")
+		}
+	})
+
+	t.Run("Page 返回 DataRule 错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		_, _, err := repo.Page(q, false)
+		if err == nil {
+			t.Error("非法 DataRule 应使 Page 返回错误")
+		}
+	})
+}
