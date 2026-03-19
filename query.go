@@ -93,7 +93,7 @@ func (q *Query[T]) Table(name string) *Query[T] {
 func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 	name, err := resolveColumnName(col)
 	if err != nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: 无效列指针: %w", err))
+		q.errs = append(q.errs, fmt.Errorf("gplus: invalid column pointer: %w", err))
 		return q
 	}
 	q.conditions = append(q.conditions, condition{
@@ -110,7 +110,7 @@ func (q *Query[T]) Select(cols ...any) *Query[T] {
 	for _, c := range cols {
 		name, err := resolveColumnName(c)
 		if err != nil {
-			q.errs = append(q.errs, fmt.Errorf("gplus: Select 无效列指针: %w", err))
+			q.errs = append(q.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
 		}
 		q.selects = append(q.selects, name)
@@ -333,7 +333,7 @@ func (q *Query[T]) OrNotLike(col any, val string) *Query[T] {
 // Between 区间查询
 func (q *Query[T]) Between(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: Between 参数 val1/val2 不能为 nil"))
+		q.errs = append(q.errs, fmt.Errorf("gplus: Between val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(false, col, OpBetween, []any{val1, val2})
@@ -342,7 +342,7 @@ func (q *Query[T]) Between(col any, val1 any, val2 any) *Query[T] {
 // OrBetween 区间查询(或)
 func (q *Query[T]) OrBetween(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: OrBetween 参数 val1/val2 不能为 nil"))
+		q.errs = append(q.errs, fmt.Errorf("gplus: OrBetween val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(true, col, OpBetween, []any{val1, val2})
@@ -351,7 +351,7 @@ func (q *Query[T]) OrBetween(col any, val1 any, val2 any) *Query[T] {
 // NotBetween 区间查询（不包含边界）
 func (q *Query[T]) NotBetween(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: NotBetween 参数 val1/val2 不能为 nil"))
+		q.errs = append(q.errs, fmt.Errorf("gplus: NotBetween val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(false, col, OpNotBetween, []any{val1, val2})
@@ -360,7 +360,7 @@ func (q *Query[T]) NotBetween(col any, val1 any, val2 any) *Query[T] {
 // OrNotBetween 区间查询（不包含边界）(或)
 func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: OrNotBetween 参数 val1/val2 不能为 nil"))
+		q.errs = append(q.errs, fmt.Errorf("gplus: OrNotBetween val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(true, col, OpNotBetween, []any{val1, val2})
@@ -370,7 +370,7 @@ func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
 func (q *Query[T]) Order(col any, isAsc bool) *Query[T] {
 	name, err := resolveColumnName(col)
 	if err != nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: Order 无效列指针: %w", err))
+		q.errs = append(q.errs, fmt.Errorf("gplus: Order invalid column pointer: %w", err))
 		return q
 	}
 	direction := KeyDesc
@@ -413,7 +413,7 @@ func (q *Query[T]) Omit(cols ...any) *Query[T] {
 	for _, c := range cols {
 		name, err := resolveColumnName(c)
 		if err != nil {
-			q.errs = append(q.errs, fmt.Errorf("gplus: Omit 无效列指针: %w", err))
+			q.errs = append(q.errs, fmt.Errorf("gplus: Omit invalid column pointer: %w", err))
 			continue
 		}
 		q.omits = append(q.omits, name)
@@ -431,7 +431,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 	for _, c := range cols {
 		name, err := resolveColumnName(c)
 		if err != nil {
-			q.errs = append(q.errs, fmt.Errorf("gplus: Distinct 无效列指针: %w", err))
+			q.errs = append(q.errs, fmt.Errorf("gplus: Distinct invalid column pointer: %w", err))
 			continue
 		}
 		q.selects = append(q.selects, name)
@@ -444,7 +444,7 @@ func (q *Query[T]) Group(cols ...any) *Query[T] {
 	for _, c := range cols {
 		name, err := resolveColumnName(c)
 		if err != nil {
-			q.errs = append(q.errs, fmt.Errorf("gplus: Group 无效列指针: %w", err))
+			q.errs = append(q.errs, fmt.Errorf("gplus: Group invalid column pointer: %w", err))
 			continue
 		}
 		q.groups = append(q.groups, name)
@@ -738,7 +738,7 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 		}
 		if len(parts) != 2 {
 			q.errs = append(q.errs, fmt.Errorf(
-				"data rule [col: %s]: BETWEEN 需要两个值，实际得到 %d 个",
+				"data rule [col: %s]: BETWEEN requires exactly 2 values, got %d",
 				column, len(parts),
 			))
 			return

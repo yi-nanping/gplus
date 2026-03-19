@@ -75,7 +75,7 @@ func (u *Updater[T]) IsEmpty() bool {
 func (u *Updater[T]) Set(col any, val any) *Updater[T] {
 	name, err := resolveColumnName(col)
 	if err != nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: Set 无效列指针: %w", err))
+		u.errs = append(u.errs, fmt.Errorf("gplus: Set invalid column pointer: %w", err))
 		return u
 	}
 	u.setMap[name] = val
@@ -87,7 +87,7 @@ func (u *Updater[T]) Set(col any, val any) *Updater[T] {
 func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
 	name, err := resolveColumnName(col)
 	if err != nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: SetExpr 无效列指针: %w", err))
+		u.errs = append(u.errs, fmt.Errorf("gplus: SetExpr invalid column pointer: %w", err))
 		return u
 	}
 	u.setMap[name] = gorm.Expr(expr, args...)
@@ -99,7 +99,7 @@ func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
 // 而非结构体字段名（如 "UserName"）。如需类型安全的列名解析，请改用 Set()。
 func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 	if len(m) == 0 {
-		u.errs = append(u.errs, fmt.Errorf("gplus: SetMap 不能传入空 map"))
+		u.errs = append(u.errs, fmt.Errorf("gplus: SetMap requires a non-empty map"))
 		return u
 	}
 	for k, v := range m {
@@ -115,7 +115,7 @@ func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 	for _, c := range cols {
 		name, err := resolveColumnName(c)
 		if err != nil {
-			u.errs = append(u.errs, fmt.Errorf("gplus: Select 无效列指针: %w", err))
+			u.errs = append(u.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
 		}
 		u.selects = append(u.selects, name)
@@ -128,7 +128,7 @@ func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 	for _, c := range cols {
 		name, err := resolveColumnName(c)
 		if err != nil {
-			u.errs = append(u.errs, fmt.Errorf("gplus: Omit 无效列指针: %w", err))
+			u.errs = append(u.errs, fmt.Errorf("gplus: Omit invalid column pointer: %w", err))
 			continue
 		}
 		u.omits = append(u.omits, name)
@@ -142,7 +142,7 @@ func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 func (u *Updater[T]) addCond(isOr bool, col any, op string, val any) *Updater[T] {
 	name, err := resolveColumnName(col)
 	if err != nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: 无效列指针: %w", err))
+		u.errs = append(u.errs, fmt.Errorf("gplus: invalid column pointer: %w", err))
 		return u
 	}
 	u.conditions = append(u.conditions, condition{
@@ -227,7 +227,7 @@ func (u *Updater[T]) OrIsNotNull(col any) *Updater[T] { return u.addCond(true, c
 // Between 区间查询
 func (u *Updater[T]) Between(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: Between 参数 v1/v2 不能为 nil"))
+		u.errs = append(u.errs, fmt.Errorf("gplus: Between v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(false, col, OpBetween, []any{v1, v2})
@@ -236,7 +236,7 @@ func (u *Updater[T]) Between(col any, v1, v2 any) *Updater[T] {
 // OrBetween 区间查询
 func (u *Updater[T]) OrBetween(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: OrBetween 参数 v1/v2 不能为 nil"))
+		u.errs = append(u.errs, fmt.Errorf("gplus: OrBetween v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(true, col, OpBetween, []any{v1, v2})
@@ -245,7 +245,7 @@ func (u *Updater[T]) OrBetween(col any, v1, v2 any) *Updater[T] {
 // NotBetween 区间查询
 func (u *Updater[T]) NotBetween(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: NotBetween 参数 v1/v2 不能为 nil"))
+		u.errs = append(u.errs, fmt.Errorf("gplus: NotBetween v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(false, col, OpNotBetween, []any{v1, v2})
@@ -254,7 +254,7 @@ func (u *Updater[T]) NotBetween(col any, v1, v2 any) *Updater[T] {
 // OrNotBetween 区间查询
 func (u *Updater[T]) OrNotBetween(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: OrNotBetween 参数 v1/v2 不能为 nil"))
+		u.errs = append(u.errs, fmt.Errorf("gplus: OrNotBetween v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(true, col, OpNotBetween, []any{v1, v2})
@@ -496,7 +496,7 @@ func (u *Updater[T]) applyDataRule(rule DataRule) {
 		}
 		if len(parts) != 2 {
 			u.errs = append(u.errs, fmt.Errorf(
-				"data rule [col: %s]: BETWEEN 需要两个值，实际得到 %d 个",
+				"data rule [col: %s]: BETWEEN requires exactly 2 values, got %d",
 				column, len(parts),
 			))
 			return
