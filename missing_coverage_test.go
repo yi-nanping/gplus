@@ -126,7 +126,7 @@ func TestDataRule_Between_InvalidFormat(t *testing.T) {
 
 func TestGetModelInstance_Concurrent(t *testing.T) {
 	// 先清理缓存，确保触发慢路径
-	UnregisterModel[TestUser]()
+	unregisterModel[TestUser]()
 
 	const goroutines = 50
 	var wg sync.WaitGroup

@@ -18,9 +18,9 @@ var (
 	ErrInvalidPointer = errors.New("gplus: argument must be a struct field pointer")
 )
 
-// UnregisterModel 从缓存中移除指定模型的注册信息。
-// 适用场景：测试隔离、分表动态模型清理，避免全局缓存无限增长。
-func UnregisterModel[T any]() {
+// unregisterModel 从缓存中移除指定模型的注册信息（仅供包内测试使用）。
+// 适用场景：测试隔离，避免全局缓存在子测试间产生残留状态。
+func unregisterModel[T any]() {
 	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
 	modelInitMu.Lock()
 	defer modelInitMu.Unlock()
@@ -68,7 +68,7 @@ func registerPtrEmbedFields(val reflect.Value, tag, label string) {
 }
 
 // unregisterPtrEmbedFields 清理指针嵌入字段注册的绝对地址映射。
-// 与 registerPtrEmbedFields 配对使用，确保 UnregisterModel 完整清理缓存，不留悬空条目。
+// 与 registerPtrEmbedFields 配对使用，确保 unregisterModel 完整清理缓存，不留悬空条目。
 func unregisterPtrEmbedFields(val reflect.Value, tag, label string) {
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {

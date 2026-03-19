@@ -7,7 +7,7 @@ import (
 
 func TestRegisterModel(t *testing.T) {
 	t.Run("正常注册后字段可解析", func(t *testing.T) {
-		UnregisterModel[TestUser]()
+		unregisterModel[TestUser]()
 		u := new(TestUser)
 		RegisterModel(u)
 		col, err := resolveColumnName(&u.Name)
@@ -16,7 +16,7 @@ func TestRegisterModel(t *testing.T) {
 	})
 
 	t.Run("幂等-重复注册不panic", func(t *testing.T) {
-		UnregisterModel[TestUser]()
+		unregisterModel[TestUser]()
 		u := new(TestUser)
 		RegisterModel(u)
 		RegisterModel(u) // 第二次静默跳过
@@ -34,7 +34,7 @@ func TestRegisterModel(t *testing.T) {
 	})
 
 	t.Run("非指针值-跳过不注册", func(t *testing.T) {
-		UnregisterModel[TestUser]()
+		unregisterModel[TestUser]()
 		RegisterModel(TestUser{}) // 非指针，应跳过
 		u := new(TestUser)
 		_, err := resolveColumnName(&u.Name)
@@ -44,20 +44,20 @@ func TestRegisterModel(t *testing.T) {
 
 func TestUnregisterModel(t *testing.T) {
 	t.Run("注销后字段指针失效", func(t *testing.T) {
-		UnregisterModel[TestUser]()
+		unregisterModel[TestUser]()
 		u := new(TestUser)
 		RegisterModel(u)
 		_, err := resolveColumnName(&u.Name)
 		assertError(t, err, false, "注册后应有效")
 
-		UnregisterModel[TestUser]()
+		unregisterModel[TestUser]()
 		_, err = resolveColumnName(&u.Name)
 		assertError(t, err, true, "注销后原字段指针应失效")
 	})
 
 	t.Run("重复注销-不panic", func(t *testing.T) {
-		UnregisterModel[TestUser]()
-		UnregisterModel[TestUser]() // 再次注销，不应 panic
+		unregisterModel[TestUser]()
+		unregisterModel[TestUser]() // 再次注销，不应 panic
 	})
 }
 
@@ -140,12 +140,12 @@ func TestSchema_ResolveColumnName(t *testing.T) {
 // TestSchema_PtrEmbedField 验证指针嵌入字段的端到端行为：
 // 值字段和指针嵌入的内层字段均可正常解析。
 func TestSchema_PtrEmbedField(t *testing.T) {
-	UnregisterModel[utilsPtrEmbed]()
+	unregisterModel[utilsPtrEmbed]()
 	u := &utilsPtrEmbed{
 		UtilsEmbedBaseSmall: &UtilsEmbedBaseSmall{ID: 1},
 	}
 	RegisterModel(u)
-	t.Cleanup(func() { UnregisterModel[utilsPtrEmbed]() })
+	t.Cleanup(func() { unregisterModel[utilsPtrEmbed]() })
 
 	t.Run("值字段Note可正常解析", func(t *testing.T) {
 		col, err := resolveColumnName(&u.Note)
@@ -160,7 +160,7 @@ func TestSchema_PtrEmbedField(t *testing.T) {
 	})
 
 	t.Run("nil指针嵌入时RegisterModel不panic且值字段可解析", func(t *testing.T) {
-		UnregisterModel[utilsPtrEmbed]()
+		unregisterModel[utilsPtrEmbed]()
 		uNil := &utilsPtrEmbed{} // UtilsEmbedBaseSmall 为 nil
 		RegisterModel(uNil)      // 不应 panic，nil 嵌入字段被跳过
 		col, err := resolveColumnName(&uNil.Note)
@@ -169,7 +169,7 @@ func TestSchema_PtrEmbedField(t *testing.T) {
 	})
 
 	t.Run("getModelInstance自动初始化指针嵌入并可解析", func(t *testing.T) {
-		UnregisterModel[utilsPtrEmbed]()
+		unregisterModel[utilsPtrEmbed]()
 		instance := getModelInstance[utilsPtrEmbed]()
 		col, err := resolveColumnName(&instance.Note)
 		assertError(t, err, false, "getModelInstance后值字段应可解析")
