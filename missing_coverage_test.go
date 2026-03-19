@@ -579,3 +579,149 @@ func TestUpdater_SetExpr_InvalidPointer(t *testing.T) {
 		t.Errorf("SetExpr nil 不应写入 setMap，实际 %d", len(u.setMap))
 	}
 }
+
+// --- applyDataRule 未覆盖分支 ---
+
+func TestDataRule_AdditionalBranches(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("SQL 注入防护拒绝 SQL 条件", func(t *testing.T) {
+		rules := []DataRule{{Column: "age", Condition: "SQL", Value: "1=1"}}
+		ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+		q, _ := NewQuery[TestUser](ctx2)
+		q.DataRuleBuilder()
+		assertError(t, q.GetError(), true, "SQL 条件应被拒绝")
+		if len(q.conditions) != 0 {
+			t.Errorf("SQL 条件不应追加，实际 %d", len(q.conditions))
+		}
+	})
+
+	t.Run("USE_SQL_RULES 注入防护", func(t *testing.T) {
+		rules := []DataRule{{Column: "age", Condition: "USE_SQL_RULES", Value: "1=1"}}
+		ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+		q, _ := NewQuery[TestUser](ctx2)
+		q.DataRuleBuilder()
+		assertError(t, q.GetError(), true, "USE_SQL_RULES 应被拒绝")
+	})
+
+	t.Run("EQ 别名正常", func(t *testing.T) {
+		rules := []DataRule{{Column: "age", Condition: "EQ", Value: "18"}}
+		ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+		q, _ := NewQuery[TestUser](ctx2)
+		q.DataRuleBuilder()
+		assertError(t, q.GetError(), false, "EQ 别名不应报错")
+		if len(q.conditions) != 1 {
+			t.Errorf("EQ 期望 1 个条件，实际 %d", len(q.conditions))
+		}
+	})
+
+	t.Run("GT/GE/LT/LE/NE 别名", func(t *testing.T) {
+		aliases := []struct{ cond, val string }{
+			{"GT", "18"}, {"GE", "18"}, {"LT", "30"}, {"LE", "30"}, {"NE", "0"},
+		}
+		for _, a := range aliases {
+			rules := []DataRule{{Column: "age", Condition: a.cond, Value: a.val}}
+			ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+			q, _ := NewQuery[TestUser](ctx2)
+			q.DataRuleBuilder()
+			assertError(t, q.GetError(), false, a.cond+" 不应报错")
+			if len(q.conditions) != 1 {
+				t.Errorf("%s 期望 1 个条件，实际 %d", a.cond, len(q.conditions))
+			}
+		}
+	})
+
+	t.Run("空 value 且非 IS NULL 提前返回", func(t *testing.T) {
+		rules := []DataRule{{Column: "age", Condition: "=", Value: ""}}
+		ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+		q, _ := NewQuery[TestUser](ctx2)
+		q.DataRuleBuilder()
+		assertError(t, q.GetError(), false, "空 value 不应报错")
+		if len(q.conditions) != 0 {
+			t.Errorf("空 value 不应追加条件，实际 %d", len(q.conditions))
+		}
+	})
+
+	t.Run("BETWEEN 使用 Values 字段", func(t *testing.T) {
+		rules := []DataRule{{Column: "age", Condition: "BETWEEN", Values: []string{"18", "30"}}}
+		ctx2 := context.WithValue(ctx, DataRuleKey, rules)
+		q, _ := NewQuery[TestUser](ctx2)
+		q.DataRuleBuilder()
+		assertError(t, q.GetError(), false, "BETWEEN Values 不应报错")
+		if len(q.conditions) != 1 {
+			t.Errorf("BETWEEN Values 期望 1 个条件，实际 %d", len(q.conditions))
+		}
+	})
+}
+
+// --- applyGroupHaving OR 嵌套分支 ---
+
+func TestQuery_HavingGroup_OrBranch(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("HavingGroup OR 嵌套", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Having("COUNT(id)", OpGt, 1)
+		// 通过直接操作 havings 模拟 OR 嵌套组（isOr=true）
+		sub := &Query[TestUser]{ScopeBuilder: ScopeBuilder{havings: make([]condition, 0)}}
+		sub.havings = append(sub.havings, condition{expr: "SUM(age)", operator: OpGt, value: 100})
+		q.havings = append(q.havings, condition{group: sub.havings, isOr: true})
+		if len(q.havings) != 2 {
+			t.Fatalf("期望 2 个 having，实际 %d", len(q.havings))
+		}
+		if !q.havings[1].isOr {
+			t.Error("第二个 having 应为 OR")
+		}
+	})
+}
+
+// --- UpdateByCondTX nil updater 分支 ---
+
+func TestRepository_UpdateByCondTX_NilUpdater(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+
+	t.Run("nil updater 返回 ErrUpdateEmpty", func(t *testing.T) {
+		_, err := repo.UpdateByCond(nil)
+		if err != ErrUpdateEmpty {
+			t.Errorf("期望 ErrUpdateEmpty，实际: %v", err)
+		}
+	})
+
+	t.Run("空 setMap 返回 ErrUpdateEmpty", func(t *testing.T) {
+		u, _ := NewUpdater[TestUser](context.Background())
+		_, err := repo.UpdateByCond(u)
+		if err != ErrUpdateEmpty {
+			t.Errorf("期望 ErrUpdateEmpty，实际: %v", err)
+		}
+	})
+}
+
+// --- applyWhere isRaw 有值分支（通过内部构造触发）---
+
+func TestApplyWhere_IsRaw(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	db.Create(&TestUser{Name: "RawUser", Age: 25})
+	ctx := context.Background()
+
+	t.Run("isRaw 无参数条件", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		// 直接写入 isRaw 条件（无 value）
+		q.conditions = append(q.conditions, condition{expr: "age > 18", isRaw: true})
+		list, err := repo.List(q)
+		assertError(t, err, false, "isRaw 条件不应报错")
+		if len(list) != 1 {
+			t.Errorf("期望 1 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("isRaw 有参数条件", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		// 直接写入 isRaw 条件（有 value）
+		q.conditions = append(q.conditions, condition{expr: "age > ?", isRaw: true, value: 18})
+		list, err := repo.List(q)
+		assertError(t, err, false, "isRaw 有参数条件不应报错")
+		if len(list) != 1 {
+			t.Errorf("期望 1 条，实际 %d", len(list))
+		}
+	})
+}
