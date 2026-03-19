@@ -22,7 +22,8 @@ func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 	// 确保模型已注册
 	model := getModelInstance[T]()
 	return &Query[T]{
-		ctx: ctx,
+		ctx:  ctx,
+		errs: make([]error, 0, 8),
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
 		},

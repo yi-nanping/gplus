@@ -190,15 +190,17 @@ func (b *ScopeBuilder) Clear() {
 // getQuoteChar 自动探测数据库方言并设置转义符
 func getQuoteChar(db *gorm.DB) (string, string) {
 	if db.Dialector == nil {
-		return "`", "`" // 默认 fallback 到 MySQL
+		return "", "" // 无法探测方言，交由 GORM 自行处理
 	}
 	switch db.Name() {
 	case "postgres", "sqlite":
 		return "\"", "\""
 	case "sqlserver":
 		return "[", "]"
-	default: // mysql, tidb, etc.
+	case "mysql", "tidb":
 		return "`", "`"
+	default: // 未知方言，不强制转义，交由 GORM 自行处理
+		return "", ""
 	}
 }
 
@@ -513,8 +515,8 @@ func quoteColumn(col string, qL, qR string) string {
 		return ""
 	}
 
-	// 1. 已经转义过，直接返回
-	if strings.HasPrefix(col, qL) {
+	// 1. 已经转义过，直接返回（qL 为空时跳过，避免 HasPrefix("") 永远匹配）
+	if qL != "" && strings.HasPrefix(col, qL) {
 		return col
 	}
 
