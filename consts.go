@@ -27,7 +27,8 @@ const (
 	JoinRight = "RIGHT JOIN"
 	// JoinInner 内连接 只返回两个表中都存在的记录 (交集)。
 	JoinInner = "INNER JOIN"
-	// JoinOuter 外连接 返回左表中的所有记录，即使右表中没有匹配的记录。
+	// JoinOuter 注意：裸 "OUTER JOIN" 不是标准 SQL，MySQL/PostgreSQL/SQLite 均不支持，
+	// 调用此常量将导致数据库语法错误。如需外连接，请使用 JoinFull ("FULL OUTER JOIN")。
 	JoinOuter = "OUTER JOIN"
 	// JoinNatural 自然连接 返回两个表中相同列名和数据类型的所有记录。
 	JoinNatural = "NATURAL JOIN"

@@ -417,7 +417,8 @@ func (q *Query[T]) InnerJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinInner, on, args...)
 }
 
-// OuterJoin 外连接
+// OuterJoin 注意：裸 "OUTER JOIN" 不是标准 SQL，MySQL/PostgreSQL/SQLite 均不支持，
+// 调用此方法将导致数据库语法错误。如需外连接，请使用 FullJoin ("FULL OUTER JOIN")。
 func (q *Query[T]) OuterJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinOuter, on, args...)
 }
