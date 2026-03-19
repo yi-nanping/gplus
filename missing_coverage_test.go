@@ -829,3 +829,131 @@ func TestUpdater_applyDataRule_AllBranches(t *testing.T) {
 		})
 	}
 }
+
+// TestWhereRaw_Query 验证 Query.WhereRaw / OrWhereRaw
+func TestWhereRaw_Query(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "Alice", Age: 20})
+	db.Create(&TestUser{Name: "Bob", Age: 30})
+
+	t.Run("WhereRaw 无参数", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.WhereRaw("age > 25")
+		list, err := repo.List(q)
+		assertError(t, err, false, "WhereRaw 无参不应报错")
+		if len(list) != 1 || list[0].Name != "Bob" {
+			t.Errorf("期望 Bob，实际 %v", list)
+		}
+	})
+
+	t.Run("WhereRaw 单参数", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.WhereRaw("age > ?", 25)
+		list, err := repo.List(q)
+		assertError(t, err, false, "WhereRaw 单参不应报错")
+		if len(list) != 1 || list[0].Name != "Bob" {
+			t.Errorf("期望 Bob，实际 %v", list)
+		}
+	})
+
+	t.Run("WhereRaw 多参数", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.WhereRaw("age > ? AND age < ?", 18, 25)
+		list, err := repo.List(q)
+		assertError(t, err, false, "WhereRaw 多参不应报错")
+		if len(list) != 1 || list[0].Name != "Alice" {
+			t.Errorf("期望 Alice，实际 %v", list)
+		}
+	})
+
+	t.Run("OrWhereRaw", func(t *testing.T) {
+		q, model := NewQuery[TestUser](ctx)
+		q.Eq(&model.Name, "Alice").OrWhereRaw("age = ?", 30)
+		list, err := repo.List(q)
+		assertError(t, err, false, "OrWhereRaw 不应报错")
+		if len(list) != 2 {
+			t.Errorf("期望 2 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("WhereRaw 空 sql 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.WhereRaw("")
+		if q.GetError() == nil {
+			t.Error("空 sql 应写入 errs")
+		}
+	})
+
+	t.Run("OrWhereRaw 空 sql 写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.OrWhereRaw("")
+		if q.GetError() == nil {
+			t.Error("空 sql 应写入 errs")
+		}
+	})
+
+	t.Run("OrWhereRaw 多参数", func(t *testing.T) {
+		q, model := NewQuery[TestUser](ctx)
+		q.Eq(&model.Name, "Alice").OrWhereRaw("age > ? AND age < ?", 25, 35)
+		list, err := repo.List(q)
+		assertError(t, err, false, "OrWhereRaw 多参不应报错")
+		if len(list) != 2 {
+			t.Errorf("期望 2 条，实际 %d", len(list))
+		}
+	})
+}
+
+// TestWhereRaw_Updater 验证 Updater.WhereRaw / OrWhereRaw
+func TestWhereRaw_Updater(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "Alice", Age: 20})
+	db.Create(&TestUser{Name: "Bob", Age: 30})
+
+	t.Run("WhereRaw 单参数更新", func(t *testing.T) {
+		u, model := NewUpdater[TestUser](ctx)
+		u.Set(&model.Name, "AliceNew").WhereRaw("age = ?", 20)
+		affected, err := repo.UpdateByCond(u)
+		assertError(t, err, false, "WhereRaw 更新不应报错")
+		if affected != 1 {
+			t.Errorf("期望影响 1 行，实际 %d", affected)
+		}
+	})
+
+	t.Run("WhereRaw 多参数更新", func(t *testing.T) {
+		u, model := NewUpdater[TestUser](ctx)
+		u.Set(&model.Name, "BobNew").WhereRaw("age > ? AND age < ?", 25, 35)
+		affected, err := repo.UpdateByCond(u)
+		assertError(t, err, false, "WhereRaw 多参更新不应报错")
+		if affected != 1 {
+			t.Errorf("期望影响 1 行，实际 %d", affected)
+		}
+	})
+
+	t.Run("Updater WhereRaw 空 sql 写入 errs", func(t *testing.T) {
+		u, model := NewUpdater[TestUser](ctx)
+		u.Set(&model.Name, "x").WhereRaw("")
+		if u.GetError() == nil {
+			t.Error("空 sql 应写入 errs")
+		}
+	})
+
+	t.Run("Updater OrWhereRaw 空 sql 写入 errs", func(t *testing.T) {
+		u, model := NewUpdater[TestUser](ctx)
+		u.Set(&model.Name, "x").OrWhereRaw("")
+		if u.GetError() == nil {
+			t.Error("空 sql 应写入 errs")
+		}
+	})
+
+	t.Run("Updater OrWhereRaw 多参数", func(t *testing.T) {
+		u, model := NewUpdater[TestUser](ctx)
+		u.Set(&model.Name, "OrRawNew").WhereRaw("age = ?", 999).OrWhereRaw("age > ? AND age < ?", 25, 35)
+		affected, err := repo.UpdateByCond(u)
+		assertError(t, err, false, "OrWhereRaw 多参更新不应报错")
+		if affected != 1 {
+			t.Errorf("期望影响 1 行，实际 %d", affected)
+		}
+	})
+}

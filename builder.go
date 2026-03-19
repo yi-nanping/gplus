@@ -245,10 +245,14 @@ func (b *ScopeBuilder) applyDistinct(db *gorm.DB) *gorm.DB {
 // ok=false 表示应跳过（BETWEEN 参数校验失败的防御性情况）。
 func buildLeafSQL(cond condition, qL, qR string) (sqlStr string, args []any, ok bool) {
 	if cond.isRaw {
-		if cond.value != nil {
-			return cond.expr, []any{cond.value}, true
+		if cond.value == nil {
+			return cond.expr, nil, true
 		}
-		return cond.expr, nil, true
+		// 多参数时 value 存储为 []any，直接展开传给 GORM
+		if args, ok := cond.value.([]any); ok {
+			return cond.expr, args, true
+		}
+		return cond.expr, []any{cond.value}, true
 	}
 	quotedCol := quoteColumn(cond.expr, qL, qR)
 	switch cond.operator {

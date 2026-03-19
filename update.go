@@ -367,6 +367,52 @@ func (u *Updater[T]) Unscoped() *Updater[T] {
 	return u
 }
 
+// WhereRaw 添加原生 SQL 条件（AND）。
+// sql 为完整条件片段，args 为参数绑定值，防止 SQL 注入。
+// 示例：u.WhereRaw("YEAR(created_at) = ?", 2024)
+// 注意：sql 参数由调用方负责安全性，不可直接拼接用户输入。
+func (u *Updater[T]) WhereRaw(sql string, args ...any) *Updater[T] {
+	if sql == "" {
+		u.errs = append(u.errs, errors.New("gplus: WhereRaw sql cannot be empty"))
+		return u
+	}
+	var val any
+	if len(args) == 1 {
+		val = args[0]
+	} else if len(args) > 1 {
+		val = args
+	}
+	u.conditions = append(u.conditions, condition{
+		expr:  sql,
+		isRaw: true,
+		isOr:  false,
+		value: val,
+	})
+	return u
+}
+
+// OrWhereRaw 添加原生 SQL 条件（OR）。
+// 参数安全要求与 WhereRaw 相同。
+func (u *Updater[T]) OrWhereRaw(sql string, args ...any) *Updater[T] {
+	if sql == "" {
+		u.errs = append(u.errs, errors.New("gplus: OrWhereRaw sql cannot be empty"))
+		return u
+	}
+	var val any
+	if len(args) == 1 {
+		val = args[0]
+	} else if len(args) > 1 {
+		val = args
+	}
+	u.conditions = append(u.conditions, condition{
+		expr:  sql,
+		isRaw: true,
+		isOr:  true,
+		value: val,
+	})
+	return u
+}
+
 // DataRuleBuilder 从上下文中提取规则并应用到更新条件中。
 // 对同一个 Updater 对象只执行一次，防止多次调用重复追加条件。
 func (u *Updater[T]) DataRuleBuilder() *Updater[T] {
