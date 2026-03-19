@@ -40,6 +40,26 @@
 ### 已知限制
 
 - 不支持 UNION（需用 `RawQuery` 代替）
-- 不支持 Upsert（`INSERT ON CONFLICT DO UPDATE`）
 - 不支持批量 Update/Delete
 - `SetMap` 跳过列名类型校验，类型安全性低于 `Set`
+
+---
+
+## [Unreleased]
+
+### 新增
+
+- `Upsert` / `UpsertTx`：单条 insert-or-update，底层调用 GORM `db.Save()`
+- `UpsertBatch` / `UpsertBatchTx`：批量 insert-or-update
+- `WhereRaw` / `OrWhereRaw`：`Query[T]` 和 `Updater[T]` 支持原生 SQL 条件片段
+- `Updater[T].DataRuleBuilder()`：数据权限规则同步支持 UPDATE 操作
+- `CreateBatchTx` 新增 `batchSize <= 0` 参数校验
+
+### 修复
+
+- `DeleteByCondTX` / `UpdateByCondTX` 未应用 DataRule 导致数据权限对写操作不生效
+- `Updater.Clear()` 保留 backing array 导致复用时旧错误残留
+
+### 文档
+
+- `Save` / `SaveBatch` godoc 明确标注

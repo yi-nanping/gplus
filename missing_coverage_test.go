@@ -328,6 +328,70 @@ func TestDataRule_UpdateByCond_Applied(t *testing.T) {
 	}
 }
 
+// --- Upsert / UpsertBatch ---
+
+func TestRepository_Upsert(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	t.Run("Upsert 无主键执行 INSERT", func(t *testing.T) {
+		u := &TestUser{Name: "UpsertNew", Age: 10}
+		if err := repo.Upsert(ctx, u); err != nil {
+			t.Fatalf("Upsert 不应报错: %v", err)
+		}
+		if u.ID == 0 {
+			t.Error("Upsert 后应分配主键")
+		}
+	})
+
+	t.Run("Upsert 有主键执行 UPDATE", func(t *testing.T) {
+		// 先插入
+		u := &TestUser{Name: "Before", Age: 1}
+		_ = repo.Save(ctx, u)
+		// 再 upsert 更新
+		u.Name = "After"
+		if err := repo.Upsert(ctx, u); err != nil {
+			t.Fatalf("Upsert 更新不应报错: %v", err)
+		}
+		got, err := repo.GetById(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("GetById 失败: %v", err)
+		}
+		if got.Name != "After" {
+			t.Errorf("期望 Name=After，实际 %s", got.Name)
+		}
+	})
+
+	t.Run("UpsertTx 事务", func(t *testing.T) {
+		repo2, db := setupTestDB[TestUser](t)
+		u := &TestUser{Name: "UpsertTx", Age: 5}
+		if err := repo2.UpsertTx(ctx, u, db); err != nil {
+			t.Fatalf("UpsertTx 不应报错: %v", err)
+		}
+	})
+
+	t.Run("UpsertBatch 批量", func(t *testing.T) {
+		repo3, _ := setupTestDB[TestUser](t)
+		users := []TestUser{{Name: "UB1", Age: 1}, {Name: "UB2", Age: 2}}
+		if err := repo3.UpsertBatch(ctx, users); err != nil {
+			t.Fatalf("UpsertBatch 不应报错: %v", err)
+		}
+		q, _ := NewQuery[TestUser](ctx)
+		list, _ := repo3.List(q)
+		if len(list) != 2 {
+			t.Errorf("期望 2 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("UpsertBatchTx 事务批量", func(t *testing.T) {
+		repo4, db := setupTestDB[TestUser](t)
+		users := []TestUser{{Name: "UBTx", Age: 99}}
+		if err := repo4.UpsertBatchTx(ctx, users, db); err != nil {
+			t.Fatalf("UpsertBatchTx 不应报错: %v", err)
+		}
+	})
+}
+
 // --- SaveBatch / CreateBatch 批量写 ---
 
 func TestRepository_SaveBatch(t *testing.T) {

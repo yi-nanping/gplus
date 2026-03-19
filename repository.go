@@ -195,26 +195,51 @@ func (r *Repository[D, T]) CountTx(q *Query[T], tx *gorm.DB) (int64, error) {
 	return count, err
 }
 
-// Save 新增
+// Save 纯 INSERT（非 upsert）。
+// 警告：无论 entity 是否携带主键，均执行 INSERT，不会更新已有记录。
+// 若需 insert-or-update 语义，请使用 Upsert。
 func (r *Repository[D, T]) Save(ctx context.Context, entity *T) error {
 	return r.SaveTx(ctx, entity, nil)
 }
 
-// SaveTx 事务新增
+// SaveTx 事务纯 INSERT（非 upsert）。
 func (r *Repository[D, T]) SaveTx(ctx context.Context, entity *T, tx *gorm.DB) error {
 	return r.dbResolver(ctx, tx).Create(entity).Error
 }
 
-// SaveBatch 批量新增（一次性插入，适合小批量数据）。
-// 注意：底层调用 GORM Create，执行纯插入而非 upsert。
+// SaveBatch 批量纯 INSERT（一次性，适合小批量数据）。
+// 警告：底层调用 GORM Create，执行纯插入而非 upsert。
 // 大批量数据请使用 CreateBatch 以控制每批插入数量。
 func (r *Repository[D, T]) SaveBatch(ctx context.Context, entities []T) error {
 	return r.SaveBatchTx(ctx, entities, nil)
 }
 
-// SaveBatchTx 事务批量新增（一次性插入，适合小批量数据）。
+// SaveBatchTx 事务批量纯 INSERT（一次性，适合小批量数据）。
 func (r *Repository[D, T]) SaveBatchTx(ctx context.Context, entities []T, tx *gorm.DB) error {
 	return r.dbResolver(ctx, tx).Create(&entities).Error
+}
+
+// Upsert 保存或更新单条记录（insert-or-update）。
+// 底层调用 GORM db.Save()：有主键时执行 UPDATE 全字段，无主键时执行 INSERT。
+// 注意：UPDATE 会覆盖所有字段（包括零值），如需只更新部分字段请使用 UpdateById/UpdateByCond。
+func (r *Repository[D, T]) Upsert(ctx context.Context, entity *T) error {
+	return r.UpsertTx(ctx, entity, nil)
+}
+
+// UpsertTx 事务保存或更新单条记录（insert-or-update）。
+func (r *Repository[D, T]) UpsertTx(ctx context.Context, entity *T, tx *gorm.DB) error {
+	return r.dbResolver(ctx, tx).Save(entity).Error
+}
+
+// UpsertBatch 批量保存或更新（insert-or-update，一次性执行）。
+// 底层调用 GORM db.Save()，每条记录按主键决定 INSERT 或 UPDATE。
+func (r *Repository[D, T]) UpsertBatch(ctx context.Context, entities []T) error {
+	return r.UpsertBatchTx(ctx, entities, nil)
+}
+
+// UpsertBatchTx 事务批量保存或更新（insert-or-update）。
+func (r *Repository[D, T]) UpsertBatchTx(ctx context.Context, entities []T, tx *gorm.DB) error {
+	return r.dbResolver(ctx, tx).Save(&entities).Error
 }
 
 // CreateBatch 批量插入（分批执行，适合大批量数据）。
