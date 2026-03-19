@@ -18,6 +18,9 @@ type Query[T any] struct {
 	dataRuleApplied bool
 }
 
+// NewQuery 创建泛型查询构建器，同时返回类型 T 的规范实例指针。
+// 所有字段指针参数（如 &model.Name）必须来自返回的 *T 实例。
+// ctx 用于传递请求级上下文（DataRule、超时等），可传 context.Background()。
 func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 	// 确保模型已注册
 	model := getModelInstance[T]()

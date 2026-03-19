@@ -46,6 +46,8 @@ type preloadInfo struct {
 // 定义 Context 中使用的 Key 类型，防止命名冲突
 type dataRuleKey struct{}
 
+// DataRuleKey 是用于在 context.Context 中存储 []DataRule 的键。
+// 使用示例：ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
 var DataRuleKey = dataRuleKey{}
 
 // ScopeBuilder 负责将条件转换为 GORM Scope

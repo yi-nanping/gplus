@@ -19,6 +19,9 @@ type Updater[T any] struct {
 	errs []error
 }
 
+// NewUpdater 创建泛型更新构建器，同时返回类型 T 的规范实例指针。
+// 所有字段指针参数（如 &model.Name）必须来自返回的 *T 实例。
+// ctx 用于传递请求级上下文，可传 context.Background()。
 func NewUpdater[T any](ctx context.Context) (*Updater[T], *T) {
 	model := getModelInstance[T]()
 	return &Updater[T]{
