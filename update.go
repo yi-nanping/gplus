@@ -92,6 +92,8 @@ func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
 }
 
 // SetMap 批量设置更新内容
+// 注意：map 的 key 必须是数据库列名（snake_case，如 "user_name"），
+// 而非结构体字段名（如 "UserName"）。如需类型安全的列名解析，请改用 Set()。
 func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 	if len(m) == 0 {
 		u.errs = append(u.errs, fmt.Errorf("gplus: SetMap 不能传入空 map"))
