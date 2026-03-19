@@ -233,8 +233,8 @@ func TestRepository_RawQueryTx(t *testing.T) {
 	}
 }
 
-// TestRepository_DeleteByCondTX 测试事务删除
-func TestRepository_DeleteByCondTX(t *testing.T) {
+// TestRepository_DeleteByCondTx 测试事务删除
+func TestRepository_DeleteByCondTx(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
@@ -245,19 +245,19 @@ func TestRepository_DeleteByCondTX(t *testing.T) {
 		q, m := NewQuery[TestUser](ctx)
 		q.Eq(&m.Name, "ToDelete")
 		var txErr error
-		affected, txErr = repo.DeleteByCondTX(q, tx)
+		affected, txErr = repo.DeleteByCondTx(q, tx)
 		return txErr
 	})
 	if err != nil {
-		t.Fatalf("DeleteByCondTX failed: %v", err)
+		t.Fatalf("DeleteByCondTx failed: %v", err)
 	}
 	if affected != 1 {
 		t.Fatalf("expected 1 affected, got %d", affected)
 	}
 }
 
-// TestRepository_UpdateByCondTX 测试事务条件更新
-func TestRepository_UpdateByCondTX(t *testing.T) {
+// TestRepository_UpdateByCondTx 测试事务条件更新
+func TestRepository_UpdateByCondTx(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
@@ -268,11 +268,11 @@ func TestRepository_UpdateByCondTX(t *testing.T) {
 		u, m := NewUpdater[TestUser](ctx)
 		u.Set(&m.Age, 99).Eq(&m.Name, "CondUpdate")
 		var txErr error
-		affected, txErr = repo.UpdateByCondTX(u, tx)
+		affected, txErr = repo.UpdateByCondTx(u, tx)
 		return txErr
 	})
 	if err != nil {
-		t.Fatalf("UpdateByCondTX failed: %v", err)
+		t.Fatalf("UpdateByCondTx failed: %v", err)
 	}
 	if affected != 1 {
 		t.Fatalf("expected 1 affected, got %d", affected)

@@ -298,11 +298,11 @@ func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 
 // UpdateByCond 执行条件更新（不带事务）
 func (r *Repository[D, T]) UpdateByCond(u *Updater[T]) (int64, error) {
-	return r.UpdateByCondTX(u, nil)
+	return r.UpdateByCondTx(u, nil)
 }
 
-// UpdateByCondTX 执行条件更新（支持事务）
-func (r *Repository[D, T]) UpdateByCondTX(u *Updater[T], tx *gorm.DB) (int64, error) {
+// UpdateByCondTx 执行条件更新（支持事务）
+func (r *Repository[D, T]) UpdateByCondTx(u *Updater[T], tx *gorm.DB) (int64, error) {
 	if u == nil || u.IsEmpty() {
 		return 0, ErrUpdateEmpty
 	}
@@ -342,11 +342,11 @@ func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) 
 
 // DeleteByCond 根据条件删除
 func (r *Repository[D, T]) DeleteByCond(q *Query[T]) (int64, error) {
-	return r.DeleteByCondTX(q, nil)
+	return r.DeleteByCondTx(q, nil)
 }
 
-// DeleteByCondTX 事务根据条件删除
-func (r *Repository[D, T]) DeleteByCondTX(q *Query[T], tx *gorm.DB) (int64, error) {
+// DeleteByCondTx 事务根据条件删除
+func (r *Repository[D, T]) DeleteByCondTx(q *Query[T], tx *gorm.DB) (int64, error) {
 	var model T
 	// 无论是否设置 Unscoped，空条件一律拒绝执行，防止物理全表删除。
 	// 如需全表物理删除，请使用 RawExec 显式执行 DELETE FROM table。

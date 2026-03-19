@@ -159,16 +159,16 @@ func TestGetModelInstance_Concurrent(t *testing.T) {
 	}
 }
 
-// --- DeleteByCondTX Unscoped + 空条件保护 ---
+// --- DeleteByCondTx Unscoped + 空条件保护 ---
 
-func TestDeleteByCondTX_UnscopedEmptyReturnsError(t *testing.T) {
+func TestDeleteByCondTx_UnscopedEmptyReturnsError(t *testing.T) {
 	repo, _ := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
 	t.Run("Unscoped + 空条件返回 ErrDeleteEmpty", func(t *testing.T) {
 		q, _ := NewQuery[TestUser](ctx)
 		q.Unscoped()
-		_, err := repo.DeleteByCondTX(q, nil)
+		_, err := repo.DeleteByCondTx(q, nil)
 		if err != ErrDeleteEmpty {
 			t.Errorf("期望 ErrDeleteEmpty，实际: %v", err)
 		}
@@ -179,7 +179,7 @@ func TestDeleteByCondTX_UnscopedEmptyReturnsError(t *testing.T) {
 		db.Create(&TestUser{Name: "PhysDelete", Age: 99})
 		q, m := NewQuery[TestUser](ctx)
 		q.Eq(&m.Name, "PhysDelete").Unscoped()
-		affected, err := repo2.DeleteByCondTX(q, nil)
+		affected, err := repo2.DeleteByCondTx(q, nil)
 		if err != nil {
 			t.Errorf("Unscoped + 有条件不应报错: %v", err)
 		}
@@ -804,9 +804,9 @@ func TestQuery_HavingGroup_OrBranch(t *testing.T) {
 	})
 }
 
-// --- UpdateByCondTX nil updater 分支 ---
+// --- UpdateByCondTx nil updater 分支 ---
 
-func TestRepository_UpdateByCondTX_NilUpdater(t *testing.T) {
+func TestRepository_UpdateByCondTx_NilUpdater(t *testing.T) {
 	repo, _ := setupTestDB[TestUser](t)
 
 	t.Run("nil updater 返回 ErrUpdateEmpty", func(t *testing.T) {
