@@ -247,7 +247,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 				// 显式捕获循环变量，防止 Go < 1.22 下闭包捕获到最后一次迭代值
 				cond := cond
 				// GORM v2 分组条件需传入 *gorm.DB，不支持 func(*gorm.DB)*gorm.DB 签名
-				subDb := db.Session(&gorm.Session{NewDB: true})
+				subDb := d.Session(&gorm.Session{NewDB: true})
 				subDb = buildCond(subDb, cond.group)
 				if cond.isOr {
 					d = d.Or(subDb)
@@ -270,9 +270,9 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 				sqlStr := fmt.Sprintf("%s %s (?)", quotedCol, cond.operator)
 
 				if cond.isOr {
-					db = db.Or(sqlStr, subQuery)
+					d = d.Or(sqlStr, subQuery)
 				} else {
-					db = db.Where(sqlStr, subQuery)
+					d = d.Where(sqlStr, subQuery)
 				}
 				continue
 			}
@@ -281,9 +281,9 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			// 安全检查：如果是 Raw SQL，必须标记为 isRaw
 			if cond.isRaw {
 				if cond.isOr {
-					db = db.Or(cond.expr, cond.value)
+					d = d.Or(cond.expr, cond.value)
 				} else {
-					db = db.Where(cond.expr, cond.value)
+					d = d.Where(cond.expr, cond.value)
 				}
 				continue
 			}
@@ -296,9 +296,9 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 				// 断言 value 为切片 (Query.Between 传入的就是 []any)
 				if args, ok := cond.value.([]any); ok && len(args) == 2 {
 					if cond.isOr {
-						db = db.Or(sqlStr, args[0], args[1])
+						d = d.Or(sqlStr, args[0], args[1])
 					} else {
-						db = db.Where(sqlStr, args[0], args[1])
+						d = d.Where(sqlStr, args[0], args[1])
 					}
 					continue // 处理完毕，跳过通用逻辑
 				}
@@ -310,9 +310,9 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			if cond.operator == OpIsNull || cond.operator == OpIsNotNull {
 				clauseStr = fmt.Sprintf("%s %s", quoteColumn(cond.expr, qL, qR), cond.operator)
 				if cond.isOr {
-					db = db.Or(clauseStr)
+					d = d.Or(clauseStr)
 				} else {
-					db = db.Where(clauseStr)
+					d = d.Where(clauseStr)
 				}
 				continue
 			}
@@ -320,11 +320,10 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 			// 智能转义
 			clauseStr = fmt.Sprintf("%s %s ?", quoteColumn(cond.expr, qL, qR), cond.operator)
 			if cond.isOr {
-				db = db.Or(clauseStr, cond.value)
+				d = d.Or(clauseStr, cond.value)
 			} else {
-				db = db.Where(clauseStr, cond.value)
+				d = d.Where(clauseStr, cond.value)
 			}
-
 		}
 		return d
 	}
@@ -400,14 +399,14 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 			// C1. Between (双参数)
 			if cond.operator == OpBetween || cond.operator == OpNotBetween {
 				quotedCol := quoteColumn(cond.expr, qL, qR)
-				clause := fmt.Sprintf("%s %s ? AND ?", quotedCol, cond.operator)
+				sprintf := fmt.Sprintf("%s %s ? AND ?", quotedCol, cond.operator)
 
 				// 尝试解构 slice 参数
 				if args, ok := cond.value.([]any); ok && len(args) == 2 {
 					if cond.isOr {
-						d = d.Or(clause, args[0], args[1])
+						d = d.Or(sprintf, args[0], args[1])
 					} else {
-						d = d.Having(clause, args[0], args[1])
+						d = d.Having(sprintf, args[0], args[1])
 					}
 					continue
 				}
@@ -416,23 +415,23 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 			// C2. IsNull / IsNotNull (无参数)
 			if cond.operator == OpIsNull || cond.operator == OpIsNotNull {
 				quotedCol := quoteColumn(cond.expr, qL, qR)
-				clause := fmt.Sprintf("%s %s", quotedCol, cond.operator)
+				sprintf := fmt.Sprintf("%s %s", quotedCol, cond.operator)
 				if cond.isOr {
-					d = d.Or(clause)
+					d = d.Or(sprintf)
 				} else {
-					d = d.Having(clause)
+					d = d.Having(sprintf)
 				}
 				continue
 			}
 
 			// --- D. 标准操作 (Eq, Gt, Lt, Like, In 等) ---
 			quotedCol := quoteColumn(cond.expr, qL, qR)
-			clause := fmt.Sprintf("%s %s ?", quotedCol, cond.operator)
+			sprintf := fmt.Sprintf("%s %s ?", quotedCol, cond.operator)
 
 			if cond.isOr {
-				d = d.Or(clause, cond.value)
+				d = d.Or(sprintf, cond.value)
 			} else {
-				d = d.Having(clause, cond.value)
+				d = d.Having(sprintf, cond.value)
 			}
 		}
 		return d
