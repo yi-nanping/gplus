@@ -191,7 +191,7 @@ func getQuoteChar(db *gorm.DB) (string, string) {
 	if db.Dialector == nil {
 		return "`", "`" // 默认 fallback 到 MySQL
 	}
-	switch db.Dialector.Name() {
+	switch db.Name() {
 	case "postgres", "sqlite":
 		return "\"", "\""
 	case "sqlserver":
