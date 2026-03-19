@@ -138,8 +138,8 @@ func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col a
 	}
 	origSelects := q.selects
 	q.selects = []string{colName}
+	defer func() { q.selects = origSelects }()
 	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildQuery()).Pluck(colName, &result).Error
-	q.selects = origSelects
 	return result, err
 }
 
