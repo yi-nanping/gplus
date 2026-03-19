@@ -85,19 +85,15 @@ func (q *Query[T]) Table(name string) *Query[T] {
 	return q
 }
 
-// mustColumn 解析字段指针为列名，失败则 panic（调用方传入了错误的字段指针）
-func mustColumn(col any) string {
-	name, err := resolveColumnName(col)
-	if err != nil {
-		panic(fmt.Sprintf("gplus: invalid column pointer: %v", err))
-	}
-	return name
-}
-
 // addCond 内部辅助方法
 func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
+	name, err := resolveColumnName(col)
+	if err != nil {
+		q.errs = append(q.errs, fmt.Errorf("gplus: 无效列指针: %w", err))
+		return q
+	}
 	q.conditions = append(q.conditions, condition{
-		expr:     mustColumn(col),
+		expr:     name,
 		operator: op,
 		value:    val,
 		isOr:     isOr,
@@ -108,7 +104,12 @@ func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 // Select 指定查询字段
 func (q *Query[T]) Select(cols ...any) *Query[T] {
 	for _, c := range cols {
-		q.selects = append(q.selects, mustColumn(c))
+		name, err := resolveColumnName(c)
+		if err != nil {
+			q.errs = append(q.errs, fmt.Errorf("gplus: Select 无效列指针: %w", err))
+			continue
+		}
+		q.selects = append(q.selects, name)
 	}
 	return q
 }
@@ -311,7 +312,11 @@ func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
 
 // Order 排序
 func (q *Query[T]) Order(col any, isAsc bool) *Query[T] {
-	name := mustColumn(col)
+	name, err := resolveColumnName(col)
+	if err != nil {
+		q.errs = append(q.errs, fmt.Errorf("gplus: Order 无效列指针: %w", err))
+		return q
+	}
 	direction := KeyDesc
 	if isAsc {
 		direction = KeyAsc
@@ -335,7 +340,12 @@ func (q *Query[T]) Offset(offset int) *Query[T] {
 // Omit 排除某些字段（不查询某些字段）
 func (q *Query[T]) Omit(cols ...any) *Query[T] {
 	for _, c := range cols {
-		q.omits = append(q.omits, mustColumn(c))
+		name, err := resolveColumnName(c)
+		if err != nil {
+			q.errs = append(q.errs, fmt.Errorf("gplus: Omit 无效列指针: %w", err))
+			continue
+		}
+		q.omits = append(q.omits, name)
 	}
 	return q
 }
@@ -348,7 +358,12 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 	q.distinct = true
 	// 如果传入了特定列，将它们也作为 Select 字段处理
 	for _, c := range cols {
-		q.selects = append(q.selects, mustColumn(c))
+		name, err := resolveColumnName(c)
+		if err != nil {
+			q.errs = append(q.errs, fmt.Errorf("gplus: Distinct 无效列指针: %w", err))
+			continue
+		}
+		q.selects = append(q.selects, name)
 	}
 	return q
 }
@@ -356,7 +371,12 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 // Group 分组
 func (q *Query[T]) Group(cols ...any) *Query[T] {
 	for _, c := range cols {
-		q.groups = append(q.groups, mustColumn(c))
+		name, err := resolveColumnName(c)
+		if err != nil {
+			q.errs = append(q.errs, fmt.Errorf("gplus: Group 无效列指针: %w", err))
+			continue
+		}
+		q.groups = append(q.groups, name)
 	}
 	return q
 }

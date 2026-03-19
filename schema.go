@@ -22,6 +22,8 @@ var (
 // 适用场景：测试隔离、分表动态模型清理，避免全局缓存无限增长。
 func UnregisterModel[T any]() {
 	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
+	modelInitMu.Lock()
+	defer modelInitMu.Unlock()
 	v, ok := modelInstanceCache.LoadAndDelete(typeStr)
 	if !ok {
 		return

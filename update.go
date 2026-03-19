@@ -132,8 +132,13 @@ func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 
 // 私有辅助方法：统一添加条件
 func (u *Updater[T]) addCond(isOr bool, col any, op string, val any) *Updater[T] {
+	name, err := resolveColumnName(col)
+	if err != nil {
+		u.errs = append(u.errs, fmt.Errorf("gplus: 无效列指针: %w", err))
+		return u
+	}
 	u.conditions = append(u.conditions, condition{
-		expr:     mustColumn(col),
+		expr:     name,
 		operator: op,
 		value:    val,
 		isOr:     isOr,

@@ -7,23 +7,21 @@ import (
 	"testing"
 )
 
-// TestQuery_InvalidColumnPanics 验证编程错误（字段指针传错）会触发 panic
-func TestQuery_InvalidColumnPanics(t *testing.T) {
+// TestQuery_InvalidColumnErrors 验证编程错误（字段指针传错）会累积到 errs
+func TestQuery_InvalidColumnErrors(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("nil 指针触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.Eq(nil, "something")
-		}, "nil 指针应触发 panic")
+	t.Run("nil 指针累积错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Eq(nil, "something")
+		assertError(t, q.GetError(), true, "nil 指针应累积错误")
 	})
 
-	t.Run("外部变量指针触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			externalVar := 100
-			q, _ := NewQuery[TestUser](ctx)
-			q.Eq(&externalVar, 100)
-		}, "外部变量指针应触发 panic")
+	t.Run("外部变量指针累积错误", func(t *testing.T) {
+		externalVar := 100
+		q, _ := NewQuery[TestUser](ctx)
+		q.Eq(&externalVar, 100)
+		assertError(t, q.GetError(), true, "外部变量指针应累积错误")
 	})
 
 	t.Run("合法字段无错误", func(t *testing.T) {

@@ -47,19 +47,16 @@ func TestRepository_CRUD_And_Errors(t *testing.T) {
 		assertEqual(t, 1, len(users), "Should find 1 user")
 	})
 
-	t.Run("List 错误列名触发 panic", func(t *testing.T) {
-		assertPanics(t, func() {
-			q, _ := NewQuery[TestUser](ctx)
-			q.Eq(nil, "fail")
-		}, "Eq(nil) 应触发 panic")
+	t.Run("List 错误列名累积错误", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.Eq(nil, "fail")
+		assertError(t, q.GetError(), true, "Eq(nil) 应累积错误")
 	})
 
-	t.Run("Update 错误列名触发 panic", func(t *testing.T) {
-		_, u := NewUpdater[TestUser](ctx)
-		assertPanics(t, func() {
-			updater, _ := NewUpdater[TestUser](ctx)
-			updater.Set(&u.Name, "NewName").Eq(new(int), 1)
-		}, "Eq(new(int)) 应触发 panic")
+	t.Run("Update 错误列名累积错误", func(t *testing.T) {
+		updater, u := NewUpdater[TestUser](ctx)
+		updater.Set(&u.Name, "NewName").Eq(new(int), 1)
+		assertError(t, updater.GetError(), true, "Eq(new(int)) 应累积错误")
 	})
 }
 
