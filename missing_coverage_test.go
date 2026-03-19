@@ -378,6 +378,19 @@ func TestRepository_CreateBatch(t *testing.T) {
 			t.Fatalf("CreateBatchTx 不应报错: %v", err)
 		}
 	})
+
+	t.Run("CreateBatch batchSize<=0 应返回错误", func(t *testing.T) {
+		users := []*TestUser{{Name: "X", Age: 1}}
+		if err := repo.CreateBatch(ctx, users, 0); err == nil {
+			t.Error("batchSize=0 应返回错误")
+		}
+		if err := repo.CreateBatch(ctx, users, -1); err == nil {
+			t.Error("batchSize=-1 应返回错误")
+		}
+		if err := repo.CreateBatchTx(ctx, users, 0, nil); err == nil {
+			t.Error("CreateBatchTx batchSize=0 应返回错误")
+		}
+	})
 }
 
 // --- GetByLock 悲观锁 ---

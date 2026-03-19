@@ -3,6 +3,7 @@ package gplus
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm"
 )
@@ -224,6 +225,9 @@ func (r *Repository[D, T]) CreateBatch(ctx context.Context, entities []*T, batch
 
 // CreateBatchTx 事务批量插入（分批执行，适合大批量数据）。
 func (r *Repository[D, T]) CreateBatchTx(ctx context.Context, entities []*T, batchSize int, tx *gorm.DB) error {
+	if batchSize <= 0 {
+		return fmt.Errorf("gplus: batchSize must be greater than 0, got %d", batchSize)
+	}
 	return r.dbResolver(ctx, tx).CreateInBatches(entities, batchSize).Error
 }
 
