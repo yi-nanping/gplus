@@ -786,26 +786,6 @@ func TestDataRule_AdditionalBranches(t *testing.T) {
 	})
 }
 
-// --- applyGroupHaving OR 嵌套分支 ---
-
-func TestQuery_HavingGroup_OrBranch(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("HavingGroup OR 嵌套", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.Having("COUNT(id)", OpGt, 1)
-		// 通过直接操作 havings 模拟 OR 嵌套组（isOr=true）
-		sub := &Query[TestUser]{ScopeBuilder: ScopeBuilder{havings: make([]condition, 0)}}
-		sub.havings = append(sub.havings, condition{expr: "SUM(age)", operator: OpGt, value: 100})
-		q.havings = append(q.havings, condition{group: sub.havings, isOr: true})
-		if len(q.havings) != 2 {
-			t.Fatalf("期望 2 个 having，实际 %d", len(q.havings))
-		}
-		if !q.havings[1].isOr {
-			t.Error("第二个 having 应为 OR")
-		}
-	})
-}
 
 // --- UpdateByCondTx nil updater 分支 ---
 

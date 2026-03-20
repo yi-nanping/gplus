@@ -458,7 +458,7 @@ func TestQuery_HavingGroup(t *testing.T) {
 	t.Run("HavingGroup 正常路径", func(t *testing.T) {
 		q, _ := NewQuery[TestUser](ctx)
 		q.Having("age", OpGt, 10).HavingGroup(func(sub *Query[TestUser]) {
-			sub.havings = append(sub.havings, condition{expr: "score", operator: OpGt, value: 90})
+			sub.Having("score", OpGt, 90)
 		})
 		if len(q.havings) != 2 {
 			t.Errorf("期望 2 个 having，实际 %d", len(q.havings))

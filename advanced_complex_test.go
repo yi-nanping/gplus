@@ -200,23 +200,28 @@ func TestComplex_QueryBuilder_MultiCondOr(t *testing.T) {
 	}
 }
 
-// TestComplex_QueryBuilder_InBetweenLike IN + BETWEEN + LIKE 组合
+// TestComplex_QueryBuilder_InBetweenLike IN + BETWEEN + LIKE 三算子组合
 func TestComplex_QueryBuilder_InBetweenLike(t *testing.T) {
 	repo, db := setupComplexDB(t)
 	seedComplexData(t, db)
 
-	// WHERE age IN (20,25) AND age BETWEEN 20 AND 24 OR name LIKE 'Ch%'
-	// 等价于: age=20(Charlie/Dave) + (age IN(20,25) AND BETWEEN 20-24) => age=20
-	// 简单场景: IN(20,25) AND BETWEEN(20,24) => 只有 age=20 (Charlie,Dave)
+	// WHERE age IN (20,25) AND age BETWEEN 20 AND 24 AND name LIKE 'Ch%'
+	// Charlie(20): IN✓ BETWEEN✓ LIKE✓ → 匹配
+	// Dave(20):    IN✓ BETWEEN✓ LIKE✗ → 不匹配
+	// Bob(25):     IN✓ BETWEEN✗(25>24) → 不匹配
+	// Alice(30):   IN✗ → 不匹配
 	q, u := NewQuery[UserWithDelete](context.Background())
-	q.In(&u.Age, []int{20, 25}).Between(&u.Age, 20, 24)
+	q.In(&u.Age, []int{20, 25}).Between(&u.Age, 20, 24).Like(&u.Name, "Ch%")
 
 	results, err := repo.List(q)
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results (Charlie+Dave), got %d", len(results))
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (Charlie), got %d", len(results))
+	}
+	if results[0].Name != "Charlie" {
+		t.Errorf("expected Charlie, got %s", results[0].Name)
 	}
 }
 
@@ -238,8 +243,9 @@ func TestComplex_QueryBuilder_LimitOffset(t *testing.T) {
 	}
 	// 4 条按 age 升序: Charlie(20), Dave(20), Bob(25), Alice(30)
 	// offset=2 => Bob(25), Alice(30)
-	if results[0].Name != "Bob" && results[1].Name != "Bob" {
-		t.Errorf("expected Bob in page 2, got %s %s", results[0].Name, results[1].Name)
+	names := map[string]bool{results[0].Name: true, results[1].Name: true}
+	if !names["Bob"] || !names["Alice"] {
+		t.Errorf("expected {Bob,Alice} in page 2, got %s %s", results[0].Name, results[1].Name)
 	}
 }
 
@@ -288,33 +294,28 @@ func TestComplex_QueryBuilder_Subquery(t *testing.T) {
 	}
 }
 
-// TestComplex_QueryBuilder_HavingGroup HavingGroup 嵌套
+// TestComplex_QueryBuilder_HavingGroup HavingGroup 嵌套括号：HAVING (COUNT(*) >= 2 OR age = 30)
 func TestComplex_QueryBuilder_HavingGroup(t *testing.T) {
 	repo, db := setupComplexDB(t)
 	seedComplexData(t, db)
 
-	type AgeCount struct {
-		Age   int
-		Total int
-	}
-	var rows []AgeCount
+	// 数据：Alice(30), Bob(25), Charlie(20), Dave(20)
+	// GROUP BY age → age=20(count=2), age=25(count=1), age=30(count=1)
+	// HAVING (COUNT(*)>=2 OR age=30) → age=20✓ age=25✗ age=30✓ → 2 组
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.Group(&u.Age).HavingGroup(func(sub *Query[UserWithDelete]) {
+		sub.Having("COUNT(*)", OpGe, 2).OrHaving("age", OpEq, 30)
+	})
 
-	// HAVING (COUNT(*) >= 2 OR age = 30)
-	err := repo.RawScan(
-		context.Background(),
-		&rows,
-		`SELECT age, COUNT(*) AS total
-		 FROM user_with_deletes
-		 WHERE deleted_at IS NULL
-		 GROUP BY age
-		 HAVING COUNT(*) >= 2 OR age = 30
-		 ORDER BY age DESC`,
-	)
+	results, err := repo.List(q)
 	if err != nil {
-		t.Fatalf("query failed: %v", err)
+		t.Fatalf("HavingGroup query failed: %v", err)
 	}
-	// age=20(count=2), age=30(count=1,满足OR条件)
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(rows))
+	if len(results) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(results))
+	}
+	ages := map[int]bool{results[0].Age: true, results[1].Age: true}
+	if !ages[20] || !ages[30] {
+		t.Errorf("expected age groups {20,30}, got %d %d", results[0].Age, results[1].Age)
 	}
 }
