@@ -93,6 +93,31 @@ func (r *Repository[D, T]) GetOneTx(q *Query[T], tx *gorm.DB) (data T, err error
 	return
 }
 
+// Exists 检查是否存在满足条件的记录。
+// 若 q 不含任何条件，等价于检查表中是否存在任何记录（全表 LIMIT 1）。
+func (r *Repository[D, T]) Exists(q *Query[T]) (bool, error) {
+	return r.ExistsTx(q, nil)
+}
+
+// ExistsTx 支持事务的存在性检查
+func (r *Repository[D, T]) ExistsTx(q *Query[T], tx *gorm.DB) (bool, error) {
+	if q == nil {
+		return false, ErrQueryNil
+	}
+	if err := q.GetError(); err != nil {
+		return false, err
+	}
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return false, err
+	}
+	var tmp []T
+	err := r.dbResolver(q.Context(), tx).Scopes(q.BuildQuery()).Limit(1).Find(&tmp).Error
+	if err != nil {
+		return false, err
+	}
+	return len(tmp) > 0, nil
+}
+
 // List 根据条件查询列表
 func (r *Repository[D, T]) List(q *Query[T]) (data []T, err error) {
 	return r.ListTx(q, nil)
