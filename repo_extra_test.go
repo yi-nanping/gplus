@@ -83,7 +83,9 @@ func TestRepository_RawExec(t *testing.T) {
 	}
 	// 回查验证数据库中 age 已真实更新为 99
 	var updated TestUser
-	db.Where("username = ?", "RawTarget").First(&updated)
+	if err := db.Where("username = ?", "RawTarget").First(&updated).Error; err != nil {
+		t.Fatalf("回查失败: %v", err)
+	}
 	if updated.Age != 99 {
 		t.Errorf("expected age=99 after RawExec, got %d", updated.Age)
 	}
