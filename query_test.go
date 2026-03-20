@@ -370,3 +370,42 @@ func TestQuery_Helpers(t *testing.T) {
 		}
 	})
 }
+
+// TestQuery_Clear 测试 Clear 重置状态
+func TestQuery_Clear(t *testing.T) {
+	ctx := context.Background()
+
+	q, model := NewQuery[TestUser](ctx)
+	q.Eq(&model.Age, 18).Order(&model.Name, true)
+	q.Clear()
+	if len(q.conditions) != 0 {
+		t.Error("Clear 后 conditions 应为空")
+	}
+	if len(q.orders) != 0 {
+		t.Error("Clear 后 orders 应为空")
+	}
+
+	t.Run("Clear 后 errs 应清空", func(t *testing.T) {
+		q2, _ := NewQuery[TestUser](ctx)
+		q2.Eq(nil, "bad") // 触发错误
+		if q2.GetError() == nil {
+			t.Fatal("期望有错误")
+		}
+		q2.Clear()
+		if q2.GetError() != nil {
+			t.Error("Clear 后 errs 应为空")
+		}
+	})
+
+	t.Run("Clear 后 dataRuleApplied 应重置", func(t *testing.T) {
+		q3, _ := NewQuery[TestUser](ctx)
+		q3.DataRuleBuilder() // 标记为已应用
+		if !q3.dataRuleApplied {
+			t.Fatal("期望 dataRuleApplied=true")
+		}
+		q3.Clear()
+		if q3.dataRuleApplied {
+			t.Error("Clear 后 dataRuleApplied 应为 false")
+		}
+	})
+}
