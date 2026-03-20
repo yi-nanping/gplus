@@ -439,6 +439,20 @@ func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any,
 	return r.dbResolver(ctx, tx).Raw(sql, args...).Scan(dest).Error
 }
 
+// DeleteByIds 批量按主键删除，ids 为空时直接返回 0，不发 SQL
+func (r *Repository[D, T]) DeleteByIds(ctx context.Context, ids []D) (int64, error) {
+	return r.DeleteByIdsTx(ctx, ids, nil)
+}
+
+// DeleteByIdsTx 支持事务的批量主键删除，ids 为空时直接返回 0，不发 SQL
+func (r *Repository[D, T]) DeleteByIdsTx(ctx context.Context, ids []D, tx *gorm.DB) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	db := r.dbResolver(ctx, tx).Delete(new(T), ids)
+	return db.RowsAffected, db.Error
+}
+
 // GetByIds 批量按主键查询，ids 为空时直接返回空切片
 func (r *Repository[D, T]) GetByIds(ctx context.Context, ids []D) ([]T, error) {
 	return r.GetByIdsTx(ctx, ids, nil)
