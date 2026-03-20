@@ -363,47 +363,52 @@ func (b *ScopeBuilder) applyGroupHaving(db *gorm.DB, qL, qR string) *gorm.DB {
 		db = db.Group(group)
 	}
 
-	// 2. 处理 Having (逻辑与 applyWhere 高度一致)
-	// 定义递归函数以支持嵌套 Having
-	var buildHaving func(d *gorm.DB, conds []condition) *gorm.DB
-	buildHaving = func(d *gorm.DB, conds []condition) *gorm.DB {
+	// 2. 处理 Having
+	// GORM 的 Having() 不接受 scope 函数，Or() 会追加到 WHERE 而非 HAVING。
+	// 用 clause 表达式树构建：isOr=true 与前一项合并为 clause.Or，isOr=false 追加为新 AND 项。
+	var buildHavingExprs func(conds []condition) []clause.Expression
+	buildHavingExprs = func(conds []condition) []clause.Expression {
+		var result []clause.Expression
 		for _, cond := range conds {
-			// --- A. 处理嵌套括号 (Group) ---
+			var expr clause.Expression
+
 			if len(cond.group) > 0 {
-				subQueryFunc := func(subDb *gorm.DB) *gorm.DB {
-					// 注意：Having 的嵌套闭包同样需要 NewDB Session 隔离
-					return buildHaving(subDb.Session(&gorm.Session{NewDB: true}), cond.group)
+				// 嵌套括号：递归构建子表达式，多项用 clause.And 合并
+				subExprs := buildHavingExprs(cond.group)
+				if len(subExprs) == 0 {
+					continue
 				}
-				if cond.isOr {
-					d = d.Or(subQueryFunc)
+				if len(subExprs) == 1 {
+					expr = subExprs[0]
 				} else {
-					d = d.Having(subQueryFunc)
+					expr = clause.And(subExprs...)
 				}
-				continue
-			}
-
-			// 如果没有 column 字段，则跳过
-			if cond.expr == "" {
-				continue
-			}
-
-			// 叶子条件：isRaw / BETWEEN / IS NULL / 标准操作
-			sqlStr, leafArgs, leafOK := buildLeafSQL(cond, qL, qR)
-			if !leafOK {
-				continue
-			}
-			if cond.isOr {
-				d = d.Or(sqlStr, leafArgs...)
 			} else {
-				d = d.Having(sqlStr, leafArgs...)
+				if cond.expr == "" {
+					continue
+				}
+				sqlStr, leafArgs, leafOK := buildLeafSQL(cond, qL, qR)
+				if !leafOK {
+					continue
+				}
+				expr = clause.Expr{SQL: sqlStr, Vars: leafArgs}
+			}
+
+			// isOr=true：与前一项合并为 OR；否则追加为独立 AND 项
+			if cond.isOr && len(result) > 0 {
+				prev := result[len(result)-1]
+				result[len(result)-1] = clause.Or(prev, expr)
+			} else {
+				result = append(result, expr)
 			}
 		}
-		return d
+		return result
 	}
 
-	// 执行构建
 	if len(b.havings) > 0 {
-		db = buildHaving(db, b.havings)
+		for _, expr := range buildHavingExprs(b.havings) {
+			db = db.Having(expr)
+		}
 	}
 
 	return db

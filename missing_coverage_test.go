@@ -7,7 +7,10 @@ import (
 	"sync"
 	"testing"
 
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/gorm/schema"
 )
 
 // --- BETWEEN nil 参数写入 errs ---
@@ -1071,6 +1074,203 @@ func TestRepository_OrderRaw(t *testing.T) {
 		}
 		if len(list) != 3 {
 			t.Fatalf("期望 3 条，实际 %d", len(list))
+		}
+	})
+}
+
+// --- applyGroupHaving 复杂路径 ---
+
+// TestApplyGroupHaving_ComplexPaths 覆盖 applyGroupHaving 的 OrHaving、HavingGroup、OR嵌套组执行路径
+func TestApplyGroupHaving_ComplexPaths(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "alice", Age: 25})
+	db.Create(&TestUser{Name: "alice", Age: 30})
+	db.Create(&TestUser{Name: "bob", Age: 20})
+
+	t.Run("OrHaving 叶子 OR 正确追加到 HAVING", func(t *testing.T) {
+		// HAVING (username = 'nobody' OR username = 'alice') → 只有 alice 组匹配
+		q, u := NewQuery[TestUser](ctx)
+		q.Select(&u.Name).Group("username").
+			Having("username", OpEq, "nobody").
+			OrHaving("username", OpEq, "alice")
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("OrHaving 不应报错: %v", err)
+		}
+		if len(list) != 1 {
+			t.Errorf("HAVING nobody OR alice 期望 1 组，实际 %d", len(list))
+		}
+	})
+
+	t.Run("HavingGroup 嵌套 AND 正确追加到 HAVING", func(t *testing.T) {
+		// HAVING (username = 'alice') → 只有 alice 组匹配
+		q, u := NewQuery[TestUser](ctx)
+		q.Select(&u.Name).Group("username").
+			HavingGroup(func(sub *Query[TestUser]) {
+				sub.Having("username", OpEq, "alice")
+			})
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("HavingGroup 不应报错: %v", err)
+		}
+		if len(list) != 1 {
+			t.Errorf("HAVING (username = alice) 期望 1 组，实际 %d", len(list))
+		}
+	})
+
+	t.Run("Having OR 嵌套组 isOr=true 正确合并", func(t *testing.T) {
+		// 先 Having(bob)，再注入 isOr=true 的嵌套组(alice)
+		// → HAVING (username = 'bob' OR (username = 'alice')) → bob 和 alice 两组
+		q, u := NewQuery[TestUser](ctx)
+		q.Select(&u.Name).Group("username").
+			Having("username", OpEq, "bob")
+		q.havings = append(q.havings, condition{
+			group: []condition{{expr: "username", operator: OpEq, value: "alice"}},
+			isOr:  true,
+		})
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("Having OR 嵌套组不应报错: %v", err)
+		}
+		if len(list) != 2 {
+			t.Errorf("HAVING bob OR (alice) 期望 2 组，实际 %d", len(list))
+		}
+	})
+}
+
+// --- applyWhere 复杂路径 ---
+
+// TestApplyWhere_ComplexPaths 覆盖 applyWhere 的子查询、OR嵌套组、empty expr 路径
+func TestApplyWhere_ComplexPaths(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "alice", Age: 25})
+	db.Create(&TestUser{Name: "bob", Age: 30})
+
+	t.Run("OR 嵌套组执行路径", func(t *testing.T) {
+		// 覆盖 applyWhere line 295: d = d.Or(subDb)
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Name, "nobody").Or(func(sub *Query[TestUser]) {
+			sub.Eq(&u.Name, "alice")
+		})
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("OR 嵌套组不应报错: %v", err)
+		}
+		if len(list) != 1 {
+			t.Errorf("期望 1 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("子查询 AND 路径", func(t *testing.T) {
+		// 覆盖 applyWhere line 317: d = d.Where(sqlStr, subQuery)
+		subQ, su := NewQuery[TestUser](ctx)
+		subQ.Eq(&su.Name, "alice")
+		subQ.Select(&su.Age)
+		subQ.Table("test_users")
+		q, u := NewQuery[TestUser](ctx)
+		q.In(&u.Age, subQ.ToDB(db))
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("子查询 AND 不应报错: %v", err)
+		}
+		if len(list) != 1 {
+			t.Errorf("期望 1 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("子查询 OR 路径", func(t *testing.T) {
+		// 覆盖 applyWhere line 315: d = d.Or(sqlStr, subQuery)
+		subQ, su := NewQuery[TestUser](ctx)
+		subQ.Eq(&su.Name, "alice")
+		subQ.Select(&su.Age)
+		subQ.Table("test_users")
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Age, 999).OrIn(&u.Age, subQ.ToDB(db))
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("子查询 OR 不应报错: %v", err)
+		}
+		if len(list) != 1 {
+			t.Errorf("期望 1 条，实际 %d", len(list))
+		}
+	})
+
+	t.Run("empty expr 条件跳过", func(t *testing.T) {
+		// 覆盖 applyWhere line 303-305: clauseStr == "" 跳过
+		q, _ := NewQuery[TestUser](ctx)
+		q.conditions = append(q.conditions, condition{expr: "", operator: OpEq, value: "x"})
+		list, err := repo.List(q)
+		if err != nil {
+			t.Fatalf("empty expr 条件不应报错: %v", err)
+		}
+		if len(list) != 2 {
+			t.Errorf("empty expr 跳过后期望 2 条，实际 %d", len(list))
+		}
+	})
+}
+
+// --- buildLeafSQL 防御路径 ---
+
+// TestBuildLeafSQL_BetweenDefensive 验证 BETWEEN value 不合法时返回 ok=false
+func TestBuildLeafSQL_BetweenDefensive(t *testing.T) {
+	cases := []struct {
+		name  string
+		cond  condition
+	}{
+		{"value 非 []any", condition{expr: "age", operator: OpBetween, value: "not_a_slice"}},
+		{"[]any 长度为 1", condition{expr: "age", operator: OpBetween, value: []any{1}}},
+		{"[]any 长度为 3", condition{expr: "age", operator: OpNotBetween, value: []any{1, 2, 3}}},
+		{"nil value", condition{expr: "age", operator: OpBetween, value: nil}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, ok := buildLeafSQL(tc.cond, "`", "`")
+			if ok {
+				t.Errorf("期望 ok=false，实际 ok=true，条件: %+v", tc.cond)
+			}
+		})
+	}
+}
+
+// --- getQuoteChar 方言分支 ---
+
+// testMockDialector 最简 Dialector 实现，仅用于测试 getQuoteChar default 分支
+type testMockDialector struct{ dialectName string }
+
+func (d testMockDialector) Name() string                                          { return d.dialectName }
+func (d testMockDialector) Initialize(*gorm.DB) error                             { return nil }
+func (d testMockDialector) Migrator(*gorm.DB) gorm.Migrator                       { return nil }
+func (d testMockDialector) DataTypeOf(*schema.Field) string                       { return "" }
+func (d testMockDialector) DefaultValueOf(*schema.Field) clause.Expression        { return nil }
+func (d testMockDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{}) {}
+func (d testMockDialector) QuoteTo(clause.Writer, string)                         {}
+func (d testMockDialector) Explain(string, ...interface{}) string                 { return "" }
+
+func TestGetQuoteChar_Dialects(t *testing.T) {
+	t.Run("nil Dialector 返回空字符串", func(t *testing.T) {
+		db := &gorm.DB{Config: &gorm.Config{}}
+		qL, qR := getQuoteChar(db)
+		if qL != "" || qR != "" {
+			t.Errorf("nil dialector 期望 (\"\",\"\")，实际 (%q,%q)", qL, qR)
+		}
+	})
+
+	t.Run("mysql 方言返回反引号", func(t *testing.T) {
+		// mysql.Open 仅创建 dialector，sql.Open 懒连接，无需真实 MySQL
+		db := &gorm.DB{Config: &gorm.Config{Dialector: mysql.Open("root:@tcp(127.0.0.1:3306)/test")}}
+		qL, qR := getQuoteChar(db)
+		if qL != "`" || qR != "`" {
+			t.Errorf("mysql 期望反引号，实际 (%q,%q)", qL, qR)
+		}
+	})
+
+	t.Run("未知方言返回空字符串", func(t *testing.T) {
+		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"unknown_db"}}}
+		qL, qR := getQuoteChar(db)
+		if qL != "" || qR != "" {
+			t.Errorf("未知方言期望 (\"\",\"\")，实际 (%q,%q)", qL, qR)
 		}
 	})
 }
