@@ -295,6 +295,54 @@ func TestQuery_ApplyDataRule_InvalidColumn(t *testing.T) {
 	})
 }
 
+// TestQuery_Select_InvalidPointer 验证 Select 传入非法指针写入 errs
+func TestQuery_Select_InvalidPointer(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("外部变量指针写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		external := 0
+		q.Select(&external)
+		assertError(t, q.GetError(), true, "外部变量指针应写入 errs")
+		if len(q.selects) != 0 {
+			t.Errorf("非法列不应追加到 selects，实际 %d", len(q.selects))
+		}
+	})
+
+	t.Run("合法字段正常追加", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Select(&u.Name, &u.Age)
+		assertError(t, q.GetError(), false, "合法字段不应有错误")
+		if len(q.selects) != 2 {
+			t.Errorf("期望 2 个 select 字段，实际 %d", len(q.selects))
+		}
+	})
+}
+
+// TestQuery_Omit_InvalidPointer 验证 Omit 非法指针写入 errs
+func TestQuery_Omit_InvalidPointer(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("外部变量指针写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		external := 0
+		q.Omit(&external)
+		assertError(t, q.GetError(), true, "外部变量指针应写入 errs")
+		if len(q.omits) != 0 {
+			t.Errorf("非法指针不应追加 omits，实际 %d", len(q.omits))
+		}
+	})
+
+	t.Run("合法字段正常追加", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Omit(&u.Name)
+		assertError(t, q.GetError(), false, "合法字段不应有错误")
+		if len(q.omits) != 1 {
+			t.Errorf("期望 1 个 omit，实际 %d", len(q.omits))
+		}
+	})
+}
+
 // TestQuery_Helpers 测试 Query 辅助方法
 func TestQuery_Helpers(t *testing.T) {
 	ctx := context.Background()

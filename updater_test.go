@@ -496,3 +496,64 @@ func TestUpdater_OrWhereRaw_Empty(t *testing.T) {
 		t.Error("空 sql 不应添加条件")
 	}
 }
+
+// TestUpdater_OrWhereRaw_SingleArg 验证 OrWhereRaw 单参数路径
+func TestUpdater_OrWhereRaw_SingleArg(t *testing.T) {
+	ctx := context.Background()
+	u, _ := NewUpdater[TestUser](ctx)
+	u.OrWhereRaw("age > ?", 18)
+	assertError(t, u.GetError(), false, "单参数 OrWhereRaw 不应有错误")
+	if len(u.conditions) != 1 {
+		t.Fatalf("期望 1 个条件，实际 %d", len(u.conditions))
+	}
+	if u.conditions[0].value != 18 {
+		t.Errorf("单参数应直接存为值，实际 %v", u.conditions[0].value)
+	}
+}
+
+// TestUpdater_OrWhereRaw_MultiArgs 验证 OrWhereRaw 多参数路径
+func TestUpdater_OrWhereRaw_MultiArgs(t *testing.T) {
+	ctx := context.Background()
+	u, _ := NewUpdater[TestUser](ctx)
+	u.OrWhereRaw("age > ? AND score < ?", 18, 100)
+	assertError(t, u.GetError(), false, "多参数 OrWhereRaw 不应有错误")
+	if len(u.conditions) != 1 {
+		t.Fatalf("期望 1 个条件，实际 %d", len(u.conditions))
+	}
+	args, ok := u.conditions[0].value.([]any)
+	if !ok || len(args) != 2 {
+		t.Errorf("多参数应存为 []any，实际 %v", u.conditions[0].value)
+	}
+}
+
+// TestUpdater_DataRuleBuilder_NilCtx 验证 DataRuleBuilder 在 nil ctx 和无规则时的早返回
+func TestUpdater_DataRuleBuilder_NilCtx(t *testing.T) {
+	t.Run("nil ctx 不追加条件", func(t *testing.T) {
+		u := &Updater[TestUser]{}
+		u.DataRuleBuilder()
+		if len(u.conditions) != 0 {
+			t.Errorf("nil ctx 不应追加条件，实际 %d", len(u.conditions))
+		}
+	})
+
+	t.Run("ctx 无 DataRule 不追加条件", func(t *testing.T) {
+		u, _ := NewUpdater[TestUser](context.Background())
+		u.DataRuleBuilder()
+		if len(u.conditions) != 0 {
+			t.Errorf("无规则时不应追加条件，实际 %d", len(u.conditions))
+		}
+	})
+
+	t.Run("DataRuleBuilder 幂等：多次调用只应用一次", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+			{Column: "dept_id", Condition: "=", Value: "42"},
+		})
+		u, _ := NewUpdater[TestUser](ctx)
+		u.DataRuleBuilder()
+		u.DataRuleBuilder()
+		u.DataRuleBuilder()
+		if len(u.conditions) != 1 {
+			t.Errorf("DataRuleBuilder 应幂等，期望 1 个条件，实际 %d", len(u.conditions))
+		}
+	})
+}

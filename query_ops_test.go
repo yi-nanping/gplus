@@ -484,6 +484,14 @@ func TestQuery_HavingGroup(t *testing.T) {
 			t.Errorf("HavingGroup(nil) 不应追加条件，实际 %d", len(q.havings))
 		}
 	})
+
+	t.Run("HavingGroup 内部错误应传播到外层", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.HavingGroup(func(sub *Query[TestUser]) {
+			sub.applyDataRule(DataRule{Column: "age+(bad)", Condition: "=", Value: "1"})
+		})
+		assertError(t, q.GetError(), true, "HavingGroup 内部错误应传播到外层")
+	})
 }
 
 // TestQuery_Group 测试 Group 分组
