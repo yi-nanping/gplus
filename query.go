@@ -684,6 +684,12 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
 	value := rule.Value
 
+	// 白名单校验列名，防止含括号/运算符的恶意表达式绕过 quoteColumn 转义
+	if !validDataRuleColumn.MatchString(column) {
+		q.errs = append(q.errs, fmt.Errorf("data rule: invalid column %q", column))
+		return
+	}
+
 	// 1. 处理空值情况
 	if value == "" && len(rule.Values) == 0 && c != "IS NULL" && c != "IS NOT NULL" {
 		return

@@ -2,6 +2,7 @@ package gplus
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gorm.io/gorm"
@@ -55,6 +56,10 @@ type dataRuleKey struct{}
 // DataRuleKey 是用于在 context.Context 中存储 []DataRule 的键。
 // 使用示例：ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
 var DataRuleKey = dataRuleKey{}
+
+// validDataRuleColumn 白名单校验 DataRule.Column，防止含括号/运算符的恶意表达式绕过 quoteColumn 转义。
+// 允许: 字母/数字/下划线开头，可含单个点（table.col 形式）
+var validDataRuleColumn = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
 
 // ScopeBuilder 负责将条件转换为 GORM Scope
 // 这是 QueryCond 和 UpdateCond 的基类

@@ -266,6 +266,35 @@ func TestQuery_DataRuleBuilder(t *testing.T) {
 	})
 }
 
+// TestQuery_ApplyDataRule_InvalidColumn 验证非法列名写入 errs
+func TestQuery_ApplyDataRule_InvalidColumn(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("含括号的列名应写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.applyDataRule(DataRule{Column: "age+(SELECT 1)", Condition: "=", Value: "1"})
+		assertError(t, q.GetError(), true, "非法列名应写入 errs")
+		if len(q.conditions) != 0 {
+			t.Errorf("非法列名不应追加条件，实际 %d", len(q.conditions))
+		}
+	})
+
+	t.Run("含空格的列名应写入 errs", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.applyDataRule(DataRule{Column: "dept id", Condition: "=", Value: "1"})
+		assertError(t, q.GetError(), true, "含空格列名应写入 errs")
+	})
+
+	t.Run("合法列名 table.col 应正常追加条件", func(t *testing.T) {
+		q, _ := NewQuery[TestUser](ctx)
+		q.applyDataRule(DataRule{Column: "u.dept_id", Condition: "=", Value: "42"})
+		assertError(t, q.GetError(), false, "合法 table.col 不应有错误")
+		if len(q.conditions) != 1 {
+			t.Errorf("期望 1 个条件，实际 %d", len(q.conditions))
+		}
+	})
+}
+
 // TestQuery_Helpers 测试 Query 辅助方法
 func TestQuery_Helpers(t *testing.T) {
 	ctx := context.Background()
