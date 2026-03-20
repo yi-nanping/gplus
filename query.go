@@ -65,6 +65,13 @@ func (q *Query[T]) GetError() error {
 	return errors.Join(append([]error{summary}, q.errs...)...)
 }
 
+// Clear 重写 Query 的清除逻辑
+func (q *Query[T]) Clear() {
+	q.ScopeBuilder.Clear()
+	q.errs = q.errs[:0:0]
+	q.dataRuleApplied = false
+}
+
 // Page 针对page和pageSize的处理
 func (q *Query[T]) Page(page, pageSize int) *Query[T] {
 	// 默认page为第一页 pageSize为10
