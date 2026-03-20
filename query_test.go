@@ -375,15 +375,17 @@ func TestQuery_Helpers(t *testing.T) {
 func TestQuery_Clear(t *testing.T) {
 	ctx := context.Background()
 
-	q, model := NewQuery[TestUser](ctx)
-	q.Eq(&model.Age, 18).Order(&model.Name, true)
-	q.Clear()
-	if len(q.conditions) != 0 {
-		t.Error("Clear 后 conditions 应为空")
-	}
-	if len(q.orders) != 0 {
-		t.Error("Clear 后 orders 应为空")
-	}
+	t.Run("Clear 后 conditions 和 orders 应清空", func(t *testing.T) {
+		q, model := NewQuery[TestUser](ctx)
+		q.Eq(&model.Age, 18).Order(&model.Name, true)
+		q.Clear()
+		if len(q.conditions) != 0 {
+			t.Error("Clear 后 conditions 应为空")
+		}
+		if len(q.orders) != 0 {
+			t.Error("Clear 后 orders 应为空")
+		}
+	})
 
 	t.Run("Clear 后 errs 应清空", func(t *testing.T) {
 		q2, _ := NewQuery[TestUser](ctx)

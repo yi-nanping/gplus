@@ -1083,9 +1083,12 @@ func TestApplyJoins_CrossJoin(t *testing.T) {
 
 	q, _ := NewQuery[TestUser](ctx)
 	q.CrossJoin("test_users AS t2")
-	// CROSS JOIN 产生笛卡尔积，1 条记录 × 1 条记录 = 1 条
-	_, err := repo.List(q)
+	// 验证 CrossJoin（无 ON 条件）能正确构建并执行 SQL，覆盖 applyJoins 无条件分支
+	list, err := repo.List(q)
 	if err != nil {
 		t.Fatalf("CrossJoin 不应报错: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("CROSS JOIN 1×1 期望 1 条，实际 %d", len(list))
 	}
 }
