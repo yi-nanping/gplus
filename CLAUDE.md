@@ -1,24 +1,29 @@
 # CLAUDE.md
 
-本文件为 Claude Code（claude.ai/code）在该仓库中工作时提供指导。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 命令
 
+> 本机 Go 二进制完整路径：`D:/Environment/golang/go1.21.11/bin/go.exe`（会自动下载 go1.24 toolchain）
+
 ```bash
 # 运行所有测试
-go test ./...
+D:/Environment/golang/go1.21.11/bin/go.exe test ./...
 
 # 运行指定测试函数
-go test -run TestRepository_CRUD_And_Errors ./...
+D:/Environment/golang/go1.21.11/bin/go.exe test -run TestRepository_CRUD_And_Errors ./...
 
 # 运行指定子测试
-go test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
+D:/Environment/golang/go1.21.11/bin/go.exe test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
 
 # 以详细模式运行（通过 GORM logger 显示 SQL 日志）
-go test -v ./...
+D:/Environment/golang/go1.21.11/bin/go.exe test -v ./...
+
+# 查看测试覆盖率
+D:/Environment/golang/go1.21.11/bin/go.exe test -coverprofile=coverage.out ./... && D:/Environment/golang/go1.21.11/bin/go.exe tool cover -func=coverage.out
 ```
 
-**已知的预存在测试失败**：无（所有测试均通过，包括 `TestBuilder_QuoteColumn` 全部子测试）
+**已知的预存在测试失败**：无（所有测试均通过，覆盖率 94.0%）
 
 ## 架构
 
@@ -48,7 +53,7 @@ go test -v ./...
 
 ### `ScopeBuilder`（builder.go）
 
-嵌入在 `Query[T]` 和 `Updater[T]` 中的共享基础结构。保存条件、select、join、排序、分组、having、预加载、锁配置。提供三种构建路径：
+嵌入在 `Query[T]` 和 `Updater[T]` 中的共享基础结构。保存条件、select、join、排序、分组、having、预加载、锁配置。提供四种构建路径：
 
 - `BuildQuery()` — 完整 SELECT（select + distinct + where + joins + group/having + order/limit + lock + preloads）
 - `BuildCount()` — COUNT 路径（仅 where + joins + group/having，无 select/order/limit）
@@ -61,9 +66,33 @@ go test -v ./...
 
 从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule` 并将条件追加到查询中。由 `dataRuleApplied bool` 保护——对同一 `Query` 多次调用是安全的（幂等）。始终以 `q.DataRuleBuilder().BuildQuery()` 方式调用，在 repository 方法中不要直接调用 `q.BuildQuery()`。
 
+`DataRule.Column` 须匹配白名单正则（字母/数字/下划线/点），含括号或运算符的表达式会被拒绝。
+
 ### 错误处理模式
 
 `Query[T]` 和 `Updater[T]` 在链式调用过程中将错误累积到 `errs []error` 切片中（例如 `resolveColumnName` 失败时）。`GetError()` 返回带有摘要前缀的合并错误（`"gplus query builder failed with N errors"` / `"gplus updater failed with N errors"`）。Repository 方法会提前调用 `GetError()` 并在失败时立即返回。
+
+### Repository API 关键签名
+
+```go
+// D = 主键类型，T = 模型类型
+repo := gplus.NewRepository[uint, User](db)
+
+// 写操作
+repo.Save(ctx, &user)              // 纯 INSERT（非 upsert）
+repo.Upsert(ctx, &user)            // insert-or-update（按主键）
+repo.UpdateById(ctx, &user)        // 按主键更新非零字段
+repo.UpdateByCond(updater)         // 按条件批量更新，返回 (affected, err)
+repo.DeleteById(ctx, id)           // 按主键删除，返回 (affected, err)
+repo.DeleteByCondTX(ctx, q, tx)    // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
+
+// 读操作
+repo.GetById(ctx, id)              // 按主键查单条
+repo.GetOne(q)                     // 按条件查单条
+repo.List(q)                       // 查列表
+repo.Page(q, countDistinct)        // 分页：返回 (list, total, err)，countDistinct=true 时 COUNT(DISTINCT ...)
+repo.GetByLock(ctx, q, tx)         // 加锁查询，需在事务中调用
+```
 
 ### Repository 错误变量
 
@@ -78,10 +107,8 @@ go test -v ./...
 
 ### 测试辅助工具（`model_test.go`）
 
-在所有测试文件中共享（同属 `gplus` 包）：
+在所有测试文件中共享（同属 `package gplus`，可访问未导出符号如 `quoteColumn` 和 `resolveColumnName`）：
 - `TestUser` 结构体，嵌入了 `BaseUser` — 用于 schema/query 测试
 - `assertEqual(t, expected, actual, msg)` / `assertError(t, err, expectError, msg)` — 标准断言辅助函数
 - `setupTestDB[T](t)` 在 `repo_test.go` 中 — 创建内存 SQLite DB 并自动迁移 `T`
 - `setupAdvancedDB(t)` 在 `advanced_test.go` 中 — 创建包含 `UserWithDelete` + `Order` 的 DB，用于 join/preload/软删除测试
-
-所有测试在包内运行（`package gplus`），可访问未导出的符号，如 `quoteColumn` 和 `resolveColumnName`。
