@@ -483,3 +483,16 @@ func TestUpdater_And_Or(t *testing.T) {
 		}
 	})
 }
+
+// TestUpdater_OrWhereRaw_Empty 验证 OrWhereRaw 空 sql 写入 errs
+func TestUpdater_OrWhereRaw_Empty(t *testing.T) {
+	ctx := context.Background()
+	u, _ := NewUpdater[TestUser](ctx)
+	u.OrWhereRaw("")
+	if u.GetError() == nil {
+		t.Error("空 sql 应写入 errs")
+	}
+	if len(u.conditions) != 0 {
+		t.Error("空 sql 不应添加条件")
+	}
+}

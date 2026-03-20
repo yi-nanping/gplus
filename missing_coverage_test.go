@@ -1074,3 +1074,18 @@ func TestRepository_OrderRaw(t *testing.T) {
 		}
 	})
 }
+
+// TestApplyJoins_CrossJoin 验证无 ON 条件的 CrossJoin 走 applyJoins 执行路径
+func TestApplyJoins_CrossJoin(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "Alice", Age: 25})
+
+	q, _ := NewQuery[TestUser](ctx)
+	q.CrossJoin("test_users AS t2")
+	// CROSS JOIN 产生笛卡尔积，1 条记录 × 1 条记录 = 1 条
+	_, err := repo.List(q)
+	if err != nil {
+		t.Fatalf("CrossJoin 不应报错: %v", err)
+	}
+}
