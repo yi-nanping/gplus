@@ -438,3 +438,18 @@ func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any,
 	}
 	return r.dbResolver(ctx, tx).Raw(sql, args...).Scan(dest).Error
 }
+
+// GetByIds 批量按主键查询，ids 为空时直接返回空切片
+func (r *Repository[D, T]) GetByIds(ctx context.Context, ids []D) ([]T, error) {
+	return r.GetByIdsTx(ctx, ids, nil)
+}
+
+// GetByIdsTx 支持事务的批量主键查询，ids 为空时直接返回空切片
+func (r *Repository[D, T]) GetByIdsTx(ctx context.Context, ids []D, tx *gorm.DB) ([]T, error) {
+	var result []T
+	if len(ids) == 0 {
+		return result, nil
+	}
+	err := r.dbResolver(ctx, tx).Find(&result, ids).Error
+	return result, err
+}
