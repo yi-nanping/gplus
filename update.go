@@ -99,7 +99,7 @@ func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
 // 而非结构体字段名（如 "UserName"）。如需类型安全的列名解析，请改用 Set()。
 func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 	if len(m) == 0 {
-		u.errs = append(u.errs, fmt.Errorf("gplus: SetMap requires a non-empty map"))
+		u.errs = append(u.errs, errors.New("gplus: SetMap requires a non-empty map"))
 		return u
 	}
 	for k, v := range m {
@@ -227,7 +227,7 @@ func (u *Updater[T]) OrIsNotNull(col any) *Updater[T] { return u.addCond(true, c
 // Between 区间查询
 func (u *Updater[T]) Between(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: Between v1/v2 cannot be nil"))
+		u.errs = append(u.errs, errors.New("gplus: Between v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(false, col, OpBetween, []any{v1, v2})
@@ -236,7 +236,7 @@ func (u *Updater[T]) Between(col any, v1, v2 any) *Updater[T] {
 // OrBetween 区间查询
 func (u *Updater[T]) OrBetween(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: OrBetween v1/v2 cannot be nil"))
+		u.errs = append(u.errs, errors.New("gplus: OrBetween v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(true, col, OpBetween, []any{v1, v2})
@@ -245,7 +245,7 @@ func (u *Updater[T]) OrBetween(col any, v1, v2 any) *Updater[T] {
 // NotBetween 区间查询
 func (u *Updater[T]) NotBetween(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: NotBetween v1/v2 cannot be nil"))
+		u.errs = append(u.errs, errors.New("gplus: NotBetween v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(false, col, OpNotBetween, []any{v1, v2})
@@ -254,7 +254,7 @@ func (u *Updater[T]) NotBetween(col any, v1, v2 any) *Updater[T] {
 // OrNotBetween 区间查询
 func (u *Updater[T]) OrNotBetween(col any, v1, v2 any) *Updater[T] {
 	if v1 == nil || v2 == nil {
-		u.errs = append(u.errs, fmt.Errorf("gplus: OrNotBetween v1/v2 cannot be nil"))
+		u.errs = append(u.errs, errors.New("gplus: OrNotBetween v1/v2 cannot be nil"))
 		return u
 	}
 	return u.addCond(true, col, OpNotBetween, []any{v1, v2})

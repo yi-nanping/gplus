@@ -333,7 +333,7 @@ func (q *Query[T]) OrNotLike(col any, val string) *Query[T] {
 // Between 区间查询
 func (q *Query[T]) Between(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: Between val1/val2 cannot be nil"))
+		q.errs = append(q.errs, errors.New("gplus: Between val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(false, col, OpBetween, []any{val1, val2})
@@ -342,7 +342,7 @@ func (q *Query[T]) Between(col any, val1 any, val2 any) *Query[T] {
 // OrBetween 区间查询(或)
 func (q *Query[T]) OrBetween(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: OrBetween val1/val2 cannot be nil"))
+		q.errs = append(q.errs, errors.New("gplus: OrBetween val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(true, col, OpBetween, []any{val1, val2})
@@ -351,7 +351,7 @@ func (q *Query[T]) OrBetween(col any, val1 any, val2 any) *Query[T] {
 // NotBetween 区间查询（不包含边界）
 func (q *Query[T]) NotBetween(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: NotBetween val1/val2 cannot be nil"))
+		q.errs = append(q.errs, errors.New("gplus: NotBetween val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(false, col, OpNotBetween, []any{val1, val2})
@@ -360,7 +360,7 @@ func (q *Query[T]) NotBetween(col any, val1 any, val2 any) *Query[T] {
 // OrNotBetween 区间查询（不包含边界）(或)
 func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
 	if val1 == nil || val2 == nil {
-		q.errs = append(q.errs, fmt.Errorf("gplus: OrNotBetween val1/val2 cannot be nil"))
+		q.errs = append(q.errs, errors.New("gplus: OrNotBetween val1/val2 cannot be nil"))
 		return q
 	}
 	return q.addCond(true, col, OpNotBetween, []any{val1, val2})
