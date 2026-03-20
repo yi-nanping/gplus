@@ -64,18 +64,24 @@ func TestAdvanced_Features(t *testing.T) {
 	// -------------------------------------------------------------------
 	t.Run("ScopeBuilder_Preload", func(t *testing.T) {
 		q, u := NewQuery[UserWithDelete](ctx)
-		// 预加载 Orders
-		q.LikeRight(&u.Name, "User").Preload("Orders")
+		// 预加载 Orders，按 ID 升序固定返回顺序：UserA, UserB, UserC
+		q.LikeRight(&u.Name, "User").Preload("Orders").Order(&u.ID, true)
 
 		result, err := repo.List(q)
 		assertError(t, err, false, "Preload query failed")
 
-		if len(result) == 0 {
-			t.Fatal("Should find UserA")
+		if len(result) != 3 {
+			t.Fatalf("Expected 3 users, got %d", len(result))
 		}
-		// 验证是否加载了关联数据
-		if len(result[0].Orders) != 2 {
-			t.Errorf("Expected 2 orders for UserA, got %d", len(result[0].Orders))
+		// UserA 有 2 个订单，UserB 有 1 个，UserC 有 0 个
+		if result[0].Name != "UserA" || len(result[0].Orders) != 2 {
+			t.Errorf("UserA: expected 2 orders, got %d", len(result[0].Orders))
+		}
+		if result[1].Name != "UserB" || len(result[1].Orders) != 1 {
+			t.Errorf("UserB: expected 1 order, got %d", len(result[1].Orders))
+		}
+		if result[2].Name != "UserC" || len(result[2].Orders) != 0 {
+			t.Errorf("UserC: expected 0 orders, got %d", len(result[2].Orders))
 		}
 	})
 
@@ -83,12 +89,12 @@ func TestAdvanced_Features(t *testing.T) {
 		// 测试 Distinct: 获取不重复的 Age
 		// 注意: Repository.List 返回的是 []T，Select 指定字段后其他字段为零值
 		q, u := NewQuery[UserWithDelete](ctx)
-		q.Select(&u.Age).Distinct(&u.Name)
+		q.Distinct(&u.Age) // DISTINCT age → age=20, age=30 两种年龄
 
 		result, err := repo.List(q)
 		assertError(t, err, false, "Distinct query failed")
 
-		if len(result) != 3 { // 应该只有 20 和 30 两种年龄
+		if len(result) != 2 {
 			t.Errorf("Expected 2 distinct ages, got %d", len(result))
 		}
 	})

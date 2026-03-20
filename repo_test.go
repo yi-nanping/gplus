@@ -84,11 +84,14 @@ func TestRepository_AdvancedFeatures(t *testing.T) {
 	})
 
 	t.Run("原生 SQL 映射测试", func(t *testing.T) {
-		// 测试 RawQuery
-		users, err := repo.RawQuery(ctx, "SELECT * FROM test_users WHERE age > ?", 18)
+		// 10 条数据 age=11~20，WHERE age>18 → age=19 和 age=20 共 2 条
+		users, err := repo.RawQuery(ctx, "SELECT * FROM test_users WHERE age > ? ORDER BY age", 18)
 		assertError(t, err, false, "RawQuery should succeed")
-		if len(users) == 0 {
-			t.Error("RawQuery should return results")
+		if len(users) != 2 {
+			t.Errorf("expected 2 users with age>18, got %d", len(users))
+		}
+		if len(users) == 2 && (users[0].Age != 19 || users[1].Age != 20) {
+			t.Errorf("expected age=[19,20], got [%d,%d]", users[0].Age, users[1].Age)
 		}
 	})
 }

@@ -81,6 +81,12 @@ func TestRepository_RawExec(t *testing.T) {
 	if affected != 1 {
 		t.Fatalf("expected 1 affected row, got %d", affected)
 	}
+	// 回查验证数据库中 age 已真实更新为 99
+	var updated TestUser
+	db.Where("username = ?", "RawTarget").First(&updated)
+	if updated.Age != 99 {
+		t.Errorf("expected age=99 after RawExec, got %d", updated.Age)
+	}
 }
 
 // TestRepository_RawExec_EmptySQL 空 SQL 返回 ErrRawSQLEmpty
