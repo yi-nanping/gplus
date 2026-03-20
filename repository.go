@@ -28,7 +28,6 @@ type Repository[D comparable, T any] struct {
 	db *gorm.DB
 }
 
-
 // NewRepository 构造函数
 func NewRepository[D comparable, T any](db *gorm.DB) *Repository[D, T] {
 	return &Repository[D, T]{db: db}

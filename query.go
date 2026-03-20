@@ -61,7 +61,7 @@ func (q *Query[T]) GetError() error {
 	if n == 1 {
 		word = "error"
 	}
-	summary := fmt.Errorf("gplus query builder failed with %d %s", n, word)
+	summary := errors.New(fmt.Sprintf("gplus query builder failed with %d %s", n, word))
 	return errors.Join(append([]error{summary}, q.errs...)...)
 }
 

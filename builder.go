@@ -38,7 +38,7 @@ type joinInfo struct {
 
 // DataRule 对外开放的核心规则字段
 type DataRule struct {
-	Column    string   // 规则字段 (例如: "dept_id")
+	Column    string   // 规则字段 (例如: "dept_id")；仅允许字母/数字/下划线及单个点分隔的表名前缀（如 "table.col"），含括号或运算符的表达式会被拒绝
 	Condition string   // 规则条件 (例如: "=", "IN", "LIKE")
 	Value     string   // 规则值   (例如: "1001"）；IN/NOT IN/BETWEEN 建议使用 Values
 	Values    []string // IN/NOT IN/BETWEEN 的多值列表，优先于 Value 的逗号分隔解析
