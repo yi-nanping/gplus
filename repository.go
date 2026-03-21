@@ -96,6 +96,27 @@ func (r *Repository[D, T]) GetOneTx(q *Query[T], tx *gorm.DB) (data T, err error
 	return
 }
 
+// Last 按主键倒序取第一条记录，语义与 GetOne 对称（GetOne 用 First）。
+func (r *Repository[D, T]) Last(q *Query[T]) (data T, err error) {
+	return r.LastTx(q, nil)
+}
+
+// LastTx 支持事务的 Last。
+func (r *Repository[D, T]) LastTx(q *Query[T], tx *gorm.DB) (data T, err error) {
+	if q == nil {
+		return data, ErrQueryNil
+	}
+	if err = q.GetError(); err != nil {
+		return data, err
+	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return data, err
+	}
+	db := r.dbResolver(q.Context(), tx)
+	err = db.Scopes(q.BuildQuery()).Last(&data).Error
+	return
+}
+
 // Exists 检查是否存在满足条件的记录。
 // 若 q 不含任何条件，等价于检查表中是否存在任何记录（全表 LIMIT 1）。
 func (r *Repository[D, T]) Exists(q *Query[T]) (bool, error) {
