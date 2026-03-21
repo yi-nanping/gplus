@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 var (
@@ -669,6 +671,34 @@ func (r *Repository[D, T]) GetByIdsTx(ctx context.Context, ids []D, tx *gorm.DB)
 	}
 	err := r.dbResolver(ctx, tx).Find(&result, ids).Error
 	return result, err
+}
+
+// Restore 恢复软删除记录（将 deleted_at 置 NULL）。
+// 返回受影响的行数：1 表示成功恢复，0 表示记录不存在或未被软删除。
+// 注意：模型须包含 gorm.DeletedAt 字段，否则行为未定义。
+func (r *Repository[D, T]) Restore(ctx context.Context, id D) (int64, error) {
+	return r.RestoreTx(ctx, id, nil)
+}
+
+// RestoreTx 支持事务的软删除恢复。
+func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (int64, error) {
+	db := r.dbResolver(ctx, tx)
+	// 动态查找软删除字段：遍历所有字段，找实现了 DeleteClausesInterface 的字段（即 gorm.DeletedAt 类型），
+	// 不依赖 Go 字段名，支持自定义字段名（如 RemovedAt gorm.DeletedAt）
+	col := "deleted_at"
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(new(T)); err == nil {
+		for _, f := range stmt.Schema.Fields {
+			if _, ok := reflect.New(f.FieldType).Interface().(schema.DeleteClausesInterface); ok {
+				col = f.DBName
+				break
+			}
+		}
+	}
+	result := db.Unscoped().Model(new(T)).Where(id).
+		Where(col + " IS NOT NULL").
+		Update(col, nil)
+	return result.RowsAffected, result.Error
 }
 
 // ListMap 查询列表并按 keyFn 转换为 map。重复 key 时后者覆盖前者。
