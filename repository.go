@@ -622,3 +622,27 @@ func (r *Repository[D, T]) GetByIdsTx(ctx context.Context, ids []D, tx *gorm.DB)
 	err := r.dbResolver(ctx, tx).Find(&result, ids).Error
 	return result, err
 }
+
+// ListMap 查询列表并按 keyFn 转换为 map。重复 key 时后者覆盖前者。
+func (r *Repository[D, T]) ListMap(q *Query[T], keyFn func(T) D) (map[D]T, error) {
+	return r.ListMapTx(q, keyFn, nil)
+}
+
+// ListMapTx 支持事务的 ListMap。
+func (r *Repository[D, T]) ListMapTx(q *Query[T], keyFn func(T) D, tx *gorm.DB) (map[D]T, error) {
+	if q == nil {
+		return nil, ErrQueryNil
+	}
+	if keyFn == nil {
+		return nil, errors.New("gplus: keyFn cannot be nil")
+	}
+	list, err := r.ListTx(q, tx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[D]T, len(list))
+	for _, item := range list {
+		result[keyFn(item)] = item
+	}
+	return result, nil
+}

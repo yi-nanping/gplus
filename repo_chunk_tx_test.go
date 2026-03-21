@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestChunkTx_NilQuery 验证 nil query 返回 ErrQueryNil
 func TestChunkTx_NilQuery(t *testing.T) {
 	repo, _ := setupTestDB[TestUser](t)
 	db := repo.GetDB()
@@ -15,6 +16,7 @@ func TestChunkTx_NilQuery(t *testing.T) {
 	assertError(t, err, true, "nil query 应返回 ErrQueryNil")
 }
 
+// TestChunkTx_BuilderError 验证构建器错误透传
 func TestChunkTx_BuilderError(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
@@ -26,6 +28,7 @@ func TestChunkTx_BuilderError(t *testing.T) {
 	assertError(t, err, true, "构建器错误应透传")
 }
 
+// TestChunkTx_NilTx 验证 tx=nil 时降级为普通连接，行为等同 Chunk
 func TestChunkTx_NilTx(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
@@ -43,6 +46,7 @@ func TestChunkTx_NilTx(t *testing.T) {
 	assertEqual(t, 5, len(collected), "应收集全部 5 条")
 }
 
+// TestChunkTx_WithTx_Commit 验证在事务中分批处理并提交
 func TestChunkTx_WithTx_Commit(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
@@ -62,6 +66,7 @@ func TestChunkTx_WithTx_Commit(t *testing.T) {
 	assertEqual(t, 6, len(collected), "应收集全部 6 条")
 }
 
+// TestChunkTx_FnError 验证 fn 返回错误时立即终止并透传
 func TestChunkTx_FnError(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
@@ -81,8 +86,8 @@ func TestChunkTx_FnError(t *testing.T) {
 	}
 }
 
+// TestChunk_DelegatesToChunkTx 验证 Chunk 重构为委托 ChunkTx 后行为不变
 func TestChunk_DelegatesToChunkTx(t *testing.T) {
-	// 验证 Chunk 重构为调用 ChunkTx 后行为不变
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 	for i := 1; i <= 4; i++ {
