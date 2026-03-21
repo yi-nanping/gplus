@@ -797,7 +797,7 @@ func (r *Repository[D, T]) RestoreByCondTx(q *Query[T], tx *gorm.DB) (int64, err
 		}
 	}
 	result := db.Unscoped().Model(new(T)).
-		Scopes(q.BuildDelete()).
+		Scopes(q.BuildUpdate()).
 		Where(col + " IS NOT NULL").
 		Update(col, nil)
 	return result.RowsAffected, result.Error

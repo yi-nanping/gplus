@@ -41,7 +41,9 @@ func (q *Query[T]) Context() context.Context {
 	return q.ctx
 }
 
-// IsEmpty 是否为空查询
+// IsEmpty 判断是否为空查询（无任何类型安全条件）。
+// 注意：仅检查通过 Eq/In/Between 等类型安全 API 添加的条件；
+// 通过 WithScope 注入的自定义 scope 函数不计入此判断。
 func (q *Query[T]) IsEmpty() bool {
 	return len(q.conditions) == 0
 }
