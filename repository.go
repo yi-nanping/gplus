@@ -485,6 +485,11 @@ func (r *Repository[D, T]) FirstOrCreate(q *Query[T], defaults *T) (data T, crea
 //   - UUID v4 / 随机字符串：功能正确，但随机分布导致索引跳跃，性能弱于 int。
 //   - 复合主键：GORM 仅用第一个主键字段做游标，可能漏行，不建议使用 Chunk，请改用 Page()。
 func (r *Repository[D, T]) Chunk(q *Query[T], batchSize int, fn func([]T) error) error {
+	return r.ChunkTx(q, batchSize, nil, fn)
+}
+
+// ChunkTx 支持事务的分批处理。tx=nil 时降级为普通连接，行为等同 Chunk。
+func (r *Repository[D, T]) ChunkTx(q *Query[T], batchSize int, tx *gorm.DB, fn func([]T) error) error {
 	if q == nil {
 		return ErrQueryNil
 	}
@@ -495,7 +500,7 @@ func (r *Repository[D, T]) Chunk(q *Query[T], batchSize int, fn func([]T) error)
 		return err
 	}
 	var batch []T
-	result := r.db.WithContext(q.Context()).Model(new(T)).Scopes(q.BuildQuery()).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
+	result := r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildQuery()).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
 		return fn(batch)
 	})
 	return result.Error
