@@ -453,6 +453,72 @@ func (r *Repository[D, T]) DeleteByIdsTx(ctx context.Context, ids []D, tx *gorm.
 	return db.RowsAffected, db.Error
 }
 
+// aggregate 内部通用聚合执行函数
+// 使用指针中间变量接收 NULL（空表或无匹配行时聚合结果为 NULL），nil 时返回零值
+func aggregate[T any, R any, D comparable](r *Repository[D, T], q *Query[T], fn string, col any, tx *gorm.DB) (result R, err error) {
+	if q == nil {
+		return result, ErrQueryNil
+	}
+	if err = q.GetError(); err != nil {
+		return result, err
+	}
+	colName, err := resolveColumnName(col)
+	if err != nil {
+		return result, err
+	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return result, err
+	}
+	expr := fmt.Sprintf("%s(%s)", fn, colName)
+	var ptr *R
+	// 聚合查询只需要 WHERE/JOIN/GROUP BY，与 BuildCount 路径一致，无需 ORDER/LIMIT/Preload
+	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildCount()).Select(expr).Scan(&ptr).Error
+	if err == nil && ptr != nil {
+		result = *ptr
+	}
+	return result, err
+}
+
+// Sum 对指定列求和，R 为数值类型（int64、float64 等）
+func Sum[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
+	return SumTx[T, R, D](r, q, col, nil)
+}
+
+// SumTx 支持事务的列求和
+func SumTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any, tx *gorm.DB) (R, error) {
+	return aggregate[T, R, D](r, q, "SUM", col, tx)
+}
+
+// Max 对指定列求最大值
+func Max[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
+	return MaxTx[T, R, D](r, q, col, nil)
+}
+
+// MaxTx 支持事务的列最大值
+func MaxTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any, tx *gorm.DB) (R, error) {
+	return aggregate[T, R, D](r, q, "MAX", col, tx)
+}
+
+// Min 对指定列求最小值
+func Min[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
+	return MinTx[T, R, D](r, q, col, nil)
+}
+
+// MinTx 支持事务的列最小值
+func MinTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any, tx *gorm.DB) (R, error) {
+	return aggregate[T, R, D](r, q, "MIN", col, tx)
+}
+
+// Avg 对指定列求平均值，R 建议使用 float64
+func Avg[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
+	return AvgTx[T, R, D](r, q, col, nil)
+}
+
+// AvgTx 支持事务的列平均值
+func AvgTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any, tx *gorm.DB) (R, error) {
+	return aggregate[T, R, D](r, q, "AVG", col, tx)
+}
+
 // GetByIds 批量按主键查询，ids 为空时直接返回空切片
 func (r *Repository[D, T]) GetByIds(ctx context.Context, ids []D) ([]T, error) {
 	return r.GetByIdsTx(ctx, ids, nil)
