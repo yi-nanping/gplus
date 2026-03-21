@@ -439,6 +439,32 @@ func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any,
 	return r.dbResolver(ctx, tx).Raw(sql, args...).Scan(dest).Error
 }
 
+// Chunk 分批处理查询结果，每批调用 fn 一次。fn 返回非 nil 错误时立即终止并返回该错误。
+// batchSize 建议在 100-1000 之间，过小会增加 DB 往返次数，过大会占用大量内存。
+//
+// 内部基于 GORM FindInBatches，使用主键游标分页（WHERE id > lastID），性能优于 OFFSET 分页。
+// 主键类型说明：
+//   - 自增 int：最优，单调递增，索引连续扫描。
+//   - UUID v7 / 时间有序字符串：接近 int，近似有序，性能良好。
+//   - UUID v4 / 随机字符串：功能正确，但随机分布导致索引跳跃，性能弱于 int。
+//   - 复合主键：GORM 仅用第一个主键字段做游标，可能漏行，不建议使用 Chunk，请改用 Page()。
+func (r *Repository[D, T]) Chunk(q *Query[T], batchSize int, fn func([]T) error) error {
+	if q == nil {
+		return ErrQueryNil
+	}
+	if err := q.GetError(); err != nil {
+		return err
+	}
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return err
+	}
+	var batch []T
+	result := r.db.WithContext(q.Context()).Model(new(T)).Scopes(q.BuildQuery()).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
+		return fn(batch)
+	})
+	return result.Error
+}
+
 // UpdateByIds 批量按主键更新，ids 为空时直接返回 0，不发 SQL
 func (r *Repository[D, T]) UpdateByIds(ctx context.Context, ids []D, u *Updater[T]) (int64, error) {
 	return r.UpdateByIdsTx(ctx, ids, u, nil)
