@@ -18,6 +18,7 @@ var (
 	ErrUpdateNoCondition = errors.New("gplus: update requires at least one condition to prevent full-table update")
 	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
 	ErrDefaultsNil       = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
+	ErrRestoreEmpty      = errors.New("gplus: restore condition is empty")
 )
 
 // IsNotFound 判断错误是否为「记录不存在」
@@ -757,6 +758,46 @@ func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (in
 		}
 	}
 	result := db.Unscoped().Model(new(T)).Where(id).
+		Where(col + " IS NOT NULL").
+		Update(col, nil)
+	return result.RowsAffected, result.Error
+}
+
+// RestoreByCond 按条件批量恢复软删除记录（将 deleted_at 置 NULL）。
+// 空条件会返回 ErrRestoreEmpty，防止意外全表恢复。
+// 返回受影响的行数。
+func (r *Repository[D, T]) RestoreByCond(q *Query[T]) (int64, error) {
+	return r.RestoreByCondTx(q, nil)
+}
+
+// RestoreByCondTx 支持事务的按条件批量恢复软删除。
+func (r *Repository[D, T]) RestoreByCondTx(q *Query[T], tx *gorm.DB) (int64, error) {
+	if q == nil {
+		return 0, ErrQueryNil
+	}
+	if q.IsEmpty() {
+		return 0, ErrRestoreEmpty
+	}
+	if err := q.GetError(); err != nil {
+		return 0, err
+	}
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
+	db := r.dbResolver(q.Context(), tx)
+	// 动态查找软删除字段列名
+	col := "deleted_at"
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(new(T)); err == nil {
+		for _, f := range stmt.Schema.Fields {
+			if _, ok := reflect.New(f.FieldType).Interface().(schema.DeleteClausesInterface); ok {
+				col = f.DBName
+				break
+			}
+		}
+	}
+	result := db.Unscoped().Model(new(T)).
+		Scopes(q.BuildDelete()).
 		Where(col + " IS NOT NULL").
 		Update(col, nil)
 	return result.RowsAffected, result.Error
