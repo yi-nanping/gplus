@@ -439,6 +439,42 @@ func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any,
 	return r.dbResolver(ctx, tx).Raw(sql, args...).Scan(dest).Error
 }
 
+// FirstOrCreate 按条件查找记录，不存在时用 defaults 创建。
+// 返回值：(record, created, error)，created=true 表示本次新建。
+// defaults 为 nil 时创建零值记录。
+// 内部使用事务保证查询与创建的原子性。
+func (r *Repository[D, T]) FirstOrCreate(q *Query[T], defaults *T) (data T, created bool, err error) {
+	if q == nil {
+		return data, false, ErrQueryNil
+	}
+	if err = q.GetError(); err != nil {
+		return data, false, err
+	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return data, false, err
+	}
+	err = r.db.WithContext(q.Context()).Transaction(func(tx *gorm.DB) error {
+		// 使用 BuildCount 路径（WHERE/JOIN，不含 SELECT/ORDER/LIMIT/Preload），确保 First 返回完整记录
+		if e := tx.Scopes(q.BuildCount()).First(&data).Error; e == nil {
+			// 找到记录
+			return nil
+		} else if !errors.Is(e, gorm.ErrRecordNotFound) {
+			// 查询失败（非「不存在」错误）
+			return e
+		}
+		// 未找到，用 defaults 创建
+		if defaults != nil {
+			data = *defaults
+		}
+		created = true
+		return tx.Create(&data).Error
+	})
+	if err != nil {
+		created = false
+	}
+	return data, created, err
+}
+
 // Chunk 分批处理查询结果，每批调用 fn 一次。fn 返回非 nil 错误时立即终止并返回该错误。
 // batchSize 建议在 100-1000 之间，过小会增加 DB 往返次数，过大会占用大量内存。
 //
