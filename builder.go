@@ -93,6 +93,16 @@ type ScopeBuilder struct {
 	lockStrength string
 	// lockOptions 锁选项: "NOWAIT" (不等待报错), "SKIP LOCKED" (跳过被锁行)
 	lockOptions string
+	// scopes 存储用户注入的自定义 GORM scope 函数，按顺序执行
+	scopes []func(*gorm.DB) *gorm.DB
+}
+
+// applyScopes 将用户注入的自定义 scope 函数依次应用到 db
+func (b *ScopeBuilder) applyScopes(db *gorm.DB) *gorm.DB {
+	if len(b.scopes) == 0 {
+		return db
+	}
+	return db.Scopes(b.scopes...)
 }
 
 // BuildCount 计数构建
@@ -108,6 +118,7 @@ func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 		db = b.applyJoins(db)
 		// 分组与聚合过滤
 		db = b.applyGroupHaving(db, qL, qR)
+		db = b.applyScopes(db)
 		return db
 	}
 }
@@ -135,6 +146,7 @@ func (b *ScopeBuilder) BuildQuery() func(*gorm.DB) *gorm.DB {
 		db = b.applyStrength(db)
 		// 预加载
 		db = b.applyPreloads(db)
+		db = b.applyScopes(db)
 		return db
 	}
 }
@@ -153,7 +165,7 @@ func (b *ScopeBuilder) BuildUpdate() func(*gorm.DB) *gorm.DB {
 
 		// 某些复杂场景下更新可能需要 Join (取决于数据库支持情况，按需保留)
 		db = b.applyJoins(db)
-
+		db = b.applyScopes(db)
 		return db
 	}
 }
@@ -167,6 +179,7 @@ func (b *ScopeBuilder) BuildDelete() func(*gorm.DB) *gorm.DB {
 		db = b.applyBaseTable(db)
 		// 删除逻辑只应用 Where 条件，防止误带 Limit/Order 导致部分数据库报错
 		db = b.applyWhere(db, qL, qR)
+		db = b.applyScopes(db)
 		return db
 	}
 }
@@ -196,6 +209,7 @@ func (b *ScopeBuilder) Clear() {
 	// 清理锁状态
 	b.lockStrength = ""
 	b.lockOptions = ""
+	b.scopes = nil
 }
 
 // --- 内部私有组件，用于复用代码 ---

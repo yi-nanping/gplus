@@ -65,6 +65,23 @@ func (u *Updater[T]) Table(name string) *Updater[T] {
 	return u
 }
 
+// WithScope 注入自定义 GORM scope 函数，作为封装层的逃生口。
+// 适用于封装层无法覆盖的边缘更新场景，多次调用按顺序叠加执行。
+//
+// 注意事项：
+//   - fn 不可为 nil
+//   - 不要在 fn 内调用 Unscoped，会覆盖外层软删除设置
+//   - fn 应保持无状态、可重入，避免引入隐式副作用
+//   - 优先使用类型安全的 API（Set/Eq 等），WithScope 作为最后手段
+func (u *Updater[T]) WithScope(fn func(*gorm.DB) *gorm.DB) *Updater[T] {
+	if fn == nil {
+		u.errs = append(u.errs, errors.New("gplus: WithScope fn cannot be nil"))
+		return u
+	}
+	u.scopes = append(u.scopes, fn)
+	return u
+}
+
 // IsEmpty 是否为空更新（没有设置任何更新字段）
 func (u *Updater[T]) IsEmpty() bool {
 	return len(u.setMap) == 0

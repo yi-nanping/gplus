@@ -72,6 +72,23 @@ func (q *Query[T]) Clear() {
 	q.dataRuleApplied = false
 }
 
+// WithScope 注入自定义 GORM scope 函数，作为封装层的逃生口。
+// 适用于封装层无法覆盖的边缘查询场景，多次调用按顺序叠加执行。
+//
+// 注意事项：
+//   - fn 不可为 nil
+//   - 不要在 fn 内调用 Limit/Offset/Unscoped，会覆盖外层设置
+//   - fn 应保持无状态、可重入，避免引入隐式副作用
+//   - 优先使用类型安全的 API（Eq/In/WhereRaw 等），WithScope 作为最后手段
+func (q *Query[T]) WithScope(fn func(*gorm.DB) *gorm.DB) *Query[T] {
+	if fn == nil {
+		q.errs = append(q.errs, errors.New("gplus: WithScope fn cannot be nil"))
+		return q
+	}
+	q.scopes = append(q.scopes, fn)
+	return q
+}
+
 // Page 针对page和pageSize的处理
 func (q *Query[T]) Page(page, pageSize int) *Query[T] {
 	// 默认page为第一页 pageSize为10
