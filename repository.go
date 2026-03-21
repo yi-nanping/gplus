@@ -578,6 +578,46 @@ func (r *Repository[D, T]) UpdateByIdsTx(ctx context.Context, ids []D, u *Update
 	return result.RowsAffected, result.Error
 }
 
+// IncrBy 原子自增指定列。col 须为 NewUpdater 返回的 *T 实例的字段指针。
+// u 用于指定 WHERE 条件；未设置条件时返回 ErrUpdateNoCondition 以防全表更新。
+func (r *Repository[D, T]) IncrBy(u *Updater[T], col any, delta int64) (int64, error) {
+	return r.IncrByTx(u, col, delta, nil)
+}
+
+// IncrByTx 支持事务的原子自增。
+func (r *Repository[D, T]) IncrByTx(u *Updater[T], col any, delta int64, tx *gorm.DB) (int64, error) {
+	if u == nil {
+		return 0, ErrQueryNil
+	}
+	if err := u.GetError(); err != nil {
+		return 0, err
+	}
+	if err := u.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
+	if len(u.conditions) == 0 {
+		return 0, ErrUpdateNoCondition
+	}
+	colName, err := resolveColumnName(col)
+	if err != nil {
+		return 0, fmt.Errorf("gplus: IncrBy invalid column pointer: %w", err)
+	}
+	var model T
+	db := r.dbResolver(u.Context(), tx).Model(&model).Scopes(u.BuildUpdate())
+	result := db.Update(colName, gorm.Expr(colName+" + ?", delta))
+	return result.RowsAffected, result.Error
+}
+
+// DecrBy 原子自减指定列。等价于 IncrBy(u, col, -delta)。
+func (r *Repository[D, T]) DecrBy(u *Updater[T], col any, delta int64) (int64, error) {
+	return r.IncrByTx(u, col, -delta, nil)
+}
+
+// DecrByTx 支持事务的原子自减。
+func (r *Repository[D, T]) DecrByTx(u *Updater[T], col any, delta int64, tx *gorm.DB) (int64, error) {
+	return r.IncrByTx(u, col, -delta, tx)
+}
+
 // DeleteByIds 批量按主键删除，ids 为空时直接返回 0，不发 SQL
 func (r *Repository[D, T]) DeleteByIds(ctx context.Context, ids []D) (int64, error) {
 	return r.DeleteByIdsTx(ctx, ids, nil)
