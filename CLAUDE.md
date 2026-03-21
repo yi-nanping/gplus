@@ -79,19 +79,52 @@ D:/Environment/golang/go1.21.11/bin/go.exe test -coverprofile=coverage.out ./...
 repo := gplus.NewRepository[uint, User](db)
 
 // 写操作
-repo.Save(ctx, &user)              // 纯 INSERT（非 upsert）
-repo.Upsert(ctx, &user)            // insert-or-update（按主键）
-repo.UpdateById(ctx, &user)        // 按主键更新非零字段
-repo.UpdateByCond(updater)         // 按条件批量更新，返回 (affected, err)
-repo.DeleteById(ctx, id)           // 按主键删除，返回 (affected, err)
-repo.DeleteByCondTX(ctx, q, tx)    // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
+repo.Save(ctx, &user)                          // 纯 INSERT（非 upsert）
+repo.SaveBatch(ctx, users)                     // 批量 INSERT
+repo.Upsert(ctx, &user)                        // insert-or-update（按主键）
+repo.UpsertBatch(ctx, users)                   // 批量 upsert
+repo.CreateBatch(ctx, ptrs, batchSize)         // 分批 INSERT，指定批大小
+repo.UpdateById(ctx, &user)                    // 按主键更新非零字段
+repo.UpdateByIds(ctx, ids, updater)            // 按主键列表批量更新，返回 (affected, err)
+repo.UpdateByCond(updater)                     // 按条件批量更新，返回 (affected, err)
+repo.IncrBy(updater, col, delta)               // 原子自增，返回 (affected, err)
+repo.DecrBy(updater, col, delta)               // 原子自减，返回 (affected, err)
+repo.DeleteById(ctx, id)                       // 按主键删除，返回 (affected, err)
+repo.DeleteByIds(ctx, ids)                     // 按主键列表批量删除，返回 (affected, err)
+repo.DeleteByCondTX(ctx, q, tx)               // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
+repo.Restore(ctx, id)                          // 按主键恢复软删除，返回 (affected, err)
+repo.RestoreByCond(q)                          // 按条件批量恢复软删除（空条件返回 ErrRestoreEmpty）
 
 // 读操作
-repo.GetById(ctx, id)              // 按主键查单条
-repo.GetOne(q)                     // 按条件查单条
-repo.List(q)                       // 查列表
-repo.Page(q, countDistinct)        // 分页：返回 (list, total, err)，countDistinct=true 时 COUNT(DISTINCT ...)
-repo.GetByLock(ctx, q, tx)         // 加锁查询，需在事务中调用
+repo.GetById(ctx, id)                          // 按主键查单条
+repo.GetByIds(ctx, ids)                        // 按主键列表批量查询
+repo.GetOne(q)                                 // 按条件查单条
+repo.Last(q)                                   // 按主键倒序取第一条
+repo.List(q)                                   // 查列表
+repo.ListMap(q, keyFn)                         // 查列表并转换为 map[D]T
+repo.Page(q, skipCount)                        // 分页：返回 (list, total, err)，skipCount=true 跳过 COUNT
+repo.Count(q)                                  // 按条件计数
+repo.Exists(q)                                 // 按条件判断是否存在
+repo.GetByLock(ctx, q, tx)                     // 加锁查询，需在事务中调用
+repo.FirstOrCreate(q, defaults)               // 查找或创建，返回 (data, created, err)
+repo.FirstOrUpdate(q, updater, defaults)      // 查找或创建并更新，返回 (data, created, err)
+repo.Chunk(q, batchSize, fn)                   // 主键游标分批处理
+
+// 包级泛型函数（需显式传 repo）
+gplus.Pluck[T, R, D](r, q, col)               // 查询单列，返回 []R
+gplus.Sum[T, R, D](r, q, col)                 // SUM 聚合，NULL 安全
+gplus.Max[T, R, D](r, q, col)                 // MAX 聚合，NULL 安全
+gplus.Min[T, R, D](r, q, col)                 // MIN 聚合，NULL 安全
+gplus.Avg[T, R, D](r, q, col)                 // AVG 聚合，NULL 安全
+
+// 原生 SQL
+repo.RawQuery(ctx, sql, args...)              // 原生查询，返回 []T
+repo.RawExec(ctx, sql, args...)               // 原生执行，返回 (affected, err)
+repo.RawScan(ctx, dest, sql, args...)         // 原生查询映射到自定义结构
+
+// Query/Updater 新增方法
+q.WithScope(fn func(*gorm.DB)*gorm.DB)        // 注入自定义 GORM scope
+q.IsEmpty()                                    // 判断是否无条件（WithScope 不计入）
 ```
 
 ### Repository 错误变量
@@ -104,6 +137,8 @@ repo.GetByLock(ctx, q, tx)         // 加锁查询，需在事务中调用
 | `ErrUpdateEmpty` | `Update` 被调用时 `setMap` 中没有字段 |
 | `ErrUpdateNoCondition` | `Update` 有字段但没有 WHERE 条件时被调用 |
 | `ErrTransactionReq` | `GetByLock` 在没有事务的情况下被调用 |
+| `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
+| `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 在无条件时被调用 |
 
 ### 测试辅助工具（`model_test.go`）
 
