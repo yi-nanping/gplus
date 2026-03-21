@@ -15,6 +15,7 @@ var (
 	ErrUpdateEmpty       = errors.New("gplus: update content is empty")
 	ErrUpdateNoCondition = errors.New("gplus: update requires at least one condition to prevent full-table update")
 	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
+	ErrDefaultsNil       = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
 )
 
 // IsNotFound 判断错误是否为「记录不存在」
@@ -441,11 +442,14 @@ func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any,
 
 // FirstOrCreate 按条件查找记录，不存在时用 defaults 创建。
 // 返回值：(record, created, error)，created=true 表示本次新建。
-// defaults 为 nil 时创建零值记录。
+// defaults 不可为 nil，否则返回 ErrDefaultsNil。
 // 内部使用事务保证查询与创建的原子性。
 func (r *Repository[D, T]) FirstOrCreate(q *Query[T], defaults *T) (data T, created bool, err error) {
 	if q == nil {
 		return data, false, ErrQueryNil
+	}
+	if defaults == nil {
+		return data, false, ErrDefaultsNil
 	}
 	if err = q.GetError(); err != nil {
 		return data, false, err
@@ -462,10 +466,54 @@ func (r *Repository[D, T]) FirstOrCreate(q *Query[T], defaults *T) (data T, crea
 			// 查询失败（非「不存在」错误）
 			return e
 		}
-		// 未找到，用 defaults 创建
-		if defaults != nil {
-			data = *defaults
+		// 未找到，用 defaults 创建新记录
+		data = *defaults
+		created = true
+		return tx.Create(&data).Error
+	})
+	if err != nil {
+		created = false
+	}
+	return data, created, err
+}
+
+// FirstOrUpdate 按条件查找记录，找到则执行 Updater 更新，未找到则用 defaults 创建。
+// 返回值：(record, created, error)，created=true 表示本次新建。
+// defaults 不可为 nil，否则返回 ErrDefaultsNil。
+// 内部使用事务保证查找与更新/创建的原子性。
+func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T) (data T, created bool, err error) {
+	if q == nil {
+		return data, false, ErrQueryNil
+	}
+	if defaults == nil {
+		return data, false, ErrDefaultsNil
+	}
+	if u == nil || u.IsEmpty() {
+		return data, false, ErrUpdateEmpty
+	}
+	if err = q.GetError(); err != nil {
+		return data, false, err
+	}
+	if err = u.GetError(); err != nil {
+		return data, false, err
+	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return data, false, err
+	}
+	err = r.db.WithContext(q.Context()).Transaction(func(tx *gorm.DB) error {
+		// BuildCount 路径：WHERE/JOIN，不含 SELECT/ORDER/LIMIT，确保 First 返回完整记录
+		if e := tx.Scopes(q.BuildCount()).First(&data).Error; e == nil {
+			// 找到记录，执行更新
+			if ue := tx.Model(&data).Scopes(u.BuildUpdate()).Updates(u.setMap).Error; ue != nil {
+				return ue
+			}
+			// 重新读取最新数据
+			return tx.First(&data, data).Error
+		} else if !errors.Is(e, gorm.ErrRecordNotFound) {
+			return e
 		}
+		// 未找到，用 defaults 创建新记录
+		data = *defaults
 		created = true
 		return tx.Create(&data).Error
 	})

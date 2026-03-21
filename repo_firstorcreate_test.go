@@ -17,7 +17,7 @@ func TestFirstOrCreate_BuilderError(t *testing.T) {
 	q, _ := NewQuery[TestUser](ctx)
 	q.Eq(nil, "bad") // 累积错误
 
-	_, _, err := repo.FirstOrCreate(q, nil)
+	_, _, err := repo.FirstOrCreate(q, &TestUser{})
 	assertError(t, err, true, "构建器错误应透传")
 }
 
@@ -35,17 +35,15 @@ func TestFirstOrCreate_Found(t *testing.T) {
 	assertEqual(t, 20, user.Age, "应返回已有记录，age=20 而非 defaults 的 99")
 }
 
-func TestFirstOrCreate_NotFound_NilDefaults(t *testing.T) {
+func TestFirstOrCreate_NilDefaults(t *testing.T) {
 	repo, _ := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
 	q, u := NewQuery[TestUser](ctx)
 	q.Eq(&u.Name, "Bob")
 
-	user, created, err := repo.FirstOrCreate(q, nil)
-	assertError(t, err, false, "nil defaults 创建不应报错")
-	assertEqual(t, true, created, "未找到时 created 应为 true")
-	assertEqual(t, "", user.Name, "nil defaults 应创建零值记录")
+	_, _, err := repo.FirstOrCreate(q, nil)
+	assertError(t, err, true, "nil defaults 应返回 ErrDefaultsNil")
 }
 
 func TestFirstOrCreate_NotFound_WithDefaults(t *testing.T) {
