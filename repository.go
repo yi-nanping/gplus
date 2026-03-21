@@ -439,6 +439,28 @@ func (r *Repository[D, T]) RawScanTx(ctx context.Context, tx *gorm.DB, dest any,
 	return r.dbResolver(ctx, tx).Raw(sql, args...).Scan(dest).Error
 }
 
+// UpdateByIds 批量按主键更新，ids 为空时直接返回 0，不发 SQL
+func (r *Repository[D, T]) UpdateByIds(ctx context.Context, ids []D, u *Updater[T]) (int64, error) {
+	return r.UpdateByIdsTx(ctx, ids, u, nil)
+}
+
+// UpdateByIdsTx 支持事务的批量主键更新
+func (r *Repository[D, T]) UpdateByIdsTx(ctx context.Context, ids []D, u *Updater[T], tx *gorm.DB) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if u == nil || u.IsEmpty() {
+		return 0, ErrUpdateEmpty
+	}
+	if err := u.GetError(); err != nil {
+		return 0, err
+	}
+	var model T
+	db := r.dbResolver(ctx, tx).Model(&model).Where(ids).Scopes(u.BuildUpdate())
+	result := db.Updates(u.setMap)
+	return result.RowsAffected, result.Error
+}
+
 // DeleteByIds 批量按主键删除，ids 为空时直接返回 0，不发 SQL
 func (r *Repository[D, T]) DeleteByIds(ctx context.Context, ids []D) (int64, error) {
 	return r.DeleteByIdsTx(ctx, ids, nil)
