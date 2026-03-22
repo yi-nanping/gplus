@@ -628,4 +628,20 @@ func TestQuery_ToDB(t *testing.T) {
 			t.Error("ToDB 有 builder 错误时，返回的 DB 应携带错误")
 		}
 	})
+
+	t.Run("ToDB 不继承 dirty db 的已有条件", func(t *testing.T) {
+		db := setupToDBTestDB(t)
+		// 模拟已有条件的 dirty db（如 db.Where("deleted_at IS NULL")）
+		dirty := db.Where("1 = 1")
+		q, u := NewQuery[TestUser](ctx)
+		q.Eq(&u.Age, 18)
+		result := q.ToDB(dirty)
+		if result == nil {
+			t.Fatal("ToDB 返回了 nil")
+		}
+		// result 不应携带错误
+		if result.Error != nil {
+			t.Errorf("ToDB 不应携带错误: %v", result.Error)
+		}
+	})
 }
