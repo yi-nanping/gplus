@@ -1259,7 +1259,7 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 func TestApplyJoins_CrossJoin(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
-	db.Create(&TestUser{Name: "Alice", Age: 25})
+	db.Create(&TestUser{Name:"Alice", Age: 25})
 
 	q, _ := NewQuery[TestUser](ctx)
 	q.CrossJoin("test_users AS t2")
@@ -1270,5 +1270,43 @@ func TestApplyJoins_CrossJoin(t *testing.T) {
 	}
 	if len(list) != 1 {
 		t.Errorf("CROSS JOIN 1×1 期望 1 条，实际 %d", len(list))
+	}
+}
+
+// TestApplyJoins_WithArgs 验证 LeftJoin 带绑定参数走 applyJoins 有参数分支
+func TestApplyJoins_WithArgs(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "Bob", Age: 20})
+
+	q, _ := NewQuery[TestUser](ctx)
+	// 带参数的 JOIN：覆盖 len(j.args) > 0 路径
+	q.LeftJoin("test_users t2", "t2.id = test_users.id AND t2.age > ?", 0)
+	q.WhereRaw("test_users.username = ?", "Bob")
+	list, err := repo.List(q)
+	if err != nil {
+		t.Fatalf("LeftJoin 带参数不应报错: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("期望 1 条，实际 %d", len(list))
+	}
+}
+
+// TestHavingGroup_EmptyFn 验证 HavingGroup 空函数体走 buildHavingExprs 空嵌套路径
+func TestHavingGroup_EmptyFn(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "Charlie", Age: 30})
+
+	q, u := NewQuery[TestUser](ctx)
+	q.Group(&u.Age)
+	// 空函数体：subExprs 长度为 0，触发 continue 分支
+	q.HavingGroup(func(sub *Query[TestUser]) {})
+	list, err := repo.List(q)
+	if err != nil {
+		t.Fatalf("空 HavingGroup 不应报错: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("期望 1 条，实际 %d", len(list))
 	}
 }
