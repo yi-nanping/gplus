@@ -37,6 +37,18 @@ func NewRepository[D comparable, T any](db *gorm.DB) *Repository[D, T] {
 	return &Repository[D, T]{db: db}
 }
 
+// NewQuery 创建与当前 Repository 同类型的查询构建器，无需重复指定泛型参数。
+// 等价于 gplus.NewQuery[T](ctx)，但类型由 Repository 自动推导。
+func (r *Repository[D, T]) NewQuery(ctx context.Context) (*Query[T], *T) {
+	return NewQuery[T](ctx)
+}
+
+// NewUpdater 创建与当前 Repository 同类型的更新构建器，无需重复指定泛型参数。
+// 等价于 gplus.NewUpdater[T](ctx)，但类型由 Repository 自动推导。
+func (r *Repository[D, T]) NewUpdater(ctx context.Context) (*Updater[T], *T) {
+	return NewUpdater[T](ctx)
+}
+
 // dbResolver 现在的逻辑变得很简单：如果有 tx 用 tx，否则用结构体里的 db
 func (r *Repository[D, T]) dbResolver(ctx context.Context, tx *gorm.DB) *gorm.DB {
 	if tx != nil {
