@@ -160,6 +160,28 @@ func TestPluck(t *testing.T) {
 			t.Errorf("nil Query 应返回 ErrQueryNil，实际: %v", err)
 		}
 	})
+
+	// 回归用例：Distinct + Pluck 必须正确生成 SELECT DISTINCT，
+	// 防止 GORM Pluck 在 callbacks.Execute 之前构建 clause.Select 时丢失 Distinct 标志
+	t.Run("Distinct 带列指针 + Pluck 返回去重值", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Distinct(&u.Age)
+		ages, err := Pluck[TestUser, int, int64](repo, q, &u.Age)
+		assertError(t, err, false, "Distinct(&col) + Pluck 应成功")
+		if len(ages) != 2 {
+			t.Errorf("应返回 2 个不重复年龄(25,30)，实际: %v len=%d", ages, len(ages))
+		}
+	})
+
+	t.Run("Distinct 无参 + Pluck 返回去重值", func(t *testing.T) {
+		q, u := NewQuery[TestUser](ctx)
+		q.Distinct()
+		ages, err := Pluck[TestUser, int, int64](repo, q, &u.Age)
+		assertError(t, err, false, "Distinct() + Pluck 应成功")
+		if len(ages) != 2 {
+			t.Errorf("应返回 2 个不重复年龄(25,30)，实际: %v len=%d", ages, len(ages))
+		}
+	})
 }
 
 // TestRepository_BasicCRUD 覆盖 Save/UpdateById/UpdateByCond/DeleteById/DeleteByCond/RecordNotFound

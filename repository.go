@@ -197,7 +197,14 @@ func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col a
 	if err = q.DataRuleBuilder().GetError(); err != nil {
 		return nil, err
 	}
-	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildQuery()).Pluck(colName, &result).Error
+	db := r.dbResolver(q.Context(), tx).Model(new(T))
+	// 提前应用 Distinct 标志：GORM Pluck 在 callbacks.Execute 之前就构建 clause.Select，
+	// 此时 Statement.Distinct 还未被 scope 内的 applyDistinct 设置；
+	// 所以必须在调用 Pluck 之前先在 statement 上置位，才能让 Pluck 生成 SELECT DISTINCT。
+	if q.distinct {
+		db = db.Distinct()
+	}
+	err = db.Scopes(q.BuildQuery()).Pluck(colName, &result).Error
 	return result, err
 }
 
