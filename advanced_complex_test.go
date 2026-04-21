@@ -286,7 +286,7 @@ func TestComplex_QueryBuilder_HavingGroup(t *testing.T) {
 	// GROUP BY age → age=20(count=2), age=25(count=1), age=30(count=1)
 	// HAVING (COUNT(*)>=2 OR age=30) → age=20✓ age=25✗ age=30✓ → 2 组
 	q, u := NewQuery[UserWithDelete](context.Background())
-	q.Group(&u.Age).HavingGroup(func(sub *Query[UserWithDelete]) {
+	q.Select(&u.Age).Group(&u.Age).HavingGroup(func(sub *Query[UserWithDelete]) {
 		sub.Having("COUNT(*)", OpGe, 2).OrHaving("age", OpEq, 30)
 	})
 

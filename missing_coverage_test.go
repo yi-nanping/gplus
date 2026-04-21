@@ -1299,7 +1299,7 @@ func TestHavingGroup_EmptyFn(t *testing.T) {
 	db.Create(&TestUser{Name: "Charlie", Age: 30})
 
 	q, u := NewQuery[TestUser](ctx)
-	q.Group(&u.Age)
+	q.Select(&u.Age).Group(&u.Age)
 	// 空函数体：subExprs 长度为 0，触发 continue 分支
 	q.HavingGroup(func(sub *Query[TestUser]) {})
 	list, err := repo.List(q)
