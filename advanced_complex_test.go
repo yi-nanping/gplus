@@ -4,21 +4,18 @@ import (
 	"context"
 	"testing"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupComplexDB 初始化包含 UserWithDelete + Order 两张表的测试库
+// setupComplexDB 初始化包含 UserWithDelete + Order 两张表的测试库，支持 SQLite（默认）和 MySQL（TEST_DB=mysql）
 func setupComplexDB(t *testing.T) (*Repository[int64, UserWithDelete], *gorm.DB) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
-	if err != nil {
-		t.Fatalf("failed to connect database: %v", err)
-	}
+	db := openDB(t)
 	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
+	}
+	if db.Name() == "mysql" {
+		truncateTables(t, db, &Order{}, &UserWithDelete{})
+		t.Cleanup(func() { truncateTables(t, db, &Order{}, &UserWithDelete{}) })
 	}
 	return NewRepository[int64, UserWithDelete](db), db
 }
@@ -51,24 +48,14 @@ func TestComplex_JoinWhereOrder(t *testing.T) {
 	repo, db := setupComplexDB(t)
 	seedComplexData(t, db)
 
-	type Row struct {
-		ID   int64
-		Name string
-		Age  int
-	}
-
 	// 找有订单、年龄 >= 25 的用户，按 age 降序
-	var rows []Row
-	err := repo.RawScan(
-		context.Background(),
-		&rows,
-		`SELECT DISTINCT u.id, u.name, u.age
-		 FROM user_with_deletes u
-		 INNER JOIN orders o ON o.user_id = u.id
-		 WHERE u.age >= ? AND u.deleted_at IS NULL
-		 ORDER BY u.age DESC`,
-		25,
-	)
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.Ge(&u.Age, 25).
+		InnerJoin("orders", "orders.user_id = user_with_deletes.id").
+		Distinct().
+		Order(&u.Age, false)
+
+	rows, err := repo.List(q)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -274,15 +261,11 @@ func TestComplex_QueryBuilder_Subquery(t *testing.T) {
 	seedComplexData(t, db)
 
 	// 平均 age = (30+25+20+20)/4 = 23.75，高于平均的有 Alice(30) 和 Bob(25)
-	var results []UserWithDelete
-	err := repo.RawScan(
-		context.Background(),
-		&results,
-		`SELECT * FROM user_with_deletes
-		 WHERE deleted_at IS NULL
-		   AND age > (SELECT AVG(age) FROM user_with_deletes WHERE deleted_at IS NULL)
-		 ORDER BY age DESC`,
-	)
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.WhereRaw("age > (SELECT AVG(age) FROM user_with_deletes WHERE deleted_at IS NULL)").
+		Order(&u.Age, false)
+
+	results, err := repo.List(q)
 	if err != nil {
 		t.Fatalf("subquery failed: %v", err)
 	}

@@ -40,6 +40,15 @@ func assertError(t testing.TB, err error, expectError bool, msg string) {
 	}
 }
 
+// testOrder 用于 RawScan Join 测试的辅助表
+type testOrder struct {
+	ID        int64  `gorm:"primaryKey;autoIncrement"`
+	UserID    int64  `gorm:"column:user_id"`
+	OrderName string `gorm:"column:order_name;size:255"`
+}
+
+func (testOrder) TableName() string { return "test_orders" }
+
 // assertPanics 断言函数调用会触发 panic
 func assertPanics(t testing.TB, fn func(), msg string) {
 	t.Helper()

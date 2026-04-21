@@ -456,16 +456,14 @@ func TestRepository_RawScan_Join(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
-	db.Exec(`CREATE TABLE IF NOT EXISTS test_orders (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id INTEGER,
-		order_name TEXT
-	)`)
+	db.AutoMigrate(&testOrder{})
+	truncateTables(t, db, &testOrder{})
+	t.Cleanup(func() { truncateTables(t, db, &testOrder{}) })
 
 	user := &TestUser{Name: "Alice", Age: 25}
 	db.Create(user)
-	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", user.ID, "OrderA")
-	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", user.ID, "OrderB")
+	db.Create(&testOrder{UserID: user.ID, OrderName: "OrderA"})
+	db.Create(&testOrder{UserID: user.ID, OrderName: "OrderB"})
 
 	var results []UserOrderResult
 	err := repo.RawScan(ctx, &results,
@@ -492,19 +490,17 @@ func TestRepository_RawScan_JoinGroupBy(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
-	db.Exec(`CREATE TABLE IF NOT EXISTS test_orders (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id INTEGER,
-		order_name TEXT
-	)`)
+	db.AutoMigrate(&testOrder{})
+	truncateTables(t, db, &testOrder{})
+	t.Cleanup(func() { truncateTables(t, db, &testOrder{}) })
 
 	u1 := &TestUser{Name: "Alice", Age: 25}
 	u2 := &TestUser{Name: "Bob", Age: 30}
 	db.Create(u1)
 	db.Create(u2)
-	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", u1.ID, "O1")
-	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", u1.ID, "O2")
-	db.Exec("INSERT INTO test_orders (user_id, order_name) VALUES (?, ?)", u2.ID, "O3")
+	db.Create(&testOrder{UserID: u1.ID, OrderName: "O1"})
+	db.Create(&testOrder{UserID: u1.ID, OrderName: "O2"})
+	db.Create(&testOrder{UserID: u2.ID, OrderName: "O3"})
 
 	// 只返回订单数 > 1 的用户
 	type UserOrderCount struct {

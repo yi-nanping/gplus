@@ -10,9 +10,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// defaultMySQLDSN 本地开发默认 DSN，CI 通过 TEST_MYSQL_DSN 覆盖
-const defaultMySQLDSN = "root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
-
 // MySQLUser 用于 MySQL 集成测试的实体
 type MySQLUser struct {
 	ID    int64  `gorm:"primaryKey;autoIncrement"`
@@ -41,10 +38,8 @@ func setupMySQLDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
 	}
 
 	repo := NewRepository[int64, MySQLUser](db)
-	// 清空测试数据，保证幂等
-	if _, err := repo.RawExec(context.Background(), "DELETE FROM my_sql_users"); err != nil {
-		t.Fatalf("清空表失败: %v", err)
-	}
+	truncateTables(t, db, &MySQLUser{})
+	t.Cleanup(func() { truncateTables(t, db, &MySQLUser{}) })
 
 	return repo, db
 }

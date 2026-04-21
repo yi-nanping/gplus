@@ -5,25 +5,20 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupTestDB 初始化内存数据库并返回 Repository
+// setupTestDB 初始化数据库并返回 Repository，支持 SQLite（默认）和 MySQL（TEST_DB=mysql）
 func setupTestDB[T any](t *testing.T) (*Repository[int64, T], *gorm.DB) {
-	// 使用 sqlite 内存模式
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
-	if err != nil {
-		t.Fatalf("failed to connect database: %v", err)
+	db := openDB(t)
+
+	if err := db.AutoMigrate(new(T)); err != nil {
+		t.Fatalf("failed to migrate table: %v", err)
 	}
 
-	// 自动迁移表结构
-	err = db.AutoMigrate(new(T))
-	if err != nil {
-		t.Fatalf("failed to migrate table: %v", err)
+	if db.Name() == "mysql" {
+		truncateTables(t, db, new(T))
+		t.Cleanup(func() { truncateTables(t, db, new(T)) })
 	}
 
 	return NewRepository[int64, T](db), db

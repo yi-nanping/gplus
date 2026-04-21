@@ -4,9 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/glebarez/sqlite" // 纯 Go SQLite
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // UserWithDelete 用于测试软删除
@@ -26,17 +24,17 @@ type Order struct {
 	Remark string
 }
 
-// setupAdvancedDB 初始化包含关联表的数据库
+// setupAdvancedDB 初始化包含关联表的数据库，支持 SQLite（默认）和 MySQL（TEST_DB=mysql）
 func setupAdvancedDB(t *testing.T) (*Repository[int64, UserWithDelete], *gorm.DB) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
-	if err != nil {
-		t.Fatalf("failed to connect database: %v", err)
-	}
+	db := openDB(t)
 
 	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	if db.Name() == "mysql" {
+		truncateTables(t, db, &Order{}, &UserWithDelete{})
+		t.Cleanup(func() { truncateTables(t, db, &Order{}, &UserWithDelete{}) })
 	}
 
 	return NewRepository[int64, UserWithDelete](db), db
