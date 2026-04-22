@@ -45,6 +45,79 @@
 
 ---
 
+## [0.3.2] - 2026-04-05
+
+### 修复
+
+- `PluckTx` 在 GORM clause 定型前未提前应用 `Distinct`，导致 `Distinct` 标志丢失
+
+---
+
+## [0.3.1] - 2026-04-02
+
+### 新增
+
+- `Repository[K, T].NewQuery()` / `NewUpdater()`：便捷方法，无需重复指定泛型参数直接获得绑定该 Repository db 的 Query/Updater
+
+### 修复
+
+- `ToDB` 改用 `Session{NewDB: true}` 防止继承"脏" db 的已有条件，避免多次调用时 WHERE 子句叠加
+
+---
+
+## [0.3.0] - 2026-03-28
+
+### 新增
+
+**Repository 方法**
+- `GetByIds` / `GetByIdsTx`：按主键列表批量查询
+- `DeleteByIds` / `DeleteByIdsTx`：按主键列表批量删除
+- `UpdateByIds` / `UpdateByIdsTx`：按主键列表批量更新，返回 `(affected, err)`
+- `Exists` / `ExistsTx`：存在性检查，返回 `(bool, error)`
+- `Sum` / `Max` / `Min` / `Avg`（含 Tx 变体）：聚合函数，NULL 安全
+- `Chunk` / `ChunkTx`：主键游标分批处理，每批回调 `fn([]T) error`
+- `FirstOrCreate`：原子查找或创建，返回 `(T, created bool, error)`
+- `FirstOrUpdate`：原子查找或创建并更新，返回 `(T, created bool, error)`
+- `ListMap` / `ListMapTx`：查询结果按 `keyFn` 转换为 `map[D]T`
+- `Restore` / `RestoreTx`：按主键恢复软删除记录，返回 `(affected, err)`
+- `RestoreByCond` / `RestoreByCondTx`：按条件批量恢复软删除（空条件返回 `ErrRestoreEmpty`）
+- `IncrBy` / `IncrByTx` / `DecrBy` / `DecrByTx`：原子字段自增自减，返回 `(affected, err)`
+- `Last` / `LastTx`：按主键倒序取第一条记录
+- `IsEmpty()`：判断 Query/Updater 是否无任何条件（`WithScope` 不计入）
+
+**Query / Updater**
+- `WithScope(fn func(*gorm.DB) *gorm.DB)`：向 Query/Updater 注入自定义 GORM scope
+
+**错误变量**
+- `ErrDefaultsNil`：`FirstOrCreate` / `FirstOrUpdate` 传入 nil defaults 时返回
+- `ErrRestoreEmpty`：`RestoreByCond` / `RestoreByCondTx` 无条件时返回
+
+### 重构
+
+- `GetError()` 摘要改用 `errors.New`，移除无占位符的 `fmt.Errorf`
+
+---
+
+## [0.2.1] - 2026-03-20
+
+### 修复
+
+- `applyGroupHaving`：`OrHaving` 条件被错误追加到 WHERE 而非 HAVING；`HavingGroup` OR 嵌套分组未正确构建 clause 树
+- `Query[T].Clear()`：未重置 `errs` 和 `dataRuleApplied`，复用同一 Query 实例时状态泄漏
+- `DataRule.Column`：缺少白名单正则校验，含括号/运算符的恶意表达式可绕过 `quoteColumn` 转义
+
+### 重构
+
+- 无占位符的 `fmt.Errorf` 替换为 `errors.New`；删除 Go 1.24 中已无必要的循环变量捕获
+
+### 测试
+
+- 覆盖率从 93.3% 提升至 94.0%
+- 新增 `TestQuery_SQL` 综合 DryRun SQL 验证（20 个子测试）
+- 补充 `Omit` / `HavingGroup` / `OrWhereRaw` / `CrossJoin` / `Query.Clear` 覆盖缺口
+
+---
+
 ## [0.2.0] - 2026-03-19
 
 ### 新增
