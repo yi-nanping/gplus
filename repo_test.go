@@ -243,3 +243,24 @@ func TestRepository_BasicCRUD(t *testing.T) {
 		}
 	})
 }
+
+// TestPage_Distinct_Count_Consistent 验证 Distinct+Page 时 total 与实际去重后行数一致
+// 回归：BuildCount 未应用 Distinct 时 total 会高于实际结果
+func TestPage_Distinct_Count_Consistent(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+
+	// 插入 3 行，其中 2 行 Age=20（重复）
+	db.Create(&TestUser{Name: "A", Age: 20})
+	db.Create(&TestUser{Name: "B", Age: 20})
+	db.Create(&TestUser{Name: "C", Age: 30})
+
+	q, qm := NewQuery[TestUser](ctx)
+	q.Distinct(&qm.Age).Page(1, 10)
+
+	list, total, err := repo.Page(q, false)
+	assertError(t, err, false, "Distinct Page 不应报错")
+	// 去重后应有 2 个不同 Age 值
+	assertEqual(t, 2, len(list), "Distinct 后应返回 2 条记录")
+	assertEqual(t, int64(2), total, "Distinct 后 total 应与实际结果一致")
+}

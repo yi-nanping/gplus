@@ -118,6 +118,11 @@ func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 		db = b.applyJoins(db)
 		// 分组与聚合过滤
 		db = b.applyGroupHaving(db, qL, qR)
+		// Distinct：需同时传入 select 字段，GORM 才能生成 SELECT count(*) FROM (SELECT DISTINCT ...) 子查询
+		if b.distinct && len(b.selects) > 0 {
+			db = b.applySelects(db, qL, qR)
+		}
+		db = b.applyDistinct(db)
 		db = b.applyScopes(db)
 		return db
 	}

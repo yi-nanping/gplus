@@ -92,6 +92,24 @@ func TestFirstOrUpdate_Found_Updated(t *testing.T) {
 	assertEqual(t, 30, check.Age, "数据库中 Age 应已更新为 30")
 }
 
+// TestFirstOrUpdate_UpdateQueryField 验证更新的字段与查询条件字段相同时返回值仍正确
+// 回归：旧实现用 data（含旧字段值）重读，更新查询字段后会找不到记录
+func TestFirstOrUpdate_UpdateQueryField(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	ctx := context.Background()
+	db.Create(&TestUser{Name: "Old", Age: 20})
+
+	q, qm := NewQuery[TestUser](ctx)
+	q.Eq(&qm.Name, "Old")
+	u, um := NewUpdater[TestUser](ctx)
+	u.Set(&um.Name, "New") // 更新的字段正是查询条件字段
+
+	data, created, err := repo.FirstOrUpdate(q, u, &TestUser{Name: "Old", Age: 20})
+	assertError(t, err, false, "更新查询条件字段时不应报错")
+	assertEqual(t, false, created, "记录已存在，created 应为 false")
+	assertEqual(t, "New", data.Name, "返回的 Name 应已更新为 New")
+}
+
 // TestFirstOrUpdate_NotFound_Created 验证未找到记录时用 defaults 创建，created=true
 func TestFirstOrUpdate_NotFound_Created(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)

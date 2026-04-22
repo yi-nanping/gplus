@@ -550,8 +550,20 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 			if ue := tx.Model(&data).Scopes(u.BuildUpdate()).Updates(u.setMap).Error; ue != nil {
 				return ue
 			}
-			// 重新读取最新数据
-			return tx.First(&data, data).Error
+			// 按主键重读：避免 data 中的旧字段值（含被更新的字段）被当作 WHERE 条件导致查不到
+			reloadStmt := &gorm.Statement{DB: tx}
+			if pe := reloadStmt.Parse(new(T)); pe == nil && reloadStmt.Schema.PrioritizedPrimaryField != nil {
+				if pkVal, isZero := reloadStmt.Schema.PrioritizedPrimaryField.ValueOf(q.Context(), reflect.ValueOf(data)); !isZero {
+					var fresh T
+					if re := tx.First(&fresh, pkVal).Error; re != nil {
+						return re
+					}
+					data = fresh
+					return nil
+				}
+			}
+			// 无主键时降级：按原始查询条件重读
+			return tx.Scopes(q.BuildCount()).First(&data).Error
 		} else if !errors.Is(e, gorm.ErrRecordNotFound) {
 			return e
 		}
