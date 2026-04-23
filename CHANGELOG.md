@@ -2,6 +2,21 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-04-23
+
+### 新增
+
+- `OnConflict` 冲突处理策略类型，支持四种模式：
+  - `DoNothing`：冲突时跳过（INSERT IGNORE / DO NOTHING）
+  - `DoUpdates`：冲突时按 EXCLUDED 覆盖指定列（字段指针或字符串列名）
+  - `DoUpdateAll`：冲突时覆盖除主键外所有列
+  - `UpdateExprs`：冲突时按自定义表达式更新（原子累加等）；可与 `DoUpdates` 组合
+- `InsertOnConflict` / `InsertOnConflictTx`：单条带冲突处理的插入
+- `InsertBatchOnConflict` / `InsertBatchOnConflictTx`：批量带冲突处理的插入；空切片无操作
+- `ErrOnConflictInvalid`：互斥策略配置时返回的哨兵错误
+
+---
+
 ## [0.1.0] - 2026-03-18
 
 ### 新增

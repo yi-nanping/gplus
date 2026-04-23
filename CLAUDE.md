@@ -92,6 +92,8 @@ repo.DecrBy(updater, col, delta)               // 原子自减，返回 (affecte
 repo.DeleteById(ctx, id)                       // 按主键删除，返回 (affected, err)
 repo.DeleteByIds(ctx, ids)                     // 按主键列表批量删除，返回 (affected, err)
 repo.DeleteByCondTX(ctx, q, tx)               // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
+repo.InsertOnConflict(ctx, &user, oc)          // 单条带冲突处理插入（DoNothing/DoUpdates/DoUpdateAll/UpdateExprs）
+repo.InsertBatchOnConflict(ctx, users, oc)     // 批量带冲突处理插入，空切片无操作
 repo.Restore(ctx, id)                          // 按主键恢复软删除，返回 (affected, err)
 repo.RestoreByCond(q)                          // 按条件批量恢复软删除（空条件返回 ErrRestoreEmpty）
 
@@ -139,6 +141,7 @@ q.IsEmpty()                                    // 判断是否无条件（WithSc
 | `ErrTransactionReq` | `GetByLock` 在没有事务的情况下被调用 |
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 在无条件时被调用 |
+| `ErrOnConflictInvalid` | `OnConflict` 中 DoNothing/DoUpdateAll/DoUpdates 互斥策略同时设置 |
 
 ### 测试辅助工具（`model_test.go`）
 

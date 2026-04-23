@@ -129,6 +129,8 @@ repo.IncrBy(updater, col, delta)               // 原子自增
 repo.DecrBy(updater, col, delta)               // 原子自减
 repo.DeleteById(ctx, 1)                        // 按主键删除
 repo.DeleteByIds(ctx, []uint{1, 2, 3})         // 按主键列表批量删除
+repo.InsertOnConflict(ctx, &user, oc)          // 单条带冲突处理插入
+repo.InsertBatchOnConflict(ctx, users, oc)     // 批量带冲突处理插入
 repo.Restore(ctx, id)                          // 按主键恢复软删除
 repo.RestoreByCond(q)                          // 按条件批量恢复软删除
 
@@ -250,6 +252,44 @@ max, err   := gplus.Max[User, int64, uint](repo, q, &m.Age)
 min, err   := gplus.Min[User, int64, uint](repo, q, &m.Age)
 avg, err   := gplus.Avg[User, float64, uint](repo, q, &m.Age)
 ```
+
+### OnConflict（按唯一键 upsert）
+
+`InsertOnConflict` / `InsertBatchOnConflict` 支持数据库原生冲突处理，覆盖四种策略：
+
+```go
+_, m := repo.NewQuery(ctx)
+
+// 1. 冲突时跳过（幂等写入）
+repo.InsertOnConflict(ctx, &user, gplus.OnConflict{
+    Columns:   []any{&m.Email},
+    DoNothing: true,
+})
+// → INSERT INTO users(...) ON CONFLICT (email) DO NOTHING
+
+// 2. 冲突时只更新指定列
+repo.InsertOnConflict(ctx, &user, gplus.OnConflict{
+    Columns:   []any{&m.Email},
+    DoUpdates: []any{&m.Name, &m.UpdatedAt},
+})
+// → ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, updated_at=EXCLUDED.updated_at
+
+// 3. 冲突时覆盖除主键外所有列
+repo.InsertOnConflict(ctx, &user, gplus.OnConflict{
+    Columns:     []any{&m.Email},
+    DoUpdateAll: true,
+})
+
+// 4. 冲突时原子表达式更新（批量累加计数器）
+repo.InsertBatchOnConflict(ctx, stats, gplus.OnConflict{
+    Columns:     []any{&m.UserID, &m.Date},
+    UpdateExprs: map[string]any{"count": gorm.Expr("count + excluded.count")},
+})
+// → ON CONFLICT (user_id, date) DO UPDATE SET count = count + excluded.count
+```
+
+> **方言说明**：`Columns` 在 Postgres/SQLite 中必须指定；MySQL 按唯一索引自动判定，可省略。
+> `UpdateExprs` 中的表达式语法因数据库而异（MySQL 用 `VALUES(col)`，Postgres/SQLite 用 `excluded.col`）。
 
 ### 软删除恢复
 

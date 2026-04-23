@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
 )
 
@@ -19,7 +20,87 @@ var (
 	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
 	ErrDefaultsNil       = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
 	ErrRestoreEmpty      = errors.New("gplus: restore condition is empty")
+	ErrOnConflictInvalid = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
 )
+
+// OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
+// Columns 为空时：MySQL 按表内唯一索引自动判定；Postgres/SQLite 须显式指定冲突列。
+type OnConflict struct {
+	// Columns 冲突检测列（唯一索引/主键），支持字段指针或字符串列名。
+	Columns []any
+	// DoNothing 冲突时跳过，不执行任何更新（INSERT IGNORE / DO NOTHING）。
+	// 与 DoUpdates/DoUpdateAll/UpdateExprs 互斥。
+	DoNothing bool
+	// DoUpdates 冲突时按 EXCLUDED 覆盖指定列，支持字段指针或字符串列名。
+	// 与 DoNothing/DoUpdateAll 互斥，可与 UpdateExprs 组合。
+	DoUpdates []any
+	// DoUpdateAll 冲突时按 EXCLUDED 覆盖除主键外的所有列。
+	// 与 DoNothing/DoUpdates/UpdateExprs 互斥。
+	DoUpdateAll bool
+	// UpdateExprs 冲突时按自定义表达式更新，key 为列名，value 为 gorm.Expr 或普通值。
+	// 示例：{"count": gorm.Expr("count + VALUES(count)")}
+	// 可与 DoUpdates 组合，不可与 DoNothing/DoUpdateAll 共用。
+	UpdateExprs map[string]any
+}
+
+// buildClause 将 OnConflict 转换为 GORM clause.OnConflict。
+func (oc OnConflict) buildClause() (clause.OnConflict, error) {
+	hasDoUpdates := len(oc.DoUpdates) > 0
+	hasExprs := len(oc.UpdateExprs) > 0
+
+	// 互斥校验
+	if oc.DoNothing && (oc.DoUpdateAll || hasDoUpdates || hasExprs) {
+		return clause.OnConflict{}, ErrOnConflictInvalid
+	}
+	if oc.DoUpdateAll && (hasDoUpdates || hasExprs) {
+		return clause.OnConflict{}, ErrOnConflictInvalid
+	}
+
+	// 解析冲突检测列
+	cols := make([]clause.Column, 0, len(oc.Columns))
+	for _, c := range oc.Columns {
+		name, err := resolveColumnName(c)
+		if err != nil {
+			return clause.OnConflict{}, fmt.Errorf("gplus: OnConflict.Columns invalid: %w", err)
+		}
+		cols = append(cols, clause.Column{Name: name})
+	}
+
+	if oc.DoNothing {
+		return clause.OnConflict{Columns: cols, DoNothing: true}, nil
+	}
+	if oc.DoUpdateAll {
+		return clause.OnConflict{Columns: cols, UpdateAll: true}, nil
+	}
+
+	// 构建 DoUpdates + UpdateExprs 合并的 Set
+	var assignments clause.Set
+	if hasDoUpdates {
+		colNames := make([]string, 0, len(oc.DoUpdates))
+		for _, c := range oc.DoUpdates {
+			name, err := resolveColumnName(c)
+			if err != nil {
+				return clause.OnConflict{}, fmt.Errorf("gplus: OnConflict.DoUpdates invalid: %w", err)
+			}
+			colNames = append(colNames, name)
+		}
+		assignments = append(assignments, clause.AssignmentColumns(colNames)...)
+	}
+	if hasExprs {
+		for col, val := range oc.UpdateExprs {
+			assignments = append(assignments, clause.Assignment{
+				Column: clause.Column{Name: col},
+				Value:  val,
+			})
+		}
+	}
+
+	// 无任何更新策略 → 默认 UpdateAll
+	if len(assignments) == 0 {
+		return clause.OnConflict{Columns: cols, UpdateAll: true}, nil
+	}
+	return clause.OnConflict{Columns: cols, DoUpdates: assignments}, nil
+}
 
 // IsNotFound 判断错误是否为「记录不存在」
 func IsNotFound(err error) bool {
@@ -856,4 +937,36 @@ func (r *Repository[D, T]) ListMapTx(q *Query[T], keyFn func(T) D, tx *gorm.DB) 
 		result[keyFn(item)] = item
 	}
 	return result, nil
+}
+
+// InsertOnConflict 执行带冲突处理的单条插入。
+// 根据 OnConflict 策略决定：冲突时跳过(DoNothing)、覆盖指定列(DoUpdates)、覆盖所有列(DoUpdateAll)、原子表达式更新(UpdateExprs)。
+func (r *Repository[D, T]) InsertOnConflict(ctx context.Context, entity *T, oc OnConflict) error {
+	return r.InsertOnConflictTx(ctx, entity, oc, nil)
+}
+
+// InsertOnConflictTx 支持事务的单条冲突插入。
+func (r *Repository[D, T]) InsertOnConflictTx(ctx context.Context, entity *T, oc OnConflict, tx *gorm.DB) error {
+	c, err := oc.buildClause()
+	if err != nil {
+		return err
+	}
+	return r.dbResolver(ctx, tx).Clauses(c).Create(entity).Error
+}
+
+// InsertBatchOnConflict 执行带冲突处理的批量插入。entities 为空时直接返回，不发 SQL。
+func (r *Repository[D, T]) InsertBatchOnConflict(ctx context.Context, entities []T, oc OnConflict) error {
+	return r.InsertBatchOnConflictTx(ctx, entities, oc, nil)
+}
+
+// InsertBatchOnConflictTx 支持事务的批量冲突插入。
+func (r *Repository[D, T]) InsertBatchOnConflictTx(ctx context.Context, entities []T, oc OnConflict, tx *gorm.DB) error {
+	if len(entities) == 0 {
+		return nil
+	}
+	c, err := oc.buildClause()
+	if err != nil {
+		return err
+	}
+	return r.dbResolver(ctx, tx).Clauses(c).Create(&entities).Error
 }
