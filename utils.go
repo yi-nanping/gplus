@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"gorm.io/gorm/schema"
 )
@@ -124,6 +125,180 @@ func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[
 			columnName = nsColumnName(field.Name)
 		}
 		res[currentOffset] = columnName
+	}
+}
+
+// === 乐观锁 ===
+
+// versionFieldInfo 记录模型中乐观锁字段的元信息。
+type versionFieldInfo struct {
+	offset     uintptr      // 相对于结构体基地址的偏移量
+	columnName string       // DB 列名
+	kind       reflect.Kind // 字段类型（仅支持整数族）
+}
+
+var (
+	versionFieldCache sync.Map
+	// noVersionSentinel 表示"已扫描，无 version 字段"，避免 nil interface 歧义。
+	noVersionSentinel = &versionFieldInfo{}
+)
+
+// findVersionField 递归扫描结构体，返回标注 `gplus:"version"` 的字段信息。
+func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		currentOffset := baseOffset + field.Offset
+
+		// 递归处理非指针匿名嵌入字段（与 parseFields 保持一致）
+		if field.Anonymous {
+			ft := field.Type
+			if ft.Kind() == reflect.Ptr {
+				continue // 指针嵌入，偏移量不可推算
+			}
+			if ft.Kind() == reflect.Struct {
+				if info := findVersionField(ft, currentOffset); info != nil {
+					return info
+				}
+			}
+			continue
+		}
+
+		if field.Tag.Get("gplus") != "version" {
+			continue
+		}
+
+		kind := field.Type.Kind()
+		switch kind {
+		case reflect.Int, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint32, reflect.Uint64:
+		default:
+			continue // 不支持的类型，忽略
+		}
+
+		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
+		colName := tagSetting["COLUMN"]
+		if colName == "" {
+			colName = nsColumnName(field.Name)
+		}
+		return &versionFieldInfo{offset: currentOffset, columnName: colName, kind: kind}
+	}
+	return nil
+}
+
+// getVersionField 返回类型 T 的乐观锁字段信息，无 version 字段时返回 nil。结果缓存，并发安全。
+func getVersionField[T any]() *versionFieldInfo {
+	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
+	if v, ok := versionFieldCache.Load(typeStr); ok {
+		info := v.(*versionFieldInfo)
+		if info == noVersionSentinel {
+			return nil
+		}
+		return info
+	}
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	info := findVersionField(t, 0)
+	if info == nil {
+		versionFieldCache.Store(typeStr, noVersionSentinel)
+		return nil
+	}
+	versionFieldCache.Store(typeStr, info)
+	return info
+}
+
+// readVersionValue 从 entity 指针读取 version 字段值（统一返回 int64）。
+func readVersionValue(entityPtr unsafe.Pointer, vInfo *versionFieldInfo) int64 {
+	ptr := unsafe.Add(entityPtr, vInfo.offset)
+	switch vInfo.kind {
+	case reflect.Int:
+		return int64(*(*int)(ptr))
+	case reflect.Int32:
+		return int64(*(*int32)(ptr))
+	case reflect.Int64:
+		return *(*int64)(ptr)
+	case reflect.Uint:
+		return int64(*(*uint)(ptr))
+	case reflect.Uint32:
+		return int64(*(*uint32)(ptr))
+	case reflect.Uint64:
+		return int64(*(*uint64)(ptr))
+	default:
+		return 0
+	}
+}
+
+// writeVersionValue 向 entity 指针写入新的 version 字段值。
+func writeVersionValue(entityPtr unsafe.Pointer, vInfo *versionFieldInfo, newVal int64) {
+	ptr := unsafe.Add(entityPtr, vInfo.offset)
+	switch vInfo.kind {
+	case reflect.Int:
+		*(*int)(ptr) = int(newVal)
+	case reflect.Int32:
+		*(*int32)(ptr) = int32(newVal)
+	case reflect.Int64:
+		*(*int64)(ptr) = newVal
+	case reflect.Uint:
+		*(*uint)(ptr) = uint(newVal)
+	case reflect.Uint32:
+		*(*uint32)(ptr) = uint32(newVal)
+	case reflect.Uint64:
+		*(*uint64)(ptr) = uint64(newVal)
+	}
+}
+
+// buildUpdateMap 从 entity 提取非零字段构建 map，供 Updates(map) 使用。
+// 排除主键字段和 version 字段（version 由调用方追加 gorm.Expr 表达式）。
+func buildUpdateMap(entity any, vInfo *versionFieldInfo) map[string]any {
+	t := reflect.TypeOf(entity)
+	v := reflect.ValueOf(entity)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+		v = v.Elem()
+	}
+	offsetMap := reflectStructSchema(entity, "gorm", "COLUMN")
+	result := make(map[string]any)
+	fillUpdateMap(t, v, 0, offsetMap, vInfo.offset, result)
+	return result
+}
+
+// fillUpdateMap 递归遍历结构体字段，将非零、非主键、非 version 的字段填入 result。
+func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMap map[uintptr]string, excludeVersionOffset uintptr, result map[string]any) {
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		currentOffset := baseOffset + field.Offset
+		fv := v.Field(i)
+
+		// 递归处理非指针匿名嵌入字段
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			fillUpdateMap(field.Type, fv, currentOffset, offsetMap, excludeVersionOffset, result)
+			continue
+		}
+
+		if currentOffset == excludeVersionOffset {
+			continue // 跳过 version 字段，由调用方追加 Expr
+		}
+
+		colName, ok := offsetMap[currentOffset]
+		if !ok {
+			continue
+		}
+
+		// 排除主键字段（不放进 SET）
+		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
+		if _, isPK := tagSetting["PRIMARYKEY"]; isPK {
+			continue
+		}
+
+		if fv.IsZero() {
+			continue
+		}
+
+		result[colName] = fv.Interface()
 	}
 }
 

@@ -2,6 +2,21 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-04-24
+
+### 新增
+
+- **乐观锁**：在模型字段上标注 `gplus:"version"` 即可启用，无需修改任何调用代码
+  - `UpdateById` / `UpdateByIdTx` 自动追加 `WHERE version = oldVer`，SET 自动追加 `version = version + 1`
+  - `affected == 0` 时返回 `ErrOptimisticLock`（版本冲突或记录不存在）
+  - 更新成功后 entity.Version 自动回写为新值，可直接连续调用
+  - 支持字段类型：`int` / `int32` / `int64` / `uint` / `uint32` / `uint64`
+  - 支持嵌入字段中的 version（偏移量递归累加）
+  - 无 version 字段的模型保持原有路径，零额外开销
+- `ErrOptimisticLock`：版本冲突哨兵错误，可通过 `errors.Is` 判断
+
+---
+
 ## [0.4.0] - 2026-04-23
 
 ### 新增

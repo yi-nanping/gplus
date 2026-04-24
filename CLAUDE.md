@@ -84,7 +84,7 @@ repo.SaveBatch(ctx, users)                     // 批量 INSERT
 repo.Upsert(ctx, &user)                        // insert-or-update（按主键）
 repo.UpsertBatch(ctx, users)                   // 批量 upsert
 repo.CreateBatch(ctx, ptrs, batchSize)         // 分批 INSERT，指定批大小
-repo.UpdateById(ctx, &user)                    // 按主键更新非零字段
+repo.UpdateById(ctx, &user)                    // 按主键更新非零字段；模型含 `gplus:"version"` 字段时自动启用乐观锁
 repo.UpdateByIds(ctx, ids, updater)            // 按主键列表批量更新，返回 (affected, err)
 repo.UpdateByCond(updater)                     // 按条件批量更新，返回 (affected, err)
 repo.IncrBy(updater, col, delta)               // 原子自增，返回 (affected, err)
@@ -142,6 +142,7 @@ q.IsEmpty()                                    // 判断是否无条件（WithSc
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 在无条件时被调用 |
 | `ErrOnConflictInvalid` | `OnConflict` 中 DoNothing/DoUpdateAll/DoUpdates 互斥策略同时设置 |
+| `ErrOptimisticLock` | `UpdateById`/`UpdateByIdTx` 乐观锁版本冲突（version 不匹配或记录不存在） |
 
 ### 测试辅助工具（`model_test.go`）
 

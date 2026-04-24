@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"unsafe"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -21,6 +22,7 @@ var (
 	ErrDefaultsNil       = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
 	ErrRestoreEmpty      = errors.New("gplus: restore condition is empty")
 	ErrOnConflictInvalid = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
+	ErrOptimisticLock    = errors.New("gplus: optimistic lock conflict (version mismatch or row not found)")
 )
 
 // OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
@@ -412,9 +414,36 @@ func (r *Repository[D, T]) UpdateById(ctx context.Context, entity *T) error {
 	return r.UpdateByIdTx(ctx, entity, nil)
 }
 
-// UpdateByIdTx 事务更新
+// UpdateByIdTx 事务更新。若模型含 `gplus:"version"` 字段则启用乐观锁：
+// WHERE id=? AND version=oldVer，SET ..., version=version+1；
+// affected==0 时返回 ErrOptimisticLock（版本冲突或记录不存在）。
+// 成功后 entity.Version 自动递增，可直接再次调用。
 func (r *Repository[D, T]) UpdateByIdTx(ctx context.Context, entity *T, tx *gorm.DB) error {
-	return r.dbResolver(ctx, tx).Model(entity).Updates(entity).Error
+	db := r.dbResolver(ctx, tx)
+	vInfo := getVersionField[T]()
+	if vInfo == nil {
+		return db.Model(entity).Updates(entity).Error
+	}
+
+	oldVer := readVersionValue(unsafe.Pointer(entity), vInfo)
+	qL, qR := getQuoteChar(db)
+	quotedCol := quoteColumn(vInfo.columnName, qL, qR)
+
+	setMap := buildUpdateMap(entity, vInfo)
+	setMap[vInfo.columnName] = gorm.Expr(quotedCol + " + 1")
+
+	result := db.Model(entity).
+		Where(quotedCol+" = ?", oldVer).
+		Updates(setMap)
+
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrOptimisticLock
+	}
+	writeVersionValue(unsafe.Pointer(entity), vInfo, oldVer+1)
+	return nil
 }
 
 // GetByLock 专门的带锁查询方法
