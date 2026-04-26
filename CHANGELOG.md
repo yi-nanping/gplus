@@ -29,6 +29,25 @@
 - `InsertOnConflict` / `InsertOnConflictTx`：单条带冲突处理的插入
 - `InsertBatchOnConflict` / `InsertBatchOnConflictTx`：批量带冲突处理的插入；空切片无操作
 - `ErrOnConflictInvalid`：互斥策略配置时返回的哨兵错误
+- **调试支持**：`Query[T].ToSQL(db)` / `Query[T].ToCountSQL(db)` / `Updater[T].ToSQL(db)`，基于 GORM DryRun 模式输出参数已内联的 SQL，仅供调试展示
+- `Repository` 提供 `ToSQL` / `ToCountSQL` / `ToUpdateSQL` 同名便捷方法，无需手动传 db
+- `doc.go`：包级文档注释，便于 `go doc` / pkg.go.dev 浏览
+- `example_test.go`：可执行示例（Repository / Query / Updater 基础用法）
+
+### 修复
+
+- `BuildCount`：`Distinct` + `Page` 时 COUNT 路径未应用 `DISTINCT` 子查询，导致 `total` 虚高
+- `FirstOrUpdate`：创建后重读改用主键精确查找（通过 `gorm.Statement.Parse` 提取 `PrioritizedPrimaryField`），避免更新查询条件字段时按旧字段值找不到新记录
+
+### 重构
+
+- `query.go` / `update.go`：`errors.New(fmt.Sprintf(...))` 反模式替换为 `fmt.Errorf`
+
+### 测试
+
+- 支持 MySQL/SQLite 双模式集成测试，移除手写 SQL，方言一致性更可靠
+- GROUP BY 测试补充 Select 列以兼容 MySQL 8.0 `ONLY_FULL_GROUP_BY`
+- 新增回归测试：`TestPage_Distinct_Count_Consistent` / `TestFirstOrUpdate_UpdateQueryField`
 
 ---
 
