@@ -122,6 +122,7 @@ go.work
 !LICENSE
 !CHANGELOG.md
 !*.yml
+!docs/**
 
 # !Makefile
 
