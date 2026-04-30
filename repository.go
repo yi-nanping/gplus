@@ -165,9 +165,14 @@ func (r *Repository[D, T]) GetById(ctx context.Context, id D) (T, error) {
 	return r.GetByIdTx(ctx, id, nil)
 }
 
-// GetByIdTx 支持事务的查询
+// GetByIdTx 支持事务的查询。
+// 若 ctx 中携带 DataRule，将在 WHERE 中追加对应条件；跨租户 ID 返回 gorm.ErrRecordNotFound。
 func (r *Repository[D, T]) GetByIdTx(ctx context.Context, id D, tx *gorm.DB) (data T, err error) {
-	err = r.dbResolver(ctx, tx).First(&data, id).Error
+	q, _ := NewQuery[T](ctx)
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return
+	}
+	err = r.dbResolver(ctx, tx).Scopes(q.BuildQuery()).First(&data, id).Error
 	return
 }
 
@@ -418,21 +423,29 @@ func (r *Repository[D, T]) UpdateById(ctx context.Context, entity *T) error {
 // WHERE id=? AND version=oldVer，SET ..., version=version+1；
 // affected==0 时返回 ErrOptimisticLock（版本冲突或记录不存在）。
 // 成功后 entity.Version 自动递增，可直接再次调用。
+//
+// 注意：启用 DataRule 时，记录存在但跨租户会返回 affected==0（返回 ErrOptimisticLock），
+// 此时不应无条件重试（重试无法绕过权限）。乐观锁版本冲突与 DataRule 拦截当前共用同一错误码，
+// 调用方需通过其他途径区分（如先 GetById 检查记录是否在权限范围内）。
 func (r *Repository[D, T]) UpdateByIdTx(ctx context.Context, entity *T, tx *gorm.DB) error {
-	db := r.dbResolver(ctx, tx)
+	q, _ := NewQuery[T](ctx)
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return err
+	}
+	baseDB := r.dbResolver(ctx, tx).Scopes(q.BuildUpdate())
 	vInfo := getVersionField[T]()
 	if vInfo == nil {
-		return db.Model(entity).Updates(entity).Error
+		return baseDB.Model(entity).Updates(entity).Error
 	}
 
 	oldVer := readVersionValue(unsafe.Pointer(entity), vInfo)
-	qL, qR := getQuoteChar(db)
+	qL, qR := getQuoteChar(baseDB)
 	quotedCol := quoteColumn(vInfo.columnName, qL, qR)
 
 	setMap := buildUpdateMap(entity, vInfo)
 	setMap[vInfo.columnName] = gorm.Expr(quotedCol + " + 1")
 
-	result := db.Model(entity).
+	result := baseDB.Model(entity).
 		Where(quotedCol+" = ?", oldVer).
 		Updates(setMap)
 
@@ -514,10 +527,15 @@ func (r *Repository[D, T]) DeleteById(ctx context.Context, id D) (int64, error) 
 	return r.DeleteByIdTx(ctx, id, nil)
 }
 
-// DeleteByIdTx 事务删除
+// DeleteByIdTx 事务删除。
+// 若 ctx 中携带 DataRule，仅当记录满足权限条件时才删除；跨租户 ID 返回 affected=0。
 func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) (int64, error) {
-	db := r.dbResolver(ctx, tx).Delete(new(T), id)
-	return db.RowsAffected, db.Error
+	q, _ := NewQuery[T](ctx)
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
+	result := r.dbResolver(ctx, tx).Scopes(q.BuildDelete()).Delete(new(T), id)
+	return result.RowsAffected, result.Error
 }
 
 // DeleteByCond 根据条件删除
@@ -724,7 +742,10 @@ func (r *Repository[D, T]) UpdateByIds(ctx context.Context, ids []D, u *Updater[
 	return r.UpdateByIdsTx(ctx, ids, u, nil)
 }
 
-// UpdateByIdsTx 支持事务的批量主键更新
+// UpdateByIdsTx 支持事务的批量主键更新。
+//
+// 注意：启用 DataRule 时，记录存在但跨租户会返回 affected==0，此时不应无条件重试
+// （重试无法绕过权限）。调用方需通过其他途径区分权限拦截与实际无匹配行。
 func (r *Repository[D, T]) UpdateByIdsTx(ctx context.Context, ids []D, u *Updater[T], tx *gorm.DB) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -735,8 +756,12 @@ func (r *Repository[D, T]) UpdateByIdsTx(ctx context.Context, ids []D, u *Update
 	if err := u.GetError(); err != nil {
 		return 0, err
 	}
+	q, _ := NewQuery[T](ctx)
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
 	var model T
-	db := r.dbResolver(ctx, tx).Model(&model).Where(ids).Scopes(u.BuildUpdate())
+	db := r.dbResolver(ctx, tx).Model(&model).Where(ids).Scopes(q.BuildUpdate(), u.BuildUpdate())
 	result := db.Updates(u.setMap)
 	return result.RowsAffected, result.Error
 }
@@ -786,13 +811,18 @@ func (r *Repository[D, T]) DeleteByIds(ctx context.Context, ids []D) (int64, err
 	return r.DeleteByIdsTx(ctx, ids, nil)
 }
 
-// DeleteByIdsTx 支持事务的批量主键删除，ids 为空时直接返回 0，不发 SQL
+// DeleteByIdsTx 支持事务的批量主键删除，ids 为空时直接返回 0，不发 SQL。
+// 若 ctx 中携带 DataRule，仅删除满足权限条件的记录；跨租户 ID 被静默跳过。
 func (r *Repository[D, T]) DeleteByIdsTx(ctx context.Context, ids []D, tx *gorm.DB) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	db := r.dbResolver(ctx, tx).Delete(new(T), ids)
-	return db.RowsAffected, db.Error
+	q, _ := NewQuery[T](ctx)
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
+	result := r.dbResolver(ctx, tx).Scopes(q.BuildDelete()).Delete(new(T), ids)
+	return result.RowsAffected, result.Error
 }
 
 // aggregate 内部通用聚合执行函数
@@ -866,13 +896,18 @@ func (r *Repository[D, T]) GetByIds(ctx context.Context, ids []D) ([]T, error) {
 	return r.GetByIdsTx(ctx, ids, nil)
 }
 
-// GetByIdsTx 支持事务的批量主键查询，ids 为空时直接返回空切片
+// GetByIdsTx 支持事务的批量主键查询，ids 为空时直接返回空切片。
+// 若 ctx 中携带 DataRule，结果集仅包含满足权限条件的记录；跨租户 ID 被静默过滤。
 func (r *Repository[D, T]) GetByIdsTx(ctx context.Context, ids []D, tx *gorm.DB) ([]T, error) {
 	var result []T
 	if len(ids) == 0 {
 		return result, nil
 	}
-	err := r.dbResolver(ctx, tx).Find(&result, ids).Error
+	q, _ := NewQuery[T](ctx)
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return nil, err
+	}
+	err := r.dbResolver(ctx, tx).Scopes(q.BuildQuery()).Find(&result, ids).Error
 	return result, err
 }
 
@@ -884,12 +919,17 @@ func (r *Repository[D, T]) Restore(ctx context.Context, id D) (int64, error) {
 }
 
 // RestoreTx 支持事务的软删除恢复。
+// 注意：启用 DataRule 时，跨租户记录返回 affected==0（不会恢复）。
 func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (int64, error) {
-	db := r.dbResolver(ctx, tx)
+	q, _ := NewQuery[T](ctx)
+	if err := q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
+	baseDB := r.dbResolver(ctx, tx).Scopes(q.BuildUpdate())
 	// 动态查找软删除字段：遍历所有字段，找实现了 DeleteClausesInterface 的字段（即 gorm.DeletedAt 类型），
 	// 不依赖 Go 字段名，支持自定义字段名（如 RemovedAt gorm.DeletedAt）
 	col := "deleted_at"
-	stmt := &gorm.Statement{DB: db}
+	stmt := &gorm.Statement{DB: baseDB}
 	if err := stmt.Parse(new(T)); err == nil {
 		for _, f := range stmt.Schema.Fields {
 			if _, ok := reflect.New(f.FieldType).Interface().(schema.DeleteClausesInterface); ok {
@@ -898,7 +938,7 @@ func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (in
 			}
 		}
 	}
-	result := db.Unscoped().Model(new(T)).Where(id).
+	result := baseDB.Unscoped().Model(new(T)).Where(id).
 		Where(col + " IS NOT NULL").
 		Update(col, nil)
 	return result.RowsAffected, result.Error
