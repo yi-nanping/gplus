@@ -545,11 +545,22 @@ func TestQuery_SubSession_Isolation(t *testing.T) {
 		t.Fatalf("q2.ToSQL: %v", err2)
 	}
 
-	if !strings.Contains(sql1, "100") || strings.Contains(sql1, "200") {
-		t.Fatalf("sql1 should contain only outer cond 100, got: %s", sql1)
+	// 断言列+值的组合，避免裸数字 100/200 与表名/偏移等字面量误匹配
+	cond1Match := []string{`"age" = 100`, "`age` = 100"}
+	cond2Match := []string{`"age" = 200`, "`age` = 200"}
+	containsAny := func(s string, subs []string) bool {
+		for _, sub := range subs {
+			if strings.Contains(s, sub) {
+				return true
+			}
+		}
+		return false
 	}
-	if !strings.Contains(sql2, "200") || strings.Contains(sql2, "100") {
-		t.Fatalf("sql2 should contain only outer cond 200, got: %s", sql2)
+	if !containsAny(sql1, cond1Match) || containsAny(sql1, cond2Match) {
+		t.Fatalf("sql1 should contain only age=100, got: %s", sql1)
+	}
+	if !containsAny(sql2, cond2Match) || containsAny(sql2, cond1Match) {
+		t.Fatalf("sql2 should contain only age=200, got: %s", sql2)
 	}
 }
 
