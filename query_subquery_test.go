@@ -103,3 +103,100 @@ func TestQuery_OrNotInSub_DryRun(t *testing.T) {
 		t.Fatalf("expected SQL to contain NOT IN, got: %s", sql)
 	}
 }
+
+// TestQuery_GtSub_Basic 验证 GtSub: WHERE age > (SELECT AVG(age) FROM users)。
+func TestQuery_GtSub_Basic(t *testing.T) {
+	repo, db := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	users := []UserWithDelete{{Name: "Young", Age: 20}, {Name: "Avg", Age: 30}, {Name: "Old", Age: 40}}
+	db.Create(&users)
+
+	avgQ, _ := NewQuery[UserWithDelete](ctx)
+	avgQ.SelectRaw("AVG(age)")
+
+	q, u := NewQuery[UserWithDelete](ctx)
+	q.GtSub(&u.Age, avgQ).Order(&u.ID, true)
+
+	result, err := repo.List(q)
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	// 平均 age=30，> 30 的只有 Old(40)
+	if len(result) != 1 || result[0].Name != "Old" {
+		t.Fatalf("expected [Old], got %+v", result)
+	}
+}
+
+// TestQuery_ScalarSub_DryRun 表驱动覆盖 6 个标量子查询的 SQL 形态。
+func TestQuery_ScalarSub_DryRun(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		apply    func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier)
+		wantOp   string
+	}{
+		{"EqSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.EqSub(&u.Age, sub) }, "="},
+		{"NeSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.NeSub(&u.Age, sub) }, "<>"},
+		{"GtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.GtSub(&u.Age, sub) }, ">"},
+		{"GteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.GteSub(&u.Age, sub) }, ">="},
+		{"LtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.LtSub(&u.Age, sub) }, "<"},
+		{"LteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.LteSub(&u.Age, sub) }, "<="},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sub, _ := NewQuery[UserWithDelete](ctx)
+			sub.SelectRaw("AVG(age)")
+
+			q, u := NewQuery[UserWithDelete](ctx)
+			tt.apply(q, u, sub)
+
+			sql, err := q.ToSQL(db)
+			if err != nil {
+				t.Fatalf("ToSQL failed: %v", err)
+			}
+			if !strings.Contains(sql, tt.wantOp+" (SELECT") {
+				t.Fatalf("expected SQL to contain '%s (SELECT', got: %s", tt.wantOp, sql)
+			}
+		})
+	}
+}
+
+// TestQuery_OrScalarSub_DryRun 验证 6 个 Or 标量变体 SQL 形态。
+func TestQuery_OrScalarSub_DryRun(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name  string
+		apply func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier)
+	}{
+		{"OrEqSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrEqSub(&u.Age, sub) }},
+		{"OrNeSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrNeSub(&u.Age, sub) }},
+		{"OrGtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrGtSub(&u.Age, sub) }},
+		{"OrGteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrGteSub(&u.Age, sub) }},
+		{"OrLtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrLtSub(&u.Age, sub) }},
+		{"OrLteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrLteSub(&u.Age, sub) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sub, _ := NewQuery[UserWithDelete](ctx)
+			sub.SelectRaw("AVG(age)")
+
+			q, u := NewQuery[UserWithDelete](ctx)
+			tt.apply(q, u, sub)
+
+			sql, err := q.ToSQL(db)
+			if err != nil {
+				t.Fatalf("ToSQL failed: %v", err)
+			}
+			if !strings.Contains(strings.ToUpper(sql), "OR ") {
+				t.Fatalf("expected SQL to contain OR, got: %s", sql)
+			}
+		})
+	}
+}

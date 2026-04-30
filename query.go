@@ -144,6 +144,19 @@ func (q *Query[T]) Select(cols ...any) *Query[T] {
 	return q
 }
 
+// SelectRaw 添加原生 SELECT 字段表达式。
+// expr 为原生 SQL 表达式，不经列名转义直接传入 GORM。
+// 示例：q.SelectRaw("AVG(age)").SelectRaw("COUNT(*) as cnt")
+// 注意：expr 参数由调用方负责安全性，不可直接拼接用户输入。
+func (q *Query[T]) SelectRaw(expr string) *Query[T] {
+	if expr == "" {
+		q.errs = append(q.errs, errors.New("gplus: SelectRaw expr cannot be empty"))
+		return q
+	}
+	q.selects = append(q.selects, expr)
+	return q
+}
+
 // WhereRaw 添加原生 SQL 条件（AND）。
 // sql 为完整条件片段，args 为参数绑定值，防止 SQL 注入。
 // 示例：q.WhereRaw("YEAR(created_at) = ?", 2024)
@@ -347,6 +360,114 @@ func (q *Query[T]) OrNotInSub(col any, sub Subquerier) *Query[T] {
 		return q
 	}
 	return q.addCond(true, col, OpNotIn, sub)
+}
+
+// EqSub 子查询：col = (subquery)。详见 InSub 关于 sub 生命周期约束。
+func (q *Query[T]) EqSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpEq, sub)
+}
+
+// OrEqSub 子查询(或)。详见 EqSub。
+func (q *Query[T]) OrEqSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpEq, sub)
+}
+
+// NeSub <> 子查询：col <> (subquery)。详见 InSub。
+func (q *Query[T]) NeSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpNe, sub)
+}
+
+// OrNeSub <> 子查询(或)。详见 NeSub。
+func (q *Query[T]) OrNeSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpNe, sub)
+}
+
+// GtSub > 子查询：col > (subquery)。详见 InSub。
+func (q *Query[T]) GtSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpGt, sub)
+}
+
+// OrGtSub > 子查询(或)。详见 GtSub。
+func (q *Query[T]) OrGtSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpGt, sub)
+}
+
+// GteSub >= 子查询：col >= (subquery)。详见 InSub。
+func (q *Query[T]) GteSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpGe, sub)
+}
+
+// OrGteSub >= 子查询(或)。详见 GteSub。
+func (q *Query[T]) OrGteSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpGe, sub)
+}
+
+// LtSub < 子查询：col < (subquery)。详见 InSub。
+func (q *Query[T]) LtSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpLt, sub)
+}
+
+// OrLtSub < 子查询(或)。详见 LtSub。
+func (q *Query[T]) OrLtSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpLt, sub)
+}
+
+// LteSub <= 子查询：col <= (subquery)。详见 InSub。
+func (q *Query[T]) LteSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpLe, sub)
+}
+
+// OrLteSub <= 子查询(或)。详见 LteSub。
+func (q *Query[T]) OrLteSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpLe, sub)
 }
 
 // IsNull 为空
