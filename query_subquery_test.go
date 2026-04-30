@@ -2,8 +2,11 @@ package gplus
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 // TestQuery_InSub_Basic 验证 InSub 生成 SQL 形态 + 真实数据命中。
@@ -198,5 +201,153 @@ func TestQuery_OrScalarSub_DryRun(t *testing.T) {
 				t.Fatalf("expected SQL to contain OR, got: %s", sql)
 			}
 		})
+	}
+}
+
+// errSubquerier 测试辅助：模拟一个返回预设错误的 Subquerier。
+// 因 gplusSubquery() 是 unexported，外部包无法实现 Subquerier；
+// 此辅助同包可用，正是 guard 设计目的（测试可模拟，外部不可冒名）。
+type errSubquerier struct {
+	err error
+}
+
+func (e *errSubquerier) ToDB(db *gorm.DB) *gorm.DB {
+	session := db.Session(&gorm.Session{NewDB: true})
+	if e.err != nil {
+		_ = session.AddError(e.err)
+	}
+	return session
+}
+
+func (e *errSubquerier) GetError() error { return e.err }
+func (e *errSubquerier) gplusSubquery()  {}
+
+// TestQuery_AllSub_NilSub 表驱动覆盖 16 个 Query 子查询方法的 nil sub 错误路径。
+// 解决 Task 3 遗留：12 标量方法 + 4 集合方法的 nil 分支覆盖率不足问题。
+func TestQuery_AllSub_NilSub(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name  string
+		apply func(q *Query[UserWithDelete], u *UserWithDelete)
+	}{
+		{"InSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.InSub(&u.ID, nil) }},
+		{"OrInSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrInSub(&u.ID, nil) }},
+		{"NotInSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.NotInSub(&u.ID, nil) }},
+		{"OrNotInSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrNotInSub(&u.ID, nil) }},
+		{"EqSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.EqSub(&u.Age, nil) }},
+		{"OrEqSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrEqSub(&u.Age, nil) }},
+		{"NeSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.NeSub(&u.Age, nil) }},
+		{"OrNeSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrNeSub(&u.Age, nil) }},
+		{"GtSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.GtSub(&u.Age, nil) }},
+		{"OrGtSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrGtSub(&u.Age, nil) }},
+		{"GteSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.GteSub(&u.Age, nil) }},
+		{"OrGteSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrGteSub(&u.Age, nil) }},
+		{"LtSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.LtSub(&u.Age, nil) }},
+		{"OrLtSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrLtSub(&u.Age, nil) }},
+		{"LteSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.LteSub(&u.Age, nil) }},
+		{"OrLteSub", func(q *Query[UserWithDelete], u *UserWithDelete) { q.OrLteSub(&u.Age, nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, u := NewQuery[UserWithDelete](ctx)
+			tt.apply(q, u)
+			if !errors.Is(q.GetError(), ErrSubqueryNil) {
+				t.Fatalf("expected ErrSubqueryNil, got %v", q.GetError())
+			}
+		})
+	}
+}
+
+// TestQuery_SelectRaw_EmptyString 验证 SelectRaw 空字符串错误路径。
+func TestQuery_SelectRaw_EmptyString(t *testing.T) {
+	ctx := context.Background()
+	q, _ := NewQuery[UserWithDelete](ctx)
+	q.SelectRaw("")
+	if q.GetError() == nil {
+		t.Fatalf("expected error for empty SelectRaw expr, got nil")
+	}
+}
+
+// TestQuery_InSub_SubError 验证 sub.GetError() 经 GORM 链传播。
+func TestQuery_InSub_SubError(t *testing.T) {
+	repo, _ := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	subErr := errors.New("test sub error")
+	sub := &errSubquerier{err: subErr}
+
+	q, u := NewQuery[UserWithDelete](ctx)
+	q.InSub(&u.ID, sub)
+
+	_, err := repo.List(q)
+	if err == nil {
+		t.Fatalf("expected error from sub propagation, got nil")
+	}
+	if !strings.Contains(err.Error(), "test sub error") {
+		t.Fatalf("expected sub error in chain, got: %v", err)
+	}
+}
+
+// TestQuery_InSub_ColInvalid 验证非法 col 指针走 addCond 列名解析错误路径。
+func TestQuery_InSub_ColInvalid(t *testing.T) {
+	ctx := context.Background()
+
+	subQ, order := NewQuery[Order](ctx)
+	subQ.Select(&order.UserID)
+
+	q, _ := NewQuery[UserWithDelete](ctx)
+	notRegistered := &struct{ X int }{}
+	q.InSub(&notRegistered.X, subQ)
+
+	if q.GetError() == nil {
+		t.Fatalf("expected col resolution error, got nil")
+	}
+}
+
+// TestQuery_InSub_OuterErrPriority 验证外层 q.GetError() 已有错误时 Repository 提前 return。
+func TestQuery_InSub_OuterErrPriority(t *testing.T) {
+	repo, _ := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	q, u := NewQuery[UserWithDelete](ctx)
+	q.errs = append(q.errs, errors.New("outer pre-existing error"))
+	subQ, order := NewQuery[Order](ctx)
+	subQ.Select(&order.UserID)
+	q.InSub(&u.ID, subQ)
+
+	_, err := repo.List(q)
+	if err == nil {
+		t.Fatalf("expected error from outer errs, got nil")
+	}
+	if !strings.Contains(err.Error(), "outer pre-existing error") {
+		t.Fatalf("expected outer error first, got: %v", err)
+	}
+}
+
+// TestQuery_InSub_DeferredSemantics 锁定延迟调用语义。
+// sub 在 InSub 后追加条件 → 最终 SQL 包含追加条件
+// （防止未来"贴心"改为立即快照而不更新文档）。
+func TestQuery_InSub_DeferredSemantics(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	subQ, order := NewQuery[Order](ctx)
+	subQ.Select(&order.UserID).Eq(&order.UserID, 1) // 初始条件
+
+	q, u := NewQuery[UserWithDelete](ctx)
+	q.InSub(&u.ID, subQ)
+
+	// 传入后追加条件
+	subQ.Eq(&order.Amount, 999)
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL failed: %v", err)
+	}
+	// 延迟调用：追加的 amount=999 必须出现在最终 SQL 中
+	if !strings.Contains(sql, "999") {
+		t.Fatalf("expected SQL to contain 999 (deferred semantics), got: %s", sql)
 	}
 }

@@ -325,10 +325,14 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 
 			// --- Subquerier 子查询（延迟调用） ---
 			// 用户层 InSub/EqSub 等方法把 Subquerier 接口存进 cond.value；
-			// 外层 db 可用时调 sub.ToDB(d) 转为 *gorm.DB，sub.GetError() 由 ToDB
-			// 内部 session.AddError 经 GORM 错误链传播。
+			// 外层 db 可用时调 sub.ToDB(d) 转为 *gorm.DB。
+			// sub.GetError() 若有错误，通过 d.AddError 传播到外层 GORM 错误链，
+			// 确保子查询构建失败时外层查询也中断报错。
 			if sub, ok := cond.value.(Subquerier); ok {
 				subDB := sub.ToDB(d)
+				if subErr := sub.GetError(); subErr != nil {
+					_ = d.AddError(subErr)
+				}
 				quotedCol := quoteColumn(cond.expr, qL, qR)
 				sqlStr := fmt.Sprintf("%s %s (?)", quotedCol, cond.operator)
 				if cond.isOr {
