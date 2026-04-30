@@ -205,9 +205,10 @@ func (q *Query[T]) OrWhereRaw(sql string, args ...any) *Query[T] {
 // 4. 执行查询
 // users, err := userRepo.List(mainQuery)
 func (q *Query[T]) ToDB(db *gorm.DB) *gorm.DB {
-	// 1. 使用 Session(&gorm.Session{}) 创建一个干净的 DB 会话，避免污染传入的 db
-	// 2. 调用 BuildQuery() 获取闭包，并立即执行该闭包应用条件
-	session := db.Session(&gorm.Session{NewDB: true})
+	// 1. 使用 Session(&gorm.Session{NewDB: true}) 创建干净会话，避免污染传入的 db
+	// 2. 通过 Model 注入 T 的表名（子查询场景下外层 db 可能指向其他表）
+	// 3. 调用 BuildQuery() 获取闭包并应用条件
+	session := db.Session(&gorm.Session{NewDB: true}).Model(getModelInstance[T]())
 	if err := q.GetError(); err != nil {
 		// 将 builder 错误注入 DB 链，确保后续 GORM 操作返回该错误而非执行错误 SQL
 		_ = session.AddError(err)
@@ -304,6 +305,48 @@ func (q *Query[T]) NotIn(col any, val any) *Query[T] {
 // OrNotIn 不包含(或)
 func (q *Query[T]) OrNotIn(col any, val any) *Query[T] {
 	return q.addCond(true, col, OpNotIn, val)
+}
+
+// InSub IN 子查询：col IN (subquery)。
+//
+// sub 必须为类型安全 *Query[X]；外部冒名实现被 gplusSubquery() guard 阻止。
+// sub 应在传入前完成构建（包括 Select/Where/DataRuleBuilder），传入后再修改会
+// 反映到最终 SQL（延迟调用语义）。
+//
+// sub 中需用 Select(&col) 限定单列；否则 GORM 运行时报多列错误。
+func (q *Query[T]) InSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpIn, sub)
+}
+
+// OrInSub IN 子查询(或)。详见 InSub。
+func (q *Query[T]) OrInSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpIn, sub)
+}
+
+// NotInSub NOT IN 子查询。详见 InSub。
+func (q *Query[T]) NotInSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(false, col, OpNotIn, sub)
+}
+
+// OrNotInSub NOT IN 子查询(或)。详见 InSub。
+func (q *Query[T]) OrNotInSub(col any, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	return q.addCond(true, col, OpNotIn, sub)
 }
 
 // IsNull 为空
