@@ -137,12 +137,39 @@ func TestUpdater_NotInSub_RealUpdate(t *testing.T) {
 	}
 }
 
-// TestUpdater_InSub_NilSub 验证 sub == nil 错误。
-func TestUpdater_InSub_NilSub(t *testing.T) {
+// TestUpdater_AllSub_NilSub 表驱动覆盖 16 个 Updater 子查询方法的 nil sub 错误路径。
+func TestUpdater_AllSub_NilSub(t *testing.T) {
 	ctx := context.Background()
-	u, m := NewUpdater[UserWithDelete](ctx)
-	u.InSub(&m.ID, nil)
-	if u.GetError() == nil {
-		t.Fatalf("expected error, got nil")
+
+	tests := []struct {
+		name  string
+		apply func(u *Updater[UserWithDelete], m *UserWithDelete)
+	}{
+		{"InSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.InSub(&m.ID, nil) }},
+		{"OrInSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrInSub(&m.ID, nil) }},
+		{"NotInSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.NotInSub(&m.ID, nil) }},
+		{"OrNotInSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrNotInSub(&m.ID, nil) }},
+		{"EqSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.EqSub(&m.Age, nil) }},
+		{"OrEqSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrEqSub(&m.Age, nil) }},
+		{"NeSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.NeSub(&m.Age, nil) }},
+		{"OrNeSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrNeSub(&m.Age, nil) }},
+		{"GtSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.GtSub(&m.Age, nil) }},
+		{"OrGtSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrGtSub(&m.Age, nil) }},
+		{"GteSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.GteSub(&m.Age, nil) }},
+		{"OrGteSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrGteSub(&m.Age, nil) }},
+		{"LtSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.LtSub(&m.Age, nil) }},
+		{"OrLtSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrLtSub(&m.Age, nil) }},
+		{"LteSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.LteSub(&m.Age, nil) }},
+		{"OrLteSub", func(u *Updater[UserWithDelete], m *UserWithDelete) { u.OrLteSub(&m.Age, nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, m := NewUpdater[UserWithDelete](ctx)
+			tt.apply(u, m)
+			if u.GetError() == nil {
+				t.Fatalf("expected error for nil sub, got nil")
+			}
+		})
 	}
 }
