@@ -540,3 +540,157 @@ func (u *Updater[T]) Clear() {
 	u.errs = u.errs[:0:0]
 	u.dataRuleApplied = false
 }
+
+// --- 子查询条件 ---
+
+// InSub IN 子查询：col IN (subquery)。
+// sub 须为本包创建的 *Query[X]（满足 Subquerier 接口）。
+// 参见 Query.InSub。
+func (u *Updater[T]) InSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpIn, sub)
+}
+
+// OrInSub IN 子查询(或)。
+func (u *Updater[T]) OrInSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpIn, sub)
+}
+
+// NotInSub NOT IN 子查询。
+//
+// 注意 MySQL ERROR 1093：UPDATE 同表 IN 子查询限制（如
+//
+//	UPDATE users WHERE id IN (SELECT id FROM users WHERE x)
+//
+// 报错）。可改写为 JOIN UPDATE 或子查询包一层临时表。
+func (u *Updater[T]) NotInSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpNotIn, sub)
+}
+
+// OrNotInSub NOT IN 子查询(或)。
+func (u *Updater[T]) OrNotInSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpNotIn, sub)
+}
+
+// EqSub = 子查询。
+func (u *Updater[T]) EqSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpEq, sub)
+}
+
+// OrEqSub = 子查询(或)。
+func (u *Updater[T]) OrEqSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpEq, sub)
+}
+
+// NeSub <> 子查询。
+func (u *Updater[T]) NeSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpNe, sub)
+}
+
+// OrNeSub <> 子查询(或)。
+func (u *Updater[T]) OrNeSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpNe, sub)
+}
+
+// GtSub > 子查询。
+func (u *Updater[T]) GtSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpGt, sub)
+}
+
+// OrGtSub > 子查询(或)。
+func (u *Updater[T]) OrGtSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpGt, sub)
+}
+
+// GteSub >= 子查询。
+func (u *Updater[T]) GteSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpGe, sub)
+}
+
+// OrGteSub >= 子查询(或)。
+func (u *Updater[T]) OrGteSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpGe, sub)
+}
+
+// LtSub < 子查询。
+func (u *Updater[T]) LtSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpLt, sub)
+}
+
+// OrLtSub < 子查询(或)。
+func (u *Updater[T]) OrLtSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpLt, sub)
+}
+
+// LteSub <= 子查询。
+func (u *Updater[T]) LteSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(false, col, OpLe, sub)
+}
+
+// OrLteSub <= 子查询(或)。
+func (u *Updater[T]) OrLteSub(col any, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		u.errs = append(u.errs, ErrSubqueryNil)
+		return u
+	}
+	return u.addCond(true, col, OpLe, sub)
+}
