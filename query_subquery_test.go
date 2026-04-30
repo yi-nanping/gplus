@@ -476,13 +476,15 @@ func TestQuery_SubDataRule_ReuseIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToSQL failed: %v", err)
 	}
-	// 幂等：user_id=1 只出现一次（不是 user_id=1 AND user_id=1）
-	count := strings.Count(sql, `"user_id" = 1`)
+	// 幂等：DataRule 列引用必须恰好出现一次（如果两次 DataRuleBuilder 都生效，会
+	// 产生两个 user_id 条件子句）。匹配列引用形态而非具体值，避免方言/类型对值
+	// 转义形式（"1" vs 1 vs $1）的差异导致断言假性通过/失败。
+	count := strings.Count(sql, `"user_id" = `)
 	if count == 0 {
-		count = strings.Count(sql, "`user_id` = 1") // MySQL 转义
+		count = strings.Count(sql, "`user_id` = ") // MySQL 转义
 	}
-	if count > 1 {
-		t.Fatalf("DataRuleBuilder should be idempotent, got %d occurrences in SQL: %s", count, sql)
+	if count != 1 {
+		t.Fatalf("DataRuleBuilder should be idempotent (expected exactly 1 'user_id =' clause), got %d in SQL: %s", count, sql)
 	}
 }
 
