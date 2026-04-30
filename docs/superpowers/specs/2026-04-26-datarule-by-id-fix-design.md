@@ -1,19 +1,25 @@
-# Spec: DataRule by-ID 安全修复（v0.5.1 patch）
+# Spec: DataRule by-ID 安全修复（v0.6.0 minor）
 
-**日期**：2026-04-26
-**版本**：v0.5.1（patch）
-**类型**：安全 bug 修复 + 错误类型一致性
+**日期**：2026-04-26（2026-04-30 修订）
+**版本**：v0.6.0（minor，行为变更）
+**类型**：安全 bug 修复 + 行为变更
+
+## 修订记录
+
+- 2026-04-30：经 4 名专家审计后修订。范围由 5 个写方法扩展到 7 个（补 2 个读路径）；实施路线由"新增 applyDataRuleFromCtx 辅助函数"改为"复用 Query[T].DataRuleBuilder"（避免重复实现 DataRule → SQL 映射逻辑）；版本号由 v0.5.1 patch 升至 v0.6.0 minor（行为变更）；ToUpdateSQL nil 错误改用 `fmt.Errorf("%w", ErrQueryNil)` wrap 保持 errors.Is 双向兼容。
 
 ## 背景与问题
 
-v0.2.0 修复了 `UpdateByCondTx` / `DeleteByCondTx` 未应用 `DataRule` 的安全问题。但**所有"按主键写"的方法系统性遗漏了相同修复**，导致 `ctx` 中设置的数据权限规则对这条路径完全无效，存在跨租户改/删/恢复风险。
+v0.2.0 修复了 `UpdateByCondTx` / `DeleteByCondTx` 未应用 `DataRule` 的安全问题。但**所有"按主键读 / 写"的方法系统性遗漏了相同修复**，导致 `ctx` 中设置的数据权限规则对这些路径完全无效，存在跨租户读 / 改 / 删 / 恢复风险。
 
-读路径已应用 DataRule（`GetById` 在 `repository.go:230` 调用 `DataRuleBuilder`），写路径不应用，造成读写权限不对称。
+读路径 List/GetOne/Page/Count/Exists/Last 已经在 `q.DataRuleBuilder().GetError()` 处应用 DataRule（参考 `repository.go:230` `ExistsTx`）；但 `GetByIdTx` / `GetByIdsTx` 路径直接走 `db.First(&data, id)`，未经过 `Query[T]`，DataRule 完全未应用。这造成读路径自身的不对称（"按条件读"安全 vs "按主键读"不安全），加上写路径的 5 个 by-ID 方法，构成完整的安全裂缝。
 
-### 受影响的方法
+### 受影响的方法（共 7 个）
 
 | 文件:行号 | 方法 | 攻击模型 |
 |---|---|---|
+| `repository.go:170` | `GetByIdTx` | **读**：攻击者猜 ID 跨租户读取记录 |
+| `repository.go:870`（实际行号实施时核对） | `GetByIdsTx` | **读**：批量猜 ID 跨租户读 |
 | `repository.go:421-447` | `UpdateByIdTx` | 攻击者构造 entity 含其他租户 ID，UPDATE 跨越租户 |
 | `repository.go:728-742` | `UpdateByIdsTx` | 批量传入跨租户 ID，全部命中 |
 | `repository.go:518-521` | `DeleteByIdTx` | 单 ID 跨租户 DELETE |
@@ -26,85 +32,179 @@ v0.2.0 修复了 `UpdateByCondTx` / `DeleteByCondTx` 未应用 `DataRule` 的安
 
 ## 设计
 
-### 共享辅助函数
+### 实施路线：复用 `Query[T].DataRuleBuilder`（方案 D）
 
-新增 `applyDataRuleFromCtx`，把 ctx 中 `DataRuleKey` 提取的 `[]DataRule` 追加为 `db.Where`：
+不新增独立辅助函数。每个方法内部构造一个临时 `Query[T]`，复用现有 `DataRuleBuilder` 链路：
 
 ```go
-// 位置：repository.go（私有方法）
-func (r *Repository[D, T]) applyDataRuleFromCtx(ctx context.Context, db *gorm.DB) (*gorm.DB, error)
+// 模板：所有 7 个方法的统一改造模式
+q, _ := NewQuery[T](ctx)
+if err := q.DataRuleBuilder().GetError(); err != nil {
+    return /* zero value */, err
+}
+// 把 q.BuildXxx() 作为 scope 套到原 db 上：
+db := r.dbResolver(ctx, tx).Scopes(q.BuildDelete()) // 或 BuildUpdate / BuildQuery
+result := db.Delete(new(T), id) // 或 First / Updates 等
 ```
 
-实现要点：
-- 从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule`，无规则时直接返回原 `db`
-- 复用 `builder.go` 现有 `validDataRuleColumn` 白名单正则做列名校验
-- 校验失败返回错误（与 `Query.DataRuleBuilder.GetError()` 行为一致）
-- 通过反射 `Statement.Parse(new(T))` 拿到表名做 `tableName.column = ?` 限定，避免与 join 列重名冲突
+**为什么选方案 D**（4 位专家中 architect 强烈推荐）：
 
-可考虑在 `builder.go` 中提取一个共享内部函数 `extractDataRules(ctx) ([]DataRule, error)`，被 `Query.DataRuleBuilder` 与 `applyDataRuleFromCtx` 共用，避免逻辑重复。
+- **单一真相源**：DataRule → SQL 映射逻辑只存在于 `query.go:applyDataRule` 一处，by-Cond 路径与 by-ID 路径共享，避免重复维护
+- **未来不遗漏**：新增 by-ID 写方法只需"构造 Query[T] 即免费获得 DataRule"，不会重蹈本次系统性遗漏的覆辙
+- **零反射额外开销**：原 spec 提议 `Statement.Parse(new(T))` 拿表名做 `tableName.column = ?` 限定，但现有 `applyDataRule` 不做此限定（直接传裸列名），by-ID 写路径无 join、不会有列名冲突，反射纯属过度设计
+- **复用已审计的白名单 / 错误模型**：`validDataRuleColumn` 正则、`SQL`/`USE_SQL_RULES` 黑名单、错误聚合到 `q.errs` 已经过 7 轮审计稳定
 
-### 5 处改动模板
+### Updater 路径无需改造
 
-每个方法改造模式一致：
+`UpdateByIdsTx` 接受 `*Updater[T]` 参数，但 DataRule 走的是临时 Query，不依赖 Updater 是否实现 `DataRuleBuilder`。两个 scope 用 `db.Scopes(q.BuildUpdate(), u.BuildUpdate())` 串联即可。
 
+### 7 处改动（具体代码模板）
+
+#### 1. GetByIdTx
+```go
+func (r *Repository[D, T]) GetByIdTx(ctx context.Context, id D, tx *gorm.DB) (data T, err error) {
+    q, _ := NewQuery[T](ctx)
+    if err = q.DataRuleBuilder().GetError(); err != nil {
+        return
+    }
+    err = r.dbResolver(ctx, tx).Scopes(q.BuildQuery()).First(&data, id).Error
+    return
+}
+```
+
+#### 2. GetByIdsTx
+（结构同上，`Find(&data, ids)` 替换 `First`）
+
+#### 3. DeleteByIdTx
 ```go
 func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) (int64, error) {
-    db, err := r.applyDataRuleFromCtx(ctx, r.dbResolver(ctx, tx))
-    if err != nil {
+    q, _ := NewQuery[T](ctx)
+    if err := q.DataRuleBuilder().GetError(); err != nil {
         return 0, err
     }
-    result := db.Delete(new(T), id)
+    result := r.dbResolver(ctx, tx).Scopes(q.BuildDelete()).Delete(new(T), id)
     return result.RowsAffected, result.Error
 }
 ```
 
-对 `UpdateByIdTx`（含乐观锁路径）：在 `db := r.dbResolver(ctx, tx)` 后立即套 `applyDataRuleFromCtx`，再分支进入乐观锁或普通 Updates，确保两条路径都受 DataRule 约束。
+#### 4. DeleteByIdsTx
+（结构同 3，`Delete(new(T), ids)`）
 
-### debug.go 改动
+#### 5. UpdateByIdTx（乐观锁路径 + 普通路径都套）
+```go
+func (r *Repository[D, T]) UpdateByIdTx(ctx context.Context, entity *T, tx *gorm.DB) error {
+    q, _ := NewQuery[T](ctx)
+    if err := q.DataRuleBuilder().GetError(); err != nil {
+        return err
+    }
+    baseDB := r.dbResolver(ctx, tx).Scopes(q.BuildUpdate())
+
+    vInfo := getVersionField[T]()
+    if vInfo == nil {
+        return baseDB.Model(entity).Updates(entity).Error
+    }
+    // 乐观锁路径：DataRule WHERE 与 version WHERE 用 AND 串联
+    // ...保持原有 buildUpdateMap / Where(version=?) 逻辑，把 db 替换为 baseDB
+}
+```
+
+#### 6. UpdateByIdsTx
+```go
+func (r *Repository[D, T]) UpdateByIdsTx(ctx context.Context, ids []D, u *Updater[T], tx *gorm.DB) (int64, error) {
+    if len(ids) == 0 {
+        return 0, nil
+    }
+    if u == nil || u.IsEmpty() {
+        return 0, ErrUpdateEmpty
+    }
+    if err := u.GetError(); err != nil {
+        return 0, err
+    }
+    q, _ := NewQuery[T](ctx)
+    if err := q.DataRuleBuilder().GetError(); err != nil {
+        return 0, err
+    }
+    var model T
+    db := r.dbResolver(ctx, tx).Model(&model).Where(ids).Scopes(q.BuildUpdate(), u.BuildUpdate())
+    result := db.Updates(u.setMap)
+    return result.RowsAffected, result.Error
+}
+```
+
+#### 7. RestoreTx（保留 Unscoped）
+```go
+func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (int64, error) {
+    q, _ := NewQuery[T](ctx)
+    if err := q.DataRuleBuilder().GetError(); err != nil {
+        return 0, err
+    }
+    baseDB := r.dbResolver(ctx, tx).Scopes(q.BuildUpdate())
+    // ...保持原有 stmt.Parse / DeleteClausesInterface 查找软删除字段逻辑，把 db 替换为 baseDB
+}
+```
+
+### debug.go 改动（保持双向 errors.Is 兼容）
 
 ```go
 func (r *Repository[D, T]) ToUpdateSQL(u *Updater[T]) (string, error) {
     if u == nil {
-        return "", ErrUpdateEmpty  // 由 ErrQueryNil 改为 ErrUpdateEmpty
+        return "", fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)
     }
     return u.ToSQL(r.db)
 }
 ```
 
+`fmt.Errorf` 的 `%w` 双 wrap（Go 1.20+）让 `errors.Is(err, ErrUpdateEmpty)` 和 `errors.Is(err, ErrQueryNil)` 同时返回 true，兼顾"错误类型一致"和"不破坏依赖 ErrQueryNil 的旧调用方"。
+
 ## 测试策略
 
-新建 `repo_datarule_byid_test.go`，6 个表驱动子测试：
+新建 `repo_datarule_byid_test.go`，专用测试模型 `tenantUser`（不污染 `UserWithDelete`）：
 
-1. **TestDataRule_UpdateById_Blocked** — 设置 `DataRule{Column:"tenant_id", Value:1}`，对 `tenant_id=2` 的记录调用 `UpdateById`，断言 `affected == 0` 且记录未变更
-2. **TestDataRule_UpdateByIds_Blocked** — `[]uint{ownTenantID, otherTenantID}`，断言只有 `ownTenantID` 被改
-3. **TestDataRule_DeleteById_Blocked** — 跨租户 `DeleteById`，断言记录仍存在
-4. **TestDataRule_DeleteByIds_Blocked** — 混合 ID 列表，断言只删除了同租户记录
-5. **TestDataRule_Restore_Blocked** — 跨租户 `Restore` 软删除记录，断言 `deleted_at` 未恢复
-6. **TestToUpdateSQL_NilReturnsErrUpdateEmpty** — `errors.Is(err, ErrUpdateEmpty)` 通过
+```go
+type tenantUser struct {
+    ID        uint           `gorm:"primaryKey;autoIncrement"`
+    Name      string         `gorm:"size:64"`
+    TenantID  int            `gorm:"index;column:tenant_id"`
+    DeletedAt gorm.DeletedAt
+}
+```
 
-每个测试用 `setupAdvancedDB(t)` 创建带 `tenant_id` 的临时模型，预插两租户数据，断言行级隔离。
+8 个表驱动子测试：
+
+1. **TestDataRule_GetById_Blocked** — 跨租户 GetById 应返回 `gorm.ErrRecordNotFound`
+2. **TestDataRule_GetByIds_Blocked** — 混合 ID 列表，断言只读到同租户记录
+3. **TestDataRule_UpdateById_Blocked** — 跨租户 UpdateById，断言 `ErrOptimisticLock`（无 version 字段时为 `affected==0`，需在 tenantUser 中放一个版本字段子测试）或字段未变更
+4. **TestDataRule_UpdateByIds_Blocked** — 混合 ID 列表，断言只有同租户被改
+5. **TestDataRule_DeleteById_Blocked** — 跨租户 DeleteById，断言记录仍存在
+6. **TestDataRule_DeleteByIds_Blocked** — 混合 ID 列表，断言只删了同租户
+7. **TestDataRule_Restore_Blocked** — 跨租户 Restore 软删记录，断言 `deleted_at` 未恢复
+8. **TestToUpdateSQL_NilDoubleWrap** — `errors.Is(err, ErrUpdateEmpty)` 和 `errors.Is(err, ErrQueryNil)` 同时为 true
+
+每个测试预插两个租户的数据，断言行级隔离。无 DataRule 的 ctx 路径行为不变（已被现有测试覆盖）。
 
 ## 兼容性
 
-- **纯增强**：现有测试无需改动，所有未使用 DataRule 的调用路径行为不变
-- `applyDataRuleFromCtx` 检测 `ctx` 无 `DataRuleKey` 或规则切片为空时立即返回原 `db`，零额外开销
-- 错误返回类型改动（`ToUpdateSQL` nil 路径）属于"修正未文档化的内部不一致"，调用方若误依赖 `ErrQueryNil` 极少见，CHANGELOG 标注 fix
+- **行为变更**：依赖"by-ID 路径不受 DataRule 约束"的下游代码升级后会静默改变行为（affected/查回的记录可能变成 0）。这是依赖未文档化 bug 的代码，本质是安全修复，但 SemVer 上属 minor 行为变更，故升 v0.6.0
+- `applyDataRule` 检测 ctx 为 nil 或无 `DataRuleKey` 时直接返回，零额外开销
+- `ToUpdateSQL(nil)` 改 wrap 保持 `errors.Is(err, ErrQueryNil)` 仍为 true，旧调用方零影响
 
 ## 风险
 
 | 风险 | 缓解 |
 |---|---|
 | 表无 DataRule.Column 指定的列 | 与 v0.2.0 by-Cond 修复行为一致：SQL 执行期报错，文档已说明 |
-| 乐观锁路径与 DataRule 叠加产生意外 affected=0 | 测试覆盖：`affected == 0` 时区分 `ErrOptimisticLock`（命中但版本不匹配）与 DataRule 拦截（根本未命中）。当前两者都返回 `ErrOptimisticLock`，文档需补一条说明 |
-| 行为变更打破依赖"by-ID 不应用 DataRule"的下游代码 | 这是**安全修复**，非破坏性兼容性变更——下游若依赖此行为是依赖未文档化的 bug |
+| 乐观锁路径与 DataRule 叠加产生意外 affected=0 | DataRule 拦截（记录存在但租户不匹配）和版本冲突（命中但 version 不匹配）当前都返回 `ErrOptimisticLock`，调用方无法区分。本期 godoc 中明确说明"启用 DataRule 时 affected=0 不应无条件重试"。`ErrDataRuleBlocked` 区分留待未来版本（需要额外查询，开销不值） |
+| 临时 `Query[T]` 的零分配 | 每次 by-ID 调用多构造一个 `Query[T]{conditions: make([]condition, 0, 8), errs: make([]error, 0, 8)}`，约 200 字节栈/堆混合分配。基准测试在 verification 阶段验证开销可接受 |
 
 ## 发布计划
 
-- v0.5.1 patch 版本
-- CHANGELOG 单独条目说明 5 处方法的安全修复
-- README 安装命令版本号同步到 v0.5.1
+- v0.6.0 minor 版本
+- CHANGELOG 单独条目说明 7 处方法的安全修复 + 行为变更警示
+- README 安装命令版本号同步到 v0.6.0
 - 单独 git tag
 
 ## 后续不在本期范围
 
-- INSERT 系列（Save / SaveBatch / Upsert / UpsertBatch / InsertOnConflict / InsertBatchOnConflict）的 DataRule 处理。需独立设计 auto-fill 机制（mybatis-plus 拦截器风格）。该项作为未来候选 feature，不在 v0.5.1 范围
+- INSERT 系列（Save / SaveBatch / Upsert / UpsertBatch / InsertOnConflict / InsertBatchOnConflict）的 DataRule 处理。DataRule 是 WHERE 过滤器，对 INSERT 无意义；INSERT 路径的"跨租户写入"风险需要的是**字段 auto-fill**（mybatis-plus `MetaObjectHandler` 风格），机制不同，单独立项
+- `ErrDataRuleBlocked` 错误类型区分（避免与 `ErrOptimisticLock` 混淆），需要在 affected==0 时额外查询，开销不值得本期引入
+- IncrByTx / DecrByTx / FirstOrCreate / FirstOrUpdate 已经走 Updater.DataRuleBuilder 或 Query.DataRuleBuilder，本次范围外但已安全
