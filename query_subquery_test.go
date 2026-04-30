@@ -520,3 +520,63 @@ func TestQuery_SubDataRule_ReverseRegression(t *testing.T) {
 		t.Fatalf("ToDB without explicit DataRuleBuilder must NOT apply DataRule, got outer SQL: %s", sql)
 	}
 }
+
+// TestQuery_SubSession_Isolation 同一 sub 传给两个外层 query → 两条最终 SQL 互相独立。
+// 不断言内部 Session 参数（不可观测），改为对比可观测 SQL 形态。
+func TestQuery_SubSession_Isolation(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	subQ, order := NewQuery[Order](ctx)
+	subQ.Select(&order.UserID)
+
+	q1, u1 := NewQuery[UserWithDelete](ctx)
+	q1.Eq(&u1.Age, 100).InSub(&u1.ID, subQ)
+
+	q2, u2 := NewQuery[UserWithDelete](ctx)
+	q2.Eq(&u2.Age, 200).InSub(&u2.ID, subQ)
+
+	sql1, err1 := q1.ToSQL(db)
+	if err1 != nil {
+		t.Fatalf("q1.ToSQL: %v", err1)
+	}
+	sql2, err2 := q2.ToSQL(db)
+	if err2 != nil {
+		t.Fatalf("q2.ToSQL: %v", err2)
+	}
+
+	if !strings.Contains(sql1, "100") || strings.Contains(sql1, "200") {
+		t.Fatalf("sql1 should contain only outer cond 100, got: %s", sql1)
+	}
+	if !strings.Contains(sql2, "200") || strings.Contains(sql2, "100") {
+		t.Fatalf("sql2 should contain only outer cond 200, got: %s", sql2)
+	}
+}
+
+// TestQuery_NestedSubquery 子查询内嵌套子查询。
+func TestQuery_NestedSubquery(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	ctx := context.Background()
+
+	// 内层：所有 Amount=100 的 user_id
+	innerSub, order1 := NewQuery[Order](ctx)
+	innerSub.Select(&order1.UserID).Eq(&order1.Amount, 100)
+
+	// 中层：user_id 在 innerSub 内的所有 Order
+	midSub, order2 := NewQuery[Order](ctx)
+	midSub.Select(&order2.UserID).InSub(&order2.UserID, innerSub)
+
+	// 外层：id 在 midSub 内的 user
+	q, u := NewQuery[UserWithDelete](ctx)
+	q.InSub(&u.ID, midSub)
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL failed: %v", err)
+	}
+	// 嵌套：SELECT 子查询应出现两次
+	count := strings.Count(strings.ToUpper(sql), "SELECT")
+	if count < 3 {
+		t.Fatalf("expected >= 3 SELECT (outer + 2 nested subqueries), got %d in: %s", count, sql)
+	}
+}
