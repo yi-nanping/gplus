@@ -1,6 +1,10 @@
 package gplus
 
-import "gorm.io/gorm"
+import (
+	"fmt"
+
+	"gorm.io/gorm"
+)
 
 // ToSQL 将当前查询转换为 SELECT SQL 字符串，不执行实际查询。
 // 返回的 SQL 已将参数内联，仅用于调试展示，不可直接作为参数化查询使用。
@@ -82,7 +86,7 @@ func (r *Repository[D, T]) ToCountSQL(q *Query[T]) (string, error) {
 // ToUpdateSQL 将更新操作转换为 UPDATE SQL 字符串，使用 Repository 内部的 DB，不执行实际查询。
 func (r *Repository[D, T]) ToUpdateSQL(u *Updater[T]) (string, error) {
 	if u == nil {
-		return "", ErrQueryNil
+		return "", fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)
 	}
 	return u.ToSQL(r.db)
 }

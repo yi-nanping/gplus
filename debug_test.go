@@ -2,6 +2,7 @@ package gplus
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -198,5 +199,20 @@ func TestQuery_ToSQL_DataRule(t *testing.T) {
 	}
 	if !strings.Contains(sql, "Alice") {
 		t.Errorf("ToSQL 应包含原有条件值 Alice，实际: %s", sql)
+	}
+}
+
+func TestToUpdateSQL_NilDoubleWrap(t *testing.T) {
+	repo := &Repository[int64, struct{}]{}
+	_, err := repo.ToUpdateSQL(nil)
+	if err == nil {
+		t.Errorf("ToUpdateSQL(nil) 应返回错误，实际: nil")
+		return
+	}
+	if !errors.Is(err, ErrUpdateEmpty) {
+		t.Errorf("期望 errors.Is(err, ErrUpdateEmpty) == true，实际: false")
+	}
+	if !errors.Is(err, ErrQueryNil) {
+		t.Errorf("期望 errors.Is(err, ErrQueryNil) == true，实际: false")
 	}
 }
