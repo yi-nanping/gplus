@@ -323,6 +323,22 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 				continue
 			}
 
+			// --- Subquerier 子查询（延迟调用） ---
+			// 用户层 InSub/EqSub 等方法把 Subquerier 接口存进 cond.value；
+			// 外层 db 可用时调 sub.ToDB(d) 转为 *gorm.DB，sub.GetError() 由 ToDB
+			// 内部 session.AddError 经 GORM 错误链传播。
+			if sub, ok := cond.value.(Subquerier); ok {
+				subDB := sub.ToDB(d)
+				quotedCol := quoteColumn(cond.expr, qL, qR)
+				sqlStr := fmt.Sprintf("%s %s (?)", quotedCol, cond.operator)
+				if cond.isOr {
+					d = d.Or(sqlStr, subDB)
+				} else {
+					d = d.Where(sqlStr, subDB)
+				}
+				continue
+			}
+
 			// ---子查询核心逻辑 ---
 			// 检查 cond.value 是否为 *gorm.DB 类型 (即子查询对象)
 			if subQuery, ok := cond.value.(*gorm.DB); ok {

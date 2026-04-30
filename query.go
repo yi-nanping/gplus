@@ -783,3 +783,6 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 		))
 	}
 }
+
+// gplusSubquery 私有 guard 方法，阻止外部包冒名实现 Subquerier 接口。
+func (q *Query[T]) gplusSubquery() {}

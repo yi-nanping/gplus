@@ -23,6 +23,7 @@ var (
 	ErrRestoreEmpty      = errors.New("gplus: restore condition is empty")
 	ErrOnConflictInvalid = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
 	ErrOptimisticLock    = errors.New("gplus: optimistic lock conflict (version mismatch or row not found)")
+	ErrSubqueryNil       = errors.New("gplus: subquery is nil")
 )
 
 // OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
