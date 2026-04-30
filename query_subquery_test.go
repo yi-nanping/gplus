@@ -352,3 +352,169 @@ func TestQuery_InSub_DeferredSemantics(t *testing.T) {
 		t.Fatalf("expected SQL to contain 999 (deferred semantics), got: %s", sql)
 	}
 }
+
+// ─── DataRule × 子查询交互 ──────────────────────────────────────────────────
+
+// TestQuery_SubDataRule_Default_NotApplied 验证 sub.ToDB() 默认不应用 DataRule。
+// 锁定 query.go ToDB 不调 DataRuleBuilder 的既有语义。
+func TestQuery_SubDataRule_Default_NotApplied(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+
+	ctxWithRule := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "user_id", Condition: "=", Value: "999"},
+	})
+
+	subQ, order := NewQuery[Order](ctxWithRule)
+	subQ.Select(&order.UserID)
+
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.InSub(&u.ID, subQ)
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL failed: %v", err)
+	}
+	// 默认 sub 不应用 DataRule，SQL 中不应出现 999
+	if strings.Contains(sql, "999") {
+		t.Fatalf("default sub.ToDB should NOT apply DataRule, got SQL: %s", sql)
+	}
+}
+
+// TestQuery_SubDataRule_Explicit_Applied 验证显式 sub.DataRuleBuilder().ToDB() 应用 DataRule。
+func TestQuery_SubDataRule_Explicit_Applied(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+
+	ctxWithRule := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "user_id", Condition: "=", Value: "999"},
+	})
+
+	subQ, order := NewQuery[Order](ctxWithRule)
+	subQ.Select(&order.UserID).DataRuleBuilder() // 显式应用
+
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.InSub(&u.ID, subQ)
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL failed: %v", err)
+	}
+	if !strings.Contains(sql, "999") {
+		t.Fatalf("explicit DataRuleBuilder should apply, got SQL: %s", sql)
+	}
+}
+
+// TestQuery_SubDataRule_OuterOnly 外层有 DataRule、子查询无 DataRule。
+func TestQuery_SubDataRule_OuterOnly(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+
+	ctxOuter := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "age", Condition: "=", Value: "18"},
+	})
+
+	subQ, order := NewQuery[Order](context.Background()) // 子查询无 DataRule
+	subQ.Select(&order.UserID)
+
+	q, u := NewQuery[UserWithDelete](ctxOuter)
+	q.InSub(&u.ID, subQ).DataRuleBuilder() // 外层应用
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL failed: %v", err)
+	}
+	if !strings.Contains(sql, "18") {
+		t.Fatalf("outer DataRule should apply to outer SQL, got: %s", sql)
+	}
+}
+
+// TestQuery_SubDataRule_ColumnNotInSubTable 子查询表无 DataRule 列时与现状一致行为。
+// DataRule 列 "age" 在 Order 表上不存在（Order 只有 id/user_id/amount/remark）。
+// 显式应用 DataRuleBuilder 后，SQLite 宽容模式下不报错但子查询返回空集，
+// 导致外层结果也为空（0 行）。测试锁定这一"无错误、空结果"的现状行为。
+func TestQuery_SubDataRule_ColumnNotInSubTable(t *testing.T) {
+	repo, db := setupAdvancedDB(t)
+
+	// 写入用户和订单
+	db.Create(&UserWithDelete{Name: "Alice", Age: 20})
+	db.Create(&Order{UserID: 1, Amount: 100})
+
+	ctxWithRule := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "age", Condition: "=", Value: "18"},
+	})
+
+	subQ, order := NewQuery[Order](ctxWithRule)
+	subQ.Select(&order.UserID).DataRuleBuilder() // 显式应用 → SQL 引用 Order 表上不存在的列
+
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.InSub(&u.ID, subQ)
+
+	results, err := repo.List(q)
+	// SQLite 宽容模式下不报 "no such column"，子查询返回空集，外层也返回 0 行
+	// 锁定现状：无错误 + 结果为空
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results (sub DataRule on non-existent column returns empty set), got %d", len(results))
+	}
+}
+
+// TestQuery_SubDataRule_ReuseIdempotent 同一 sub 多次调 DataRuleBuilder 应幂等。
+func TestQuery_SubDataRule_ReuseIdempotent(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+
+	ctxWithRule := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "user_id", Condition: "=", Value: "1"},
+	})
+
+	subQ, order := NewQuery[Order](ctxWithRule)
+	subQ.Select(&order.UserID).DataRuleBuilder().DataRuleBuilder() // 调两次
+
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.InSub(&u.ID, subQ)
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL failed: %v", err)
+	}
+	// 幂等：user_id=1 只出现一次（不是 user_id=1 AND user_id=1）
+	count := strings.Count(sql, `"user_id" = 1`)
+	if count == 0 {
+		count = strings.Count(sql, "`user_id` = 1") // MySQL 转义
+	}
+	if count > 1 {
+		t.Fatalf("DataRuleBuilder should be idempotent, got %d occurrences in SQL: %s", count, sql)
+	}
+}
+
+// TestQuery_SubDataRule_ReverseRegression 反向回归：构造带 DataRule 的 ctx，调 sub.ToDB(db)，
+// 断言 ToDB 未将 dataRuleApplied 置为 true，即 ToDB 本身不触发 DataRuleBuilder。
+// 防止未来 contributor 给 ToDB 加隐式 DataRuleBuilder 调用而破坏既有安全契约。
+func TestQuery_SubDataRule_ReverseRegression(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+
+	ctxWithRule := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "user_id", Condition: "=", Value: "999"},
+	})
+
+	subQ, order := NewQuery[Order](ctxWithRule)
+	subQ.Select(&order.UserID)
+
+	// 调 ToDB — 如果它内部调了 DataRuleBuilder，dataRuleApplied 会变为 true
+	subQ.ToDB(db)
+
+	// 反向锁定：ToDB 不应将 dataRuleApplied 置为 true
+	if subQ.dataRuleApplied {
+		t.Fatalf("ToDB must NOT call DataRuleBuilder internally; dataRuleApplied should remain false after ToDB")
+	}
+
+	// 进一步验证：通过外层 SQL 观察子查询中不含 DataRule 条件（与 Default_NotApplied 互补）
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.InSub(&u.ID, subQ)
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("outer ToSQL failed: %v", err)
+	}
+	if strings.Contains(sql, "999") {
+		t.Fatalf("ToDB without explicit DataRuleBuilder must NOT apply DataRule, got outer SQL: %s", sql)
+	}
+}
