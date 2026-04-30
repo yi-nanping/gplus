@@ -6,7 +6,8 @@
 
 ## 修订记录
 
-- 2026-04-30：经 4 名专家审计后修订。范围由 5 个写方法扩展到 7 个（补 2 个读路径）；实施路线由"新增 applyDataRuleFromCtx 辅助函数"改为"复用 Query[T].DataRuleBuilder"（避免重复实现 DataRule → SQL 映射逻辑）；版本号由 v0.5.1 patch 升至 v0.6.0 minor（行为变更）；ToUpdateSQL nil 错误改用 `fmt.Errorf("%w", ErrQueryNil)` wrap 保持 errors.Is 双向兼容。
+- 2026-04-30 第一轮：经 4 名专家审计后修订。范围由 5 个写方法扩展到 7 个（补 2 个读路径）；实施路线由"新增 applyDataRuleFromCtx 辅助函数"改为"复用 Query[T].DataRuleBuilder"（避免重复实现 DataRule → SQL 映射逻辑）；版本号由 v0.5.1 patch 升至 v0.6.0 minor（行为变更）；ToUpdateSQL nil 错误改用 `fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)` 双 %w wrap 保持 errors.Is 双向兼容（Go 1.20+ 多 wrap 语法，本项目 go 1.24 可用）。
+- 2026-04-30 第二轮：3 位专家复审后补强。明确 `debug.go` 须新增 `fmt` import；测试 setup 须自建 `setupTenantDB`（不复用 `setupTestDB[T]`，因主键类型硬编码 int64 与 tenantUser.ID uint 不兼容）；测试增加 2 个子测试场景（非法 DataRule column 触发 error、无 DataRule ctx 零影响回归）；godoc 须显式警示"启用 DataRule 时 affected=0 不应无条件重试"。
 
 ## 背景与问题
 
@@ -146,6 +147,11 @@ func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (in
 ### debug.go 改动（保持双向 errors.Is 兼容）
 
 ```go
+import (
+    "fmt"  // 需新增此 import，当前 debug.go 仅 import "gorm.io/gorm"
+    "gorm.io/gorm"
+)
+
 func (r *Repository[D, T]) ToUpdateSQL(u *Updater[T]) (string, error) {
     if u == nil {
         return "", fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)
@@ -154,7 +160,7 @@ func (r *Repository[D, T]) ToUpdateSQL(u *Updater[T]) (string, error) {
 }
 ```
 
-`fmt.Errorf` 的 `%w` 双 wrap（Go 1.20+）让 `errors.Is(err, ErrUpdateEmpty)` 和 `errors.Is(err, ErrQueryNil)` 同时返回 true，兼顾"错误类型一致"和"不破坏依赖 ErrQueryNil 的旧调用方"。
+`fmt.Errorf` 的 `%w` 双 wrap（Go 1.20+）让 `errors.Is(err, ErrUpdateEmpty)` 和 `errors.Is(err, ErrQueryNil)` 同时返回 true，兼顾"错误类型一致"和"不破坏依赖 ErrQueryNil 的旧调用方"。错误信息文案为 `"gplus: update content is empty: gplus: query cannot be nil"`，前缀冗余但语义清晰，不再优化以避免破坏 `errors.Is` 行为。
 
 ## 测试策略
 
@@ -162,25 +168,54 @@ func (r *Repository[D, T]) ToUpdateSQL(u *Updater[T]) (string, error) {
 
 ```go
 type tenantUser struct {
-    ID        uint           `gorm:"primaryKey;autoIncrement"`
+    ID        int64          `gorm:"primaryKey;autoIncrement"` // int64 与现有 setupTestDB[T] 的 D=int64 兼容；但仍自建 setupTenantDB 避免依赖
     Name      string         `gorm:"size:64"`
     TenantID  int            `gorm:"index;column:tenant_id"`
     DeletedAt gorm.DeletedAt
 }
+
+func setupTenantDB(t *testing.T) (*Repository[int64, tenantUser], *gorm.DB) {
+    t.Helper()
+    db := openDB(t) // 复用 testdb_test.go:17 的 openDB
+    if err := db.AutoMigrate(&tenantUser{}); err != nil {
+        t.Fatalf("migrate failed: %v", err)
+    }
+    return NewRepository[int64, tenantUser](db), db
+}
+
+func ctxWithTenantRule(tenantID int) context.Context {
+    return context.WithValue(context.Background(), DataRuleKey, []DataRule{
+        {Column: "tenant_id", Condition: "=", Value: fmt.Sprintf("%d", tenantID)},
+    })
+}
 ```
 
-8 个表驱动子测试：
+10 个表驱动子测试（在原 8 个基础上补 2 个）：
 
 1. **TestDataRule_GetById_Blocked** — 跨租户 GetById 应返回 `gorm.ErrRecordNotFound`
 2. **TestDataRule_GetByIds_Blocked** — 混合 ID 列表，断言只读到同租户记录
-3. **TestDataRule_UpdateById_Blocked** — 跨租户 UpdateById，断言 `ErrOptimisticLock`（无 version 字段时为 `affected==0`，需在 tenantUser 中放一个版本字段子测试）或字段未变更
+3. **TestDataRule_UpdateById_Blocked** — 跨租户 UpdateById，断言字段未变更（无 version 字段，affected==0 直接返回 nil；本期不引入 version 测试，因 tenantUser 无 `gplus:"version"` 字段，与乐观锁路径解耦）
 4. **TestDataRule_UpdateByIds_Blocked** — 混合 ID 列表，断言只有同租户被改
 5. **TestDataRule_DeleteById_Blocked** — 跨租户 DeleteById，断言记录仍存在
 6. **TestDataRule_DeleteByIds_Blocked** — 混合 ID 列表，断言只删了同租户
 7. **TestDataRule_Restore_Blocked** — 跨租户 Restore 软删记录，断言 `deleted_at` 未恢复
 8. **TestToUpdateSQL_NilDoubleWrap** — `errors.Is(err, ErrUpdateEmpty)` 和 `errors.Is(err, ErrQueryNil)` 同时为 true
+9. **TestDataRule_ByID_InvalidColumnError** — 注入非法 column（如 `"id;DROP TABLE"`）的 DataRule，对 7 个方法每个都断言返回非 nil error 且匹配 `"data rule: invalid column"` 子串（覆盖 white-list 校验路径）
+10. **TestDataRule_ByID_NoRuleNoEffect** — ctx 中无 DataRuleKey 时，对所有 7 个方法做"行为不变"回归（GetById 能查到所有记录、DeleteById 能删除任意记录），确保改造不引入"必须有 DataRule 才能用"的回归
 
-每个测试预插两个租户的数据，断言行级隔离。无 DataRule 的 ctx 路径行为不变（已被现有测试覆盖）。
+每个测试预插两个租户的数据（tenant=1 和 tenant=2），断言行级隔离。
+
+### Godoc 验收项
+
+实施阶段须在 `UpdateByIdTx` 和 `UpdateByIdsTx` 的 doc comment 中加入：
+
+```
+// 注意：启用 DataRule 时，记录存在但跨租户会返回 affected==0（UpdateByIdTx 返回 ErrOptimisticLock），
+// 此时不应无条件重试（重试无法绕过权限）。乐观锁版本冲突与 DataRule 拦截当前共用同一错误码，
+// 调用方需通过其他途径区分（如先 GetById 检查记录是否在权限范围内）。
+```
+
+`RestoreTx` 的 doc 也须补充："启用 DataRule 时跨租户记录返回 affected==0"。
 
 ## 兼容性
 
