@@ -2,6 +2,43 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-04-30
+
+### 新增
+
+- **类型安全子查询**：消灭体系性 `WhereRaw` 子查询裂缝
+  - `Subquerier` 接口（含 `gplusSubquery()` unexported guard 阻止外部冒名实现）
+  - `Query[T]` 16 个新方法：`InSub` / `NotInSub` / `EqSub` / `NeSub` / `GtSub` / `GteSub` / `LtSub` / `LteSub` + 8 个 Or 变体
+  - `Updater[T]` 16 个新方法（同形态）
+  - 任意 `*Query[X]` 自动满足 `Subquerier`，X 可与外层 T 不同
+- `ErrSubqueryNil` sentinel：`InSub(col, nil)` 时立即追加该错误
+- `Query[T].SelectRaw(expr)`：原生 SQL SELECT 表达式，支持聚合函数（如 `AVG(age)`）和复杂表达式
+
+### 修复
+
+- `Query[T].ToDB(db)`：原本未调用 `Model(getModelInstance[T]())` 导致子查询 SQL 缺失表名
+- `builder.go applyWhere`：Subquerier 子查询分支未显式聚合 `sub.GetError()`，错误经 `Session{NewDB:true}` 切断后静默丢失；现显式 `d.AddError(sub.GetError())` 传播
+
+### 行为约束（须知）
+
+- **延迟调用语义**：`sub` 传入 `InSub` 后仍可被修改，修改会反映到最终 SQL（与现有 `q.In(col, subQ.ToDB(db))` 一致）。godoc 推荐 sub 构建完成后再传入，传入后不要修改
+- **sub.ToDB() 默认不应用 DataRule**：与 v0.5.x 既有语义保持一致；如需在子查询施加数据权限，须在传入前显式调 `sub.DataRuleBuilder()`
+- **MySQL UPDATE 同表 IN 限制（ERROR 1093）**：`Updater.InSub`/`NotInSub` 在同表子查询场景下 MySQL 报错；可改写为 JOIN UPDATE 或子查询包临时表
+
+### 测试
+
+- 新增 `query_subquery_test.go`（~600 行）+ `updater_subquery_test.go`（~180 行）+ `subquery_test.go`（接口验证）
+- 覆盖：32 方法主路径 + Or 变体 + 错误路径 + 延迟语义锁定 + DataRule 6 场景 + Session 隔离 + 嵌套子查询
+- 测试覆盖率 ≥ 96.5%
+
+### 不在本期范围
+
+- **EXISTS / NOT EXISTS**：90% 真实场景为 correlated subquery，需 v0.7.0 alias 体系到位才能消灭关联条件 WhereRaw；提前发布会强制 v0.7.0 破坏性签名变更
+- **ANY / ALL 变体**：v0.7.0 候选清单（提升优先级）
+- **SELECT 子查询 / 跨表列引用 API**：需要 alias 体系，单独立项
+
+---
+
 ## [0.5.1] - 2026-04-30
 
 ### 修复（安全）
