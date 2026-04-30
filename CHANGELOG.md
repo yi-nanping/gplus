@@ -2,6 +2,32 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.1] - 2026-04-30
+
+### 修复（安全）
+
+- **DataRule 应用到 by-ID 路径**：v0.2.0 已修复 by-Cond 路径，但 7 个 by-ID 路径系统性遗漏 DataRule 应用，存在跨租户读 / 改 / 删 / 恢复风险
+  - 影响方法：`GetById` / `GetByIdTx` / `GetByIds` / `GetByIdsTx` / `UpdateById` / `UpdateByIdTx` / `UpdateByIds` / `UpdateByIdsTx` / `DeleteById` / `DeleteByIdTx` / `DeleteByIds` / `DeleteByIdsTx` / `Restore` / `RestoreTx`（共 14 条调用路径）
+  - 修复方式：每个方法内部构造临时 `Query[T]` 调用 `DataRuleBuilder()`，与 by-Cond 路径共享同一 DataRule 处理逻辑（单一真相源），未来新增 by-ID 写方法不会再遗漏
+- **`ToUpdateSQL(nil)` 错误类型**：原返回 `ErrQueryNil`（语义属于 Query），改用 `fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)` 双 wrap，使 `errors.Is` 对两者均返回 true，与 `Updater[T].ToSQL` 错误类型对齐同时不破坏旧调用方
+
+### ⚠️ 行为变更（升级须知）
+
+本次为 patch 版本但属于安全修复，存在以下可观察行为变化，建议升级前审视：
+
+- 跨租户场景下 `affected` 由可能 >0 变成 =0；下游若有 `if affected == 0 { 报错/重试 }` 类逻辑会改变分支
+- `UpdateByIdTx` 乐观锁 + DataRule 拦截当前共用 `ErrOptimisticLock`，调用方启用 DataRule 时**不应**无条件重试（重试无法绕过权限）
+- 依赖 `err == ErrQueryNil` 硬比较 `ToUpdateSQL(nil)` 返回值的代码会失效；改用 `errors.Is(err, ErrQueryNil)` 即可（已双向兼容）
+
+如生产环境业务逻辑依赖"by-ID 跨租户可读 / 改"行为（属于依赖未文档化 bug），请在升级前调整。
+
+### 测试
+
+- 新增 `repo_datarule_byid_test.go`（~380 行），含 3 组测试：跨租户拦截、白名单防注入、无 DataRule 零回归，共 14 个 sub-test
+- 测试覆盖率 94.0% → 96.1%（+2.1pp）
+
+---
+
 ## [0.5.0] - 2026-04-24
 
 ### 新增

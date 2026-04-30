@@ -1,13 +1,14 @@
-# Spec: DataRule by-ID 安全修复（v0.6.0 minor）
+# Spec: DataRule by-ID 安全修复（v0.5.1 patch）
 
 **日期**：2026-04-26（2026-04-30 修订）
-**版本**：v0.6.0（minor，行为变更）
-**类型**：安全 bug 修复 + 行为变更
+**版本**：v0.5.1（patch，安全 bug 修复）
+**类型**：安全 bug 修复
 
 ## 修订记录
 
-- 2026-04-30 第一轮：经 4 名专家审计后修订。范围由 5 个写方法扩展到 7 个（补 2 个读路径）；实施路线由"新增 applyDataRuleFromCtx 辅助函数"改为"复用 Query[T].DataRuleBuilder"（避免重复实现 DataRule → SQL 映射逻辑）；版本号由 v0.5.1 patch 升至 v0.6.0 minor（行为变更）；ToUpdateSQL nil 错误改用 `fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)` 双 %w wrap 保持 errors.Is 双向兼容（Go 1.20+ 多 wrap 语法，本项目 go 1.24 可用）。
+- 2026-04-30 第一轮：经 4 名专家审计后修订。范围由 5 个写方法扩展到 7 个（补 2 个读路径）；实施路线由"新增 applyDataRuleFromCtx 辅助函数"改为"复用 Query[T].DataRuleBuilder"（避免重复实现 DataRule → SQL 映射逻辑）；ToUpdateSQL nil 错误改用 `fmt.Errorf("%w: %w", ErrUpdateEmpty, ErrQueryNil)` 双 %w wrap 保持 errors.Is 双向兼容（Go 1.20+ 多 wrap 语法，本项目 go 1.24 可用）。
 - 2026-04-30 第二轮：3 位专家复审后补强。明确 `debug.go` 须新增 `fmt` import；测试 setup 须自建 `setupTenantDB`（不复用 `setupTestDB[T]`，因主键类型硬编码 int64 与 tenantUser.ID uint 不兼容）；测试增加 2 个子测试场景（非法 DataRule column 触发 error、无 DataRule ctx 零影响回归）；godoc 须显式警示"启用 DataRule 时 affected=0 不应无条件重试"。
+- 2026-04-30 第三轮：版本号从 v0.6.0 minor 回退到 v0.5.1 patch。第一轮 security-reviewer 建议升 minor 让用户更显眼地看到行为变更，但本质是补漏洞（5+2 个方法漏掉 DataRule 应用），符合 patch 语义；gplus 当前在 v0.x 阶段 SemVer 严格性较弱；CVE/安全 fix 业界惯例发 patch 让 `go get -u` 能拉到。CHANGELOG/godoc 显式警示行为变更（affected 可能由 >0 变 0、`errors.Is` 双向兼容）即可，不强制升 minor。
 
 ## 背景与问题
 
@@ -219,7 +220,7 @@ func ctxWithTenantRule(tenantID int) context.Context {
 
 ## 兼容性
 
-- **行为变更**：依赖"by-ID 路径不受 DataRule 约束"的下游代码升级后会静默改变行为（affected/查回的记录可能变成 0）。这是依赖未文档化 bug 的代码，本质是安全修复，但 SemVer 上属 minor 行为变更，故升 v0.6.0
+- **行为变更但发 patch**：依赖"by-ID 路径不受 DataRule 约束"的下游代码升级后会静默改变行为（affected/查回的记录可能变成 0）。这本质是依赖未文档化 bug 的代码，符合"patch 修补安全漏洞"语义。CHANGELOG 显式警示，让用户在升级时审视自己的代码是否依赖此 bug
 - `applyDataRule` 检测 ctx 为 nil 或无 `DataRuleKey` 时直接返回，零额外开销
 - `ToUpdateSQL(nil)` 改 wrap 保持 `errors.Is(err, ErrQueryNil)` 仍为 true，旧调用方零影响
 
@@ -233,9 +234,9 @@ func ctxWithTenantRule(tenantID int) context.Context {
 
 ## 发布计划
 
-- v0.6.0 minor 版本
+- v0.5.1 patch 版本
 - CHANGELOG 单独条目说明 7 处方法的安全修复 + 行为变更警示
-- README 安装命令版本号同步到 v0.6.0
+- README 安装命令版本号同步到 v0.5.1
 - 单独 git tag
 
 ## 后续不在本期范围

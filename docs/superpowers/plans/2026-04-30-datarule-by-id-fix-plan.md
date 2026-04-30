@@ -1,8 +1,8 @@
-# Plan: DataRule by-ID 安全修复实施（v0.6.0）
+# Plan: DataRule by-ID 安全修复实施（v0.5.1）
 
 **Spec**：[`docs/superpowers/specs/2026-04-26-datarule-by-id-fix-design.md`](../specs/2026-04-26-datarule-by-id-fix-design.md)
 **日期**：2026-04-30
-**目标版本**：v0.6.0
+**目标版本**：v0.5.1
 **预估工作量**：~250 行代码 + ~300 行测试
 
 ## 目标与成功标准
@@ -190,11 +190,11 @@ D:/Environment/golang/go1.21.11/bin/go.exe test -run TestToUpdateSQL_NilDoubleWr
 
 如选择"测试先 commit RED → 再 commit GREEN"模式，则 S1 在最前。本项目偏好"绿后才 commit"（README 与历史 commit 都是绿态提交），故 S1 与 S2 合并 commit。
 
-最终预期 4-5 个 feature commit + 1 个 doc commit，可压缩为单个语义连贯 commit `feat: v0.6.0 DataRule by-ID 安全修复（7 处方法 + ToUpdateSQL）`，由 implementer 阶段判断粒度。
+最终预期 4-5 个 feature commit + 1 个 doc commit，可压缩为单个语义连贯 commit `feat: v0.5.1 DataRule by-ID 安全修复（7 处方法 + ToUpdateSQL）`，由 implementer 阶段判断粒度。
 
 ## CHANGELOG / README 更新（不在本 plan 范围）
 
 属于发布阶段任务，等代码 GREEN + review 通过后单独执行：
-- `CHANGELOG.md` 加 v0.6.0 章节
+- `CHANGELOG.md` 加 v0.5.1 章节
 - `README.md` 安装命令版本号
-- `git tag v0.6.0` + push
+- `git tag v0.5.1` + push
