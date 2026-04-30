@@ -211,12 +211,13 @@ type errSubquerier struct {
 	err error
 }
 
+// ToDB 故意不在 Session 上调用 AddError —— Session{NewDB:true} 切断了
+// session.AddError 到外层 d 的回流路径（这正是 builder.go 必须显式
+// d.AddError(sub.GetError()) 的原因）。errSubquerier 的语义就是"ToDB 不
+// 传播错误，只有 GetError 才返回错误"，构成 builder.go 错误聚合分支的
+// 最小复现场景。
 func (e *errSubquerier) ToDB(db *gorm.DB) *gorm.DB {
-	session := db.Session(&gorm.Session{NewDB: true})
-	if e.err != nil {
-		_ = session.AddError(e.err)
-	}
-	return session
+	return db.Session(&gorm.Session{NewDB: true})
 }
 
 func (e *errSubquerier) GetError() error { return e.err }
