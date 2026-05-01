@@ -2,6 +2,17 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.7.1] - 2026-05-01
+
+### 修复 (文档)
+
+- **v0.7.0「行为约束」段排查命令在嵌套括号场景漏检**：原命令中 `[^)]*` 在 `q.ToDB(r.GetDB()).Scan(&x)` 这类实参含括号的调用上匹配失败，整条 regex 在第一个 `)` 处断裂导致漏检。修正为 `.*` + 后续锚点强制回溯，支持任意嵌套深度
+- 同步在 v0.7.0「行为约束」段追加「regex 启发式局限 + AST 工具兜底」警告与「regex 命中对照表」（4 行反例覆盖单层 / 嵌套 / 中间链 / 合规 Find）
+- 来源：下游 gvs-server 项目落地 v0.7.0 时实测发现并验证修复
+- 仅文档变更，不涉及代码、API、行为；GORM 版本锁定保持 v1.31.x
+
+---
+
 ## [0.7.0] - 2026-05-01
 
 ### 新增
@@ -23,11 +34,25 @@
   - 排查命令（互补两条）：
     ```bash
     # 1. 单行直链（高置信度）
-    grep -rEn 'ToDB\([^)]*\)\.(Scan|Row|Rows)\(' . --include='*.go'
+    grep -rEn 'ToDB\(.*\)\.(Scan|Row|Rows)\(' . --include='*.go'
     # 2. 跨行场景（变量赋值后调用 / 中间链方法）— 需人工复查
     grep -rEn '\.ToDB\(' . --include='*.go'
     # 在结果文件中再 grep 是否有 .Scan/.Row/.Rows
     ```
+
+    **regex 启发式的本质局限**：上述 grep 命令是行内启发式扫描，无法理解 Go AST。真正的深嵌套（同一行多次调用 ToDB / 跨行 builder pattern）仍可能漏检或误检。关键代码请人工 review，或使用 AST 工具作为兜底：
+    - [ast-grep](https://ast-grep.github.io/)：结构化模式匹配，例如 `ast-grep --pattern '$Q.ToDB($$$).Scan($$$)' --lang go`
+    - `golang.org/x/tools/go/analysis` 写自定义 lint analyzer，精确识别方法链
+    - `go/parser` + `go/ast` 手写小工具
+
+    **regex 命中对照表**（验证修正后的命令）：
+
+    | 反例代码                                              | 旧 `[^)]*` | 新 `.*`  |
+    |-------------------------------------------------------|-----------|----------|
+    | `q.ToDB(db).Scan(&x)` (基础违规)                       | ✓ 命中    | ✓ 命中    |
+    | `q.ToDB(r.GetDB()).Scan(&x)` (实参嵌套括号)            | ✗ 漏检    | ✓ 命中    |
+    | `q.ToDB(r.GetDB()).WithContext(ctx).Scan(&x)` (中间链) | ✗ 漏检    | ✓ 命中    |
+    | `q.ToDB(db).Model(&T{}).Find(&rows)` (Find 非违规)      | ✗ 不命中  | ✗ 不命中  |
 - **新 API 不取代 `RawScan`**：Raw SQL 路径 Schema=nil，下游 isolation callback 在正确实现下短路；**若下游 callback 未做 `Schema == nil` 判断，行为不可预测**。涉及敏感数据的 Raw 查询必须在 SQL 中手写 WHERE，不可依赖 gplus DataRule 或下游 callback
 - **aggregate 性能基线**：高频聚合（每秒数百次 Sum/Max/Min/Avg）下，callback chain 触发是新增主要开销（取决于下游 callback 数量与复杂度）。性能敏感场景需基准测试
 - **GORM 版本锁定**：本修复基于 GORM v1.31.x 实测行为。升级到 v1.32+ 必须重跑 `TestGORMCallbackBehaviorProbe`，行为变化时第一时间感知
