@@ -826,8 +826,13 @@ func (r *Repository[D, T]) DeleteByIdsTx(ctx context.Context, ids []D, tx *gorm.
 	return result.RowsAffected, result.Error
 }
 
-// aggregate 内部通用聚合执行函数
-// 使用指针中间变量接收 NULL（空表或无匹配行时聚合结果为 NULL），nil 时返回零值
+// aggregate 内部通用聚合执行函数。
+// 用 Find(&[]aggregateWrap[R]) 走 GORM Query callback chain，下游挂在 Query chain
+// 上的 isolation/审计 callback 会被触发。wrapper struct 中 V *R 保证空表/无匹配时
+// SQL NULL → nil（不报 "converting NULL to int64" 错误）。
+//
+// 修改历史：v0.7.0 之前为 .Scan(&ptr)，绕过 Query chain（隔离失效隐患）。
+// 详见 docs/superpowers/specs/2026-05-01-scan-callback-fix-design.md
 func aggregate[T any, R any, D comparable](r *Repository[D, T], q *Query[T], fn string, col any, tx *gorm.DB) (result R, err error) {
 	if q == nil {
 		return result, ErrQueryNil
@@ -842,12 +847,12 @@ func aggregate[T any, R any, D comparable](r *Repository[D, T], q *Query[T], fn 
 	if err = q.DataRuleBuilder().GetError(); err != nil {
 		return result, err
 	}
-	expr := fmt.Sprintf("%s(%s)", fn, colName)
-	var ptr *R
-	// 聚合查询只需要 WHERE/JOIN/GROUP BY，与 BuildCount 路径一致，无需 ORDER/LIMIT/Preload
-	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildCount()).Select(expr).Scan(&ptr).Error
-	if err == nil && ptr != nil {
-		result = *ptr
+	expr := fmt.Sprintf("%s(%s) AS %s", fn, colName, aggregateAlias)
+	var rows []aggregateWrap[R]
+	// 聚合查询只需 WHERE/JOIN/GROUP BY，与 BuildCount 路径一致；走 Find 触发 Query callback chain
+	err = r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildCount()).Select(expr).Find(&rows).Error
+	if err == nil && len(rows) > 0 && rows[0].V != nil {
+		result = *rows[0].V
 	}
 	return result, err
 }
