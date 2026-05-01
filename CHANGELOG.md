@@ -2,6 +2,42 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] - 2026-05-01
+
+### 新增
+
+- **Query-chain-safe 投影查询 API**：根除 `db.Scan()` / `db.Row()` / `db.Rows()` 绕过 GORM Query callback chain 导致的下游隔离/审计 callback 失效问题
+  - `FindAs[T, Dest, D]` / `FindAsTx[T, Dest, D]`：投影多行（dest 为 `*[]Dest`）
+  - `FindOneAs[T, Dest, D]` / `FindOneAsTx[T, Dest, D]`：投影单行（dest 为 `*Dest`，无匹配返回 `gorm.ErrRecordNotFound`）
+  - 内部走 `.Find` / `.First` → Query chain，下游挂在 Query chain 上的 callback 自动触发
+  - Go 1.18+ 类型推导后调用形态：`gplus.FindAs(repo, q, &rows)`，无需写类型参数
+- `ErrFindOneAsConflict` sentinel：FindOneAs 与 `q.Limit()/q.Page()` 组合时立即返回
+
+### 修复
+
+- **aggregate 路径绕过 Query callback chain**（`repository.go` 中 aggregate 函数）：Sum/Max/Min/Avg 内部 `.Scan(&ptr)` 改为 `.Find(&[]aggregateWrap[R])` 走 Query chain；下游 isolation/审计 callback 现可正确触发。NULL 语义保持不变（wrapper struct 中 `*R` 字段在 SQL NULL 下为 nil，已实测）
+
+### 行为约束（须知）
+
+- **`q.ToDB(db).Scan(...)` / `.Row()` / `.Rows()` 仍绕过 Query callback chain**：GORM v1.31.1 三者内部走 Row chain，gplus 无法拦截。**若下游挂有 isolation/审计 callback，这三种调用等同保留隔离漏洞，必须迁移到 `FindAs`/`FindOneAs`**。
+  - 排查命令（互补两条）：
+    ```bash
+    # 1. 单行直链（高置信度）
+    grep -rEn 'ToDB\([^)]*\)\.(Scan|Row|Rows)\(' . --include='*.go'
+    # 2. 跨行场景（变量赋值后调用 / 中间链方法）— 需人工复查
+    grep -rEn '\.ToDB\(' . --include='*.go'
+    # 在结果文件中再 grep 是否有 .Scan/.Row/.Rows
+    ```
+- **新 API 不取代 `RawScan`**：Raw SQL 路径 Schema=nil，下游 isolation callback 在正确实现下短路；**若下游 callback 未做 `Schema == nil` 判断，行为不可预测**。涉及敏感数据的 Raw 查询必须在 SQL 中手写 WHERE，不可依赖 gplus DataRule 或下游 callback
+- **aggregate 性能基线**：高频聚合（每秒数百次 Sum/Max/Min/Avg）下，callback chain 触发是新增主要开销（取决于下游 callback 数量与复杂度）。性能敏感场景需基准测试
+- **GORM 版本锁定**：本修复基于 GORM v1.31.x 实测行为。升级到 v1.32+ 必须重跑 `TestGORMCallbackBehaviorProbe`，行为变化时第一时间感知
+
+### 不在本期范围
+
+- 已评估"拆 0.6.1（仅修 aggregate）+ 0.7.0（新增 API）"方案 — 因新增 API 非破坏、合并发布心智成本相同，**合并发布**
+
+---
+
 ## [0.6.0] - 2026-04-30
 
 ### 新增
