@@ -138,6 +138,121 @@ func TestGORMCallbackBehaviorProbe(t *testing.T) {
 	_ = context.Background() // import 占位
 }
 
+// TestFindAs_ProjectionCorrectness 验证 FindAs/FindOneAs 在各种 Query 设置下投影结果正确。
+func TestFindAs_ProjectionCorrectness(t *testing.T) {
+	type projUser struct {
+		ID     uint `gorm:"primarykey"`
+		Name   string
+		Age    int
+		DeptID uint
+	}
+	type projDept struct {
+		ID   uint `gorm:"primarykey"`
+		Name string
+	}
+	type userVO struct {
+		Name     string
+		DeptName string
+	}
+
+	openDB := func(t *testing.T) (*gorm.DB, *Repository[uint, projUser]) {
+		t.Helper()
+		db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		_ = db.AutoMigrate(&projUser{}, &projDept{})
+		db.Create(&projDept{ID: 1, Name: "Eng"})
+		db.Create(&projDept{ID: 2, Name: "Sales"})
+		db.Create(&projUser{Name: "alice", Age: 20, DeptID: 1})
+		db.Create(&projUser{Name: "bob", Age: 30, DeptID: 1})
+		db.Create(&projUser{Name: "carol", Age: 25, DeptID: 2})
+		return db, NewRepository[uint, projUser](db)
+	}
+
+	t.Run("LEFT_JOIN_+_alias_映射", func(t *testing.T) {
+		db, repo := openDB(t)
+		_ = db
+		q, _ := NewQuery[projUser](context.Background())
+		q.LeftJoin("proj_depts", "proj_users.dept_id = proj_depts.id").
+			Select("proj_users.name AS name", "proj_depts.name AS dept_name").
+			OrderRaw("proj_users.id ASC")
+		var rows []userVO
+		if err := FindAs(repo, q, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 3 {
+			t.Fatalf("len=%d, 期望 3", len(rows))
+		}
+		if rows[0].Name != "alice" || rows[0].DeptName != "Eng" {
+			t.Fatalf("rows[0]=%+v", rows[0])
+		}
+		if rows[2].Name != "carol" || rows[2].DeptName != "Sales" {
+			t.Fatalf("rows[2]=%+v", rows[2])
+		}
+	})
+
+	t.Run("WHERE_+_LIMIT_透传", func(t *testing.T) {
+		_, repo := openDB(t)
+		q, mu := NewQuery[projUser](context.Background())
+		q.Gt(&mu.Age, 20).OrderRaw("id ASC").Limit(1)
+		type nameVO struct{ Name string }
+		var rows []nameVO
+		if err := FindAs(repo, q, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].Name != "bob" {
+			t.Fatalf("rows=%+v, 期望 [bob]", rows)
+		}
+	})
+
+	t.Run("Distinct_+_FindAs", func(t *testing.T) {
+		_, repo := openDB(t)
+		q, mu := NewQuery[projUser](context.Background())
+		q.Distinct(&mu.DeptID).OrderRaw("dept_id ASC")
+		type deptIDVO struct {
+			DeptID uint
+		}
+		var rows []deptIDVO
+		if err := FindAs(repo, q, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("Distinct 后 len=%d, 期望 2", len(rows))
+		}
+	})
+
+	t.Run("DataRule_透传_builder_加_WHERE", func(t *testing.T) {
+		_, repo := openDB(t)
+		ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+			{Column: "dept_id", Condition: "=", Value: "1"},
+		})
+		q, _ := NewQuery[projUser](ctx)
+		type nameVO struct{ Name string }
+		var rows []nameVO
+		if err := FindAs(repo, q, &rows); err != nil {
+			t.Fatal(err)
+		}
+		// DataRule 限定 dept_id=1，应只返回 alice / bob
+		if len(rows) != 2 {
+			t.Fatalf("DataRule 后 len=%d, 期望 2", len(rows))
+		}
+	})
+
+	t.Run("FindOneAs_单行_alias", func(t *testing.T) {
+		db, repo := openDB(t)
+		_ = db
+		q, _ := NewQuery[projUser](context.Background())
+		q.LeftJoin("proj_depts", "proj_users.dept_id = proj_depts.id").
+			Select("proj_users.name AS name", "proj_depts.name AS dept_name").
+			WhereRaw("proj_users.name = ?", "carol")
+		var one userVO
+		if err := FindOneAs(repo, q, &one); err != nil {
+			t.Fatal(err)
+		}
+		if one.Name != "carol" || one.DeptName != "Sales" {
+			t.Fatalf("one=%+v", one)
+		}
+	})
+}
+
 // TestFindAs_CallbackChainMatrix 验证 FindAs/FindOneAs/aggregate 走 Query callback chain。
 // 这是漏洞修复的核心证明 — 任意一条失败说明回归到了 Row chain。
 func TestFindAs_CallbackChainMatrix(t *testing.T) {
