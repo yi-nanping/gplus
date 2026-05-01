@@ -137,3 +137,141 @@ func TestGORMCallbackBehaviorProbe(t *testing.T) {
 
 	_ = context.Background() // import 占位
 }
+
+// TestFindAs_CallbackChainMatrix 验证 FindAs/FindOneAs/aggregate 走 Query callback chain。
+// 这是漏洞修复的核心证明 — 任意一条失败说明回归到了 Row chain。
+func TestFindAs_CallbackChainMatrix(t *testing.T) {
+	type matrixUser struct {
+		ID   uint `gorm:"primarykey"`
+		Name string
+		Age  int
+	}
+
+	openDB := func(t *testing.T) *gorm.DB {
+		t.Helper()
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AutoMigrate(&matrixUser{}); err != nil {
+			t.Fatal(err)
+		}
+		db.Create(&matrixUser{Name: "alice", Age: 20})
+		db.Create(&matrixUser{Name: "bob", Age: 30})
+		return db
+	}
+
+	type counts struct {
+		query int
+		row   int
+	}
+	probe := func(t *testing.T, db *gorm.DB) (*counts, func()) {
+		t.Helper()
+		c := &counts{}
+		_ = db.Callback().Query().Before("gorm:query").
+			Register("test:matrix_q", func(*gorm.DB) { c.query++ })
+		_ = db.Callback().Row().Before("gorm:row").
+			Register("test:matrix_r", func(*gorm.DB) { c.row++ })
+		return c, func() {
+			_ = db.Callback().Query().Remove("test:matrix_q")
+			_ = db.Callback().Row().Remove("test:matrix_r")
+		}
+	}
+
+	type matrixVO struct {
+		Name string
+	}
+
+	t.Run("FindAs_有数据", func(t *testing.T) {
+		db := openDB(t)
+		c, cleanup := probe(t, db)
+		defer cleanup()
+		repo := NewRepository[uint, matrixUser](db)
+		q, _ := NewQuery[matrixUser](context.Background())
+		var rows []matrixVO
+		err := FindAs[matrixUser, matrixVO, uint](repo, q, &rows)
+		if err != nil {
+			t.Fatalf("FindAs err=%v", err)
+		}
+		if c.query != 1 || c.row != 0 {
+			t.Fatalf("FindAs: query=%d row=%d, 期望 1/0", c.query, c.row)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("FindAs len=%d, 期望 2", len(rows))
+		}
+	})
+
+	t.Run("FindOneAs_有匹配", func(t *testing.T) {
+		db := openDB(t)
+		c, cleanup := probe(t, db)
+		defer cleanup()
+		repo := NewRepository[uint, matrixUser](db)
+		q, mu := NewQuery[matrixUser](context.Background())
+		q.Eq(&mu.Name, "alice")
+		var one matrixVO
+		err := FindOneAs[matrixUser, matrixVO, uint](repo, q, &one)
+		if err != nil {
+			t.Fatalf("FindOneAs err=%v", err)
+		}
+		if c.query != 1 || c.row != 0 {
+			t.Fatalf("FindOneAs: query=%d row=%d, 期望 1/0", c.query, c.row)
+		}
+		if one.Name != "alice" {
+			t.Fatalf("FindOneAs Name=%q, 期望 alice", one.Name)
+		}
+	})
+
+	t.Run("FindOneAs_无匹配_返回_ErrRecordNotFound", func(t *testing.T) {
+		db := openDB(t)
+		c, cleanup := probe(t, db)
+		defer cleanup()
+		repo := NewRepository[uint, matrixUser](db)
+		q, mu := NewQuery[matrixUser](context.Background())
+		q.Eq(&mu.Name, "nobody")
+		var one matrixVO
+		err := FindOneAs[matrixUser, matrixVO, uint](repo, q, &one)
+		if err == nil {
+			t.Fatal("FindOneAs 期望 ErrRecordNotFound，实际 nil")
+		}
+		if c.query != 1 || c.row != 0 {
+			t.Fatalf("FindOneAs(无匹配): query=%d row=%d, 期望 1/0", c.query, c.row)
+		}
+	})
+
+	t.Run("Sum_有数据", func(t *testing.T) {
+		db := openDB(t)
+		c, cleanup := probe(t, db)
+		defer cleanup()
+		repo := NewRepository[uint, matrixUser](db)
+		q, mu := NewQuery[matrixUser](context.Background())
+		sum, err := Sum[matrixUser, int64, uint](repo, q, &mu.Age)
+		if err != nil {
+			t.Fatalf("Sum err=%v", err)
+		}
+		if c.query != 1 || c.row != 0 {
+			t.Fatalf("Sum: query=%d row=%d, 期望 1/0（aggregate 修复）", c.query, c.row)
+		}
+		if sum != 50 {
+			t.Fatalf("Sum=%d, 期望 50", sum)
+		}
+	})
+
+	t.Run("Sum_空表_NULL_零值", func(t *testing.T) {
+		emptyDB, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		_ = emptyDB.AutoMigrate(&matrixUser{})
+		c, cleanup := probe(t, emptyDB)
+		defer cleanup()
+		repo := NewRepository[uint, matrixUser](emptyDB)
+		q, mu := NewQuery[matrixUser](context.Background())
+		sum, err := Sum[matrixUser, int64, uint](repo, q, &mu.Age)
+		if err != nil {
+			t.Fatalf("Sum 空表: err=%v（NULL 处理失败）", err)
+		}
+		if c.query != 1 || c.row != 0 {
+			t.Fatalf("Sum 空表: query=%d row=%d, 期望 1/0", c.query, c.row)
+		}
+		if sum != 0 {
+			t.Fatalf("Sum 空表=%d, 期望零值 0", sum)
+		}
+	})
+}
