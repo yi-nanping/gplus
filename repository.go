@@ -265,7 +265,15 @@ func (r *Repository[D, T]) ListTx(q *Query[T], tx *gorm.DB) (data []T, err error
 	return
 }
 
-// Pluck 提取单列值到泛型切片中
+// Pluck 提取单列值到泛型切片中，R 为列元素类型。
+//
+// 【R 支持类型】int64 / float64 / string 安全；MySQL DECIMAL 列建议 R=float64
+// （database/sql 通过 strconv 路径正确转换）；time.Time / sql.NullX 作为 R 无意义。
+//
+// 【callback chain】走 Query callback chain（v0.7.0 起），下游 isolation/审计
+// callback 会触发。
+//
+// 【col 字符串警告】传字符串列名时 gplus 不做白名单校验，禁止将用户输入直接传入 col。
 func Pluck[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) ([]R, error) {
 	return PluckTx[T, R, D](r, q, col, nil)
 }
@@ -857,7 +865,15 @@ func aggregate[T any, R any, D comparable](r *Repository[D, T], q *Query[T], fn 
 	return result, err
 }
 
-// Sum 对指定列求和，R 为数值类型（int64、float64 等）
+// Sum 对指定列求和，R 为数值类型。
+//
+// 【R 支持类型】int64 / float64 / string 安全；MySQL DECIMAL 列建议 R=float64
+// （database/sql 通过 strconv 路径正确转换）；time.Time / sql.NullX 作为 R 无意义。
+//
+// 【callback chain】走 Query callback chain（v0.7.0 起），下游 isolation/审计
+// callback 会触发。
+//
+// 【col 字符串警告】传字符串列名时 gplus 不做白名单校验，禁止将用户输入直接传入 col。
 func Sum[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
 	return SumTx[T, R, D](r, q, col, nil)
 }
@@ -867,7 +883,15 @@ func SumTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any
 	return aggregate[T, R, D](r, q, "SUM", col, tx)
 }
 
-// Max 对指定列求最大值
+// Max 对指定列求最大值，R 为数值类型。
+//
+// 【R 支持类型】int64 / float64 / string 安全；MySQL DECIMAL 列建议 R=float64
+// （database/sql 通过 strconv 路径正确转换）；time.Time / sql.NullX 作为 R 无意义。
+//
+// 【callback chain】走 Query callback chain（v0.7.0 起），下游 isolation/审计
+// callback 会触发。
+//
+// 【col 字符串警告】传字符串列名时 gplus 不做白名单校验，禁止将用户输入直接传入 col。
 func Max[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
 	return MaxTx[T, R, D](r, q, col, nil)
 }
@@ -877,7 +901,15 @@ func MaxTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any
 	return aggregate[T, R, D](r, q, "MAX", col, tx)
 }
 
-// Min 对指定列求最小值
+// Min 对指定列求最小值，R 为数值类型。
+//
+// 【R 支持类型】int64 / float64 / string 安全；MySQL DECIMAL 列建议 R=float64
+// （database/sql 通过 strconv 路径正确转换）；time.Time / sql.NullX 作为 R 无意义。
+//
+// 【callback chain】走 Query callback chain（v0.7.0 起），下游 isolation/审计
+// callback 会触发。
+//
+// 【col 字符串警告】传字符串列名时 gplus 不做白名单校验，禁止将用户输入直接传入 col。
 func Min[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
 	return MinTx[T, R, D](r, q, col, nil)
 }
@@ -887,7 +919,15 @@ func MinTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any
 	return aggregate[T, R, D](r, q, "MIN", col, tx)
 }
 
-// Avg 对指定列求平均值，R 建议使用 float64
+// Avg 对指定列求平均值，R 为数值类型。
+//
+// 【R 支持类型】int64 / float64 / string 安全；MySQL DECIMAL 列建议 R=float64
+// （database/sql 通过 strconv 路径正确转换）；time.Time / sql.NullX 作为 R 无意义。
+//
+// 【callback chain】走 Query callback chain（v0.7.0 起），下游 isolation/审计
+// callback 会触发。
+//
+// 【col 字符串警告】传字符串列名时 gplus 不做白名单校验，禁止将用户输入直接传入 col。
 func Avg[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col any) (R, error) {
 	return AvgTx[T, R, D](r, q, col, nil)
 }
