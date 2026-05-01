@@ -361,6 +361,42 @@ names, err := gplus.Pluck[User, string, uint](repo, q, &m.Name)
 // names 类型为 []string
 ```
 
+### FindAs / FindOneAs — 投影查询（Query-chain-safe）
+
+走 GORM Query callback chain，下游挂在 Query chain 上的隔离/审计 callback 会触发。
+
+```go
+type UserVO struct {
+    Name     string  // 默认匹配 SELECT 列 `name`（snake_case）
+    DeptName string  // 匹配 `dept_name`（必须 alias，否则字段名冲突时无法定位）
+}
+
+// 多行
+var rows []UserVO
+q, _ := gplus.NewQuery[User](ctx)
+q.LeftJoin("dept", "users.dept_id = dept.id").
+    Select("users.name", "dept.name AS dept_name")
+err := gplus.FindAs(repo, q, &rows)
+
+// 单行（无匹配返回 gorm.ErrRecordNotFound）
+var one UserVO
+q, m := gplus.NewQuery[User](ctx)
+q.Eq(&m.ID, 1)
+err := gplus.FindOneAs(repo, q, &one)
+
+// 事务
+err := db.Transaction(func(tx *gorm.DB) error {
+    q, _ := gplus.NewQuery[User](ctx)
+    q.Eq(&m.Status, "active")
+    return gplus.FindAsTx(repo, q, &rows, tx)
+})
+```
+
+**主表 vs 结果结构心智模型**：
+- `Repository[D, T]` 绑定主表 schema（T）+ 提供 dbResolver / ctx 注入
+- `Dest` 仅决定 SELECT 列 → struct 字段映射（GORM 默认 snake_case）
+- 跨表 JOIN 列必须 SQL alias，否则字段名冲突 GORM 无法定位
+
 ### 数据权限（DataRule）
 
 `DataRule` 通过 `context.Context` 传入，由 Repository 方法自动应用到所有查询和写操作，无需在每处手动添加条件。适合多租户、行级权限等场景。
@@ -741,6 +777,33 @@ repo.UpdateByCond(u)
 
 - 泛型 Repository、Query Builder、Updater 初始版本
 - 支持 DataRule 数据权限、软删除、悲观锁、预加载等特性
+
+## 已知陷阱
+
+### `q.ToDB(db).Scan` / `.Row` / `.Rows` 绕过 Query callback chain（CRITICAL）
+
+GORM v1.31.1 中 `db.Scan` / `db.Row` / `db.Rows` 内部走 Row callback chain，**不会触发**挂在 Query chain 上的下游 callback（数据隔离 / 审计 / 查询日志）。在依赖这些 callback 的项目中，使用上述三种调用**会导致跨租户数据泄露 / 审计日志缺失**。
+
+**必须改用** `FindAs` / `FindOneAs`：
+
+| 旧写法（漏洞） | 新写法（安全） |
+|---|---|
+| `q.ToDB(db).Model(&T{}).Scan(&rows)` | `gplus.FindAs(repo, q, &rows)` |
+| `q.ToDB(db).Model(&T{}).Limit(1).Scan(&one)` | `gplus.FindOneAs(repo, q, &one)` |
+
+**排查老代码**：见 CHANGELOG v0.7.0 行为约束段（含两条互补 grep 命令）
+
+### `RawQuery` / `RawScan` / `RawScanTx` 的 Schema=nil 问题
+
+Raw SQL 路径 Schema=nil，下游 callback 在正确实现下应短路（`if Schema == nil { return }`）。**若下游 callback 未判断 `Schema == nil`，行为不可预测**。涉及敏感数据必须在 SQL 中手写 WHERE。
+
+### DataRule + JOIN 列二义性
+
+`DataRule.Column` 在多表 JOIN 下若无表前缀（如 `"dept_id"`），可能产生 SQL 二义性错误（MySQL 报 `ambiguous`）或静默走错表。**必须用 `table.col` 形式**（如 `"users.dept_id"`）。
+
+### `col` 字符串形式不验证
+
+`Sum/Max/Min/Avg/Pluck` 接受字符串列名时，gplus 不做白名单校验（与 `DataRule.Column` 不同）。**禁止将用户输入直接传入 `col`**。
 
 ## 许可证
 
