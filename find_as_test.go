@@ -283,10 +283,14 @@ func TestFindAs_CallbackChainMatrix(t *testing.T) {
 	probe := func(t *testing.T, db *gorm.DB) (*counts, func()) {
 		t.Helper()
 		c := &counts{}
-		_ = db.Callback().Query().Before("gorm:query").
-			Register("test:matrix_q", func(*gorm.DB) { c.query++ })
-		_ = db.Callback().Row().Before("gorm:row").
-			Register("test:matrix_r", func(*gorm.DB) { c.row++ })
+		if err := db.Callback().Query().Before("gorm:query").
+			Register("test:matrix_q", func(*gorm.DB) { c.query++ }); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Callback().Row().Before("gorm:row").
+			Register("test:matrix_r", func(*gorm.DB) { c.row++ }); err != nil {
+			t.Fatal(err)
+		}
 		return c, func() {
 			_ = db.Callback().Query().Remove("test:matrix_q")
 			_ = db.Callback().Row().Remove("test:matrix_r")
@@ -387,6 +391,137 @@ func TestFindAs_CallbackChainMatrix(t *testing.T) {
 		}
 		if sum != 0 {
 			t.Fatalf("Sum 空表=%d, 期望零值 0", sum)
+		}
+	})
+}
+
+// TestFindAs_Boundary 验证错误路径与防御逻辑。
+func TestFindAs_Boundary(t *testing.T) {
+	type bUser struct {
+		ID   uint `gorm:"primarykey"`
+		Name string
+		Age  int
+	}
+	type bVO struct {
+		Name string
+	}
+
+	openDB := func(t *testing.T) *Repository[uint, bUser] {
+		t.Helper()
+		db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		_ = db.AutoMigrate(&bUser{})
+		db.Create(&bUser{Name: "alice", Age: 20})
+		return NewRepository[uint, bUser](db)
+	}
+
+	t.Run("q_为_nil_返回_ErrQueryNil", func(t *testing.T) {
+		repo := openDB(t)
+		var rows []bVO
+		if err := FindAs[bUser, bVO, uint](repo, nil, &rows); err != ErrQueryNil {
+			t.Fatalf("err=%v, 期望 ErrQueryNil", err)
+		}
+		var one bVO
+		if err := FindOneAs[bUser, bVO, uint](repo, nil, &one); err != ErrQueryNil {
+			t.Fatalf("FindOneAs err=%v, 期望 ErrQueryNil", err)
+		}
+	})
+
+	t.Run("FindOneAs_+_Limit_返回_ErrFindOneAsConflict", func(t *testing.T) {
+		repo := openDB(t)
+		q, _ := NewQuery[bUser](context.Background())
+		q.Limit(5)
+		var one bVO
+		if err := FindOneAs(repo, q, &one); err != ErrFindOneAsConflict {
+			t.Fatalf("err=%v, 期望 ErrFindOneAsConflict", err)
+		}
+	})
+
+	t.Run("FindOneAs_+_Page_返回_ErrFindOneAsConflict", func(t *testing.T) {
+		repo := openDB(t)
+		q, _ := NewQuery[bUser](context.Background())
+		q.Page(2, 10) // 内部设 limit + offset
+		var one bVO
+		if err := FindOneAs(repo, q, &one); err != ErrFindOneAsConflict {
+			t.Fatalf("err=%v, 期望 ErrFindOneAsConflict", err)
+		}
+	})
+
+	t.Run("FindOneAs_无匹配_返回_ErrRecordNotFound", func(t *testing.T) {
+		repo := openDB(t)
+		q, mu := NewQuery[bUser](context.Background())
+		q.Eq(&mu.Name, "nobody")
+		var one bVO
+		err := FindOneAs(repo, q, &one)
+		if err == nil {
+			t.Fatal("期望 ErrRecordNotFound, 实际 nil")
+		}
+	})
+
+	t.Run("dest_nil_切片_覆盖写入", func(t *testing.T) {
+		repo := openDB(t)
+		q, _ := NewQuery[bUser](context.Background())
+		var rows []bVO // nil 切片
+		if err := FindAs(repo, q, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("len=%d, 期望 1", len(rows))
+		}
+	})
+
+	t.Run("同一_q_两次_FindAs_DataRule_幂等", func(t *testing.T) {
+		// 验证 dataRuleApplied 幂等保护
+		ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+			{Column: "age", Condition: ">=", Value: "18"},
+		})
+		repo := openDB(t)
+		q, _ := NewQuery[bUser](ctx)
+		var rows1, rows2 []bVO
+		_ = FindAs(repo, q, &rows1)
+		_ = FindAs(repo, q, &rows2)
+		if len(rows1) != len(rows2) {
+			t.Fatalf("两次结果不一致: %d vs %d", len(rows1), len(rows2))
+		}
+	})
+
+	t.Run("FindAs_+_DataRule_+_LEFT_JOIN_复合", func(t *testing.T) {
+		// 复合场景：DataRule WHERE + JOIN ON 不互染
+		type joinUser struct {
+			ID     uint `gorm:"primarykey"`
+			Name   string
+			DeptID uint
+		}
+		type joinDept struct {
+			ID   uint `gorm:"primarykey"`
+			Name string
+		}
+		db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		_ = db.AutoMigrate(&joinUser{}, &joinDept{})
+		db.Create(&joinDept{ID: 1, Name: "Eng"})
+		db.Create(&joinDept{ID: 2, Name: "Sales"})
+		db.Create(&joinUser{Name: "alice", DeptID: 1})
+		db.Create(&joinUser{Name: "bob", DeptID: 2})
+
+		ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+			// 用 table.col 形式避免 JOIN 后二义性
+			{Column: "join_users.dept_id", Condition: "=", Value: "1"},
+		})
+		repo := NewRepository[uint, joinUser](db)
+		q, _ := NewQuery[joinUser](ctx)
+		q.LeftJoin("join_depts", "join_users.dept_id = join_depts.id").
+			Select("join_users.name AS name", "join_depts.name AS dept_name")
+
+		type vo struct {
+			Name     string
+			DeptName string
+		}
+		var rows []vo
+		if err := FindAs(repo, q, &rows); err != nil {
+			t.Fatal(err)
+		}
+		// DataRule 限定 dept_id=1 → 只 alice；JOIN 拿 dept name "Eng"
+		if len(rows) != 1 || rows[0].Name != "alice" || rows[0].DeptName != "Eng" {
+			t.Fatalf("rows=%+v", rows)
 		}
 	})
 }
