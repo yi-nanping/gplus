@@ -386,7 +386,7 @@ err := gplus.FindOneAs(repo, q, &one)
 
 // 事务
 err := db.Transaction(func(tx *gorm.DB) error {
-    q, _ := gplus.NewQuery[User](ctx)
+    q, m := gplus.NewQuery[User](ctx)
     q.Eq(&m.Status, "active")
     return gplus.FindAsTx(repo, q, &rows, tx)
 })
