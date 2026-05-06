@@ -121,7 +121,7 @@ func TestAs_DuplicateAcrossOuterChain_DecisionB(t *testing.T) {
 	q, _ := NewQuery[TestUser](context.Background())
 	o1 := As[TestUser](q, "o")
 
-	// 派生 sub（手工设置 outerQueryRef 模拟 SubQuery，因 SubQuery 在 Task 14 实现）
+	// TODO Task 14: SubQuery 实现后，替换为 sub, _ := SubQuery[TestUser](q)
 	sub, _ := NewQuery[TestUser](context.Background())
 	sub.gplusCore().outerQueryRef = q
 
@@ -170,7 +170,7 @@ func TestResolveColumnName_AliasField_Resolves(t *testing.T) {
 
 func TestResolveColumnName_SubStrictClosure_H5(t *testing.T) {
 	q2, _ := NewQuery[TestUser](context.Background())
-	// 派生 sub from q2（手工设置 outerQueryRef，因 SubQuery 在 Task 14 实现）
+	// TODO Task 14: SubQuery 实现后，替换为 sub, _ := SubQuery[TestUser](q2)
 	sub, _ := NewQuery[TestUser](context.Background())
 	sub.gplusCore().outerQueryRef = q2
 	// 错误地引用一个完全无关的全局规范单例字段地址
@@ -189,5 +189,30 @@ func TestResolveColumnName_AliasRevoked_AccumulatesError_N4(t *testing.T) {
 	_, err := q.resolveColumnName(uintptrOf(&o.Name))
 	if !errors.Is(err, ErrAliasRevoked) {
 		t.Errorf("expected ErrAliasRevoked, got %v", err)
+	}
+}
+
+func TestBuildQuery_ErrsShortCircuit_DecisionB(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	_ = As[TestUser](q, "o")
+	_ = As[TestUser](q, "o") // 重名累积 ErrAliasDuplicate
+	_, db := setupTestDB[TestUser](t)
+	finalDB := q.DataRuleBuilder().BuildQueryDB(db)
+	if finalDB.Error == nil {
+		t.Fatalf("expected BuildQuery to short-circuit on accumulated errors")
+	}
+	if !errors.Is(finalDB.Error, ErrAliasDuplicate) {
+		t.Errorf("expected ErrAliasDuplicate in db.Error, got %v", finalDB.Error)
+	}
+}
+
+func TestQuery_Clear_AliasUseAfterClear_N4(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	o := As[TestUser](q, "o")
+	q.Clear()
+	// 业务代码仍持有 o，使用 &o.Name 应被 revoked 拦截
+	_, err := q.resolveColumnName(uintptrOf(&o.Name))
+	if !errors.Is(err, ErrAliasRevoked) {
+		t.Errorf("expected ErrAliasRevoked after Clear, got %v", err)
 	}
 }

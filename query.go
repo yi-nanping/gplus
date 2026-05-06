@@ -72,8 +72,33 @@ func (q *Query[T]) GetError() error {
 	return errors.Join(append([]error{summary}, all...)...)
 }
 
+// BuildQueryDB 将当前 Query 的条件应用到 db 并返回带条件的 *gorm.DB。
+// v0.8.0 决策 1B：若 q.core.errs 非空（含 As 重名等错误），直接返回带聚合错误的 db，不生成 SQL。
+// 防止重名 alias / Clear 后用 alias 等错误被快乐路径 SQL 静默掩盖。
+//
+// 与 ScopeBuilder.BuildQuery()（无参，返回闭包供 Scopes 使用）互补；
+// BuildQueryDB 用于需要直接获得 *gorm.DB 的场景（如 DataRuleBuilder 链式调用末尾）。
+func (q *Query[T]) BuildQueryDB(db *gorm.DB) *gorm.DB {
+	if q.core != nil && len(q.core.errs) > 0 {
+		session := db.Session(&gorm.Session{})
+		_ = session.AddError(errors.Join(q.core.errs...))
+		return session
+	}
+	return q.ScopeBuilder.BuildQuery()(db)
+}
+
 // Clear 重写 Query 的清除逻辑
 func (q *Query[T]) Clear() {
+	// v0.8.0 N4：翻转所有 alias entry 的 revoked 标志，防 Clear 后用 alias 残骸。
+	// 保留 entries（不清空 aliases map），让后续 lookupAddr 命中 revoked 区间触发 ErrAliasRevoked。
+	// 同时清空 outerQueryRef 和 core.errs，避免悬空引用和旧错误干扰后续使用。
+	if q.core != nil {
+		for _, entry := range q.core.aliases {
+			entry.revoked = true
+		}
+		q.core.outerQueryRef = nil
+		q.core.errs = nil
+	}
 	q.ScopeBuilder.Clear()
 	q.errs = q.errs[:0:0]
 	q.dataRuleApplied = false
@@ -1003,6 +1028,9 @@ func (q *Query[T]) resolveColumnName(addr uintptr) (string, error) {
 	}
 
 	// 顶层 fallback：用 schema.go 的全局 columnNameCache 查找
+	// 注意：此路径未做 alias 链反向校验（H5 反向风险）——若用户在不同 q 间复用规范单例字段地址，
+	// 全局 cache 会静默命中产生跨 Query SQL（FROM 表与列引用不匹配）。
+	// v0.7.x 既有行为，不破坏兼容；spec §11.2 TD-7 已记录，v0.9 加 StrictColumnResolution 选项。
 	if name, ok := columnNameCache.Load(addr); ok {
 		return name.(string), nil
 	}
