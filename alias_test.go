@@ -168,16 +168,21 @@ func TestResolveColumnName_AliasField_Resolves(t *testing.T) {
 	}
 }
 
-func TestResolveColumnName_SubStrictClosure_H5(t *testing.T) {
+func TestResolveColumnName_SubCanResolveOuterField_H5Updated(t *testing.T) {
+	// Task 14 更新：SubQuery 实装后，sub 通过 outerQueryRef 链合法关联 outer，
+	// 允许 fallback 全局 columnNameCache 解析外层 T 的规范单例字段（关联子查询场景）。
+	// 原 H5 严格闭合限制已放宽，参见 query.go resolveColumnName 注释。
 	q2, _ := NewQuery[TestUser](context.Background())
-	// TODO Task 14: SubQuery 实现后，替换为 sub, _ := SubQuery[TestUser](q2)
-	sub, _ := NewQuery[TestUser](context.Background())
-	sub.gplusCore().outerQueryRef = q2
-	// 错误地引用一个完全无关的全局规范单例字段地址
+	sub, _ := SubQuery[TestUser](q2)
+	// sub 通过 outerQueryRef 关联 q2，解析 TestUser 规范单例字段应成功
 	u := getModelInstance[TestUser]()
 	col, err := sub.resolveColumnName(uintptrOf(&u.Name))
-	if !errors.Is(err, ErrFieldAddrUnregistered) {
-		t.Errorf("H5 sub 必须严格闭合，不回退全局 cache，got col=%q err=%v", col, err)
+	if err != nil {
+		t.Errorf("Task 14: sub 应可解析外层 outer T 的规范单例字段，got err=%v", err)
+	}
+	// sub 自动注册主表 alias "test_users"（SubQuery 默认行为），所以返回 "test_users.username"
+	if col != "test_users.username" {
+		t.Errorf("expected test_users.username, got %s", col)
 	}
 }
 

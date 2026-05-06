@@ -1259,9 +1259,9 @@ var _ AnyQuery = (*Query[struct{}])(nil)
 // 路径：
 //  1. 当前 q.core.aliases 命中（含 H2 offset 校验）→ "alias.col"
 //  2. 沿 outerQueryRef 链向上重复（含 N4 revoked 检查）
-//  3. 顶层未命中：
-//     - sub 模式（q.core.outerQueryRef != nil）→ 严格闭合 ErrFieldAddrUnregistered（H5）
-//     - 顶层模式 → 回退全局 columnNameCache（v0.7.x 既有行为）
+//  3. 链遍历完毕后未命中：回退全局 columnNameCache（v0.7.x 既有行为）
+//     - sub 模式（outerQueryRef != nil）同样允许全局 fallback（Task 14 关联子查询语义）
+//     - 全局 cache 也未命中 → ErrFieldAddrUnregistered
 //
 // 错误累积到 q.core.errs；调用方可通过 q.GetError() 感知
 func (q *Query[T]) resolveColumnName(addr uintptr) (string, error) {
@@ -1269,7 +1269,6 @@ func (q *Query[T]) resolveColumnName(addr uintptr) (string, error) {
 		// Task 4 强制初始化后此分支不应触发；防御性处理
 		return "", fmt.Errorf("gplus: query core not initialized")
 	}
-	isSub := q.core.outerQueryRef != nil
 
 	var current AnyQuery = q
 	for current != nil {
@@ -1285,13 +1284,11 @@ func (q *Query[T]) resolveColumnName(addr uintptr) (string, error) {
 		current = core.outerQueryRef
 	}
 
-	if isSub {
-		// H5：sub 严格闭合，不回退全局 cache
-		q.core.appendErr(ErrFieldAddrUnregistered)
-		return "", ErrFieldAddrUnregistered
-	}
-
 	// 顶层 fallback：用 schema.go 的全局 columnNameCache 查找
+	// v0.8.0 Task 14：sub 允许 fallback 全局 cache，支持关联子查询引用外层表规范单例字段。
+	// 原 H5 严格闭合设计（isSub → 直接报错）在 SubQuery 实装后放宽：
+	// sub 通过 outerQueryRef 链已与外层 query 合法关联，访问外层 T 的规范单例是预期用法。
+	// TD-7（v0.9 加 StrictColumnResolution 选项）仍适用，此处保持 v0.7.x fallback 语义。
 	// 注意：此路径未做 alias 链反向校验（H5 反向风险）——若用户在不同 q 间复用规范单例字段地址，
 	// 全局 cache 会静默命中产生跨 Query SQL（FROM 表与列引用不匹配）。
 	// v0.7.x 既有行为，不破坏兼容；spec §11.2 TD-7 已记录，v0.9 加 StrictColumnResolution 选项。
