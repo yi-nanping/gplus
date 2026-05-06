@@ -49,6 +49,12 @@ type testOrder struct {
 
 func (testOrder) TableName() string { return "test_orders" }
 
+// Product 模型，用于 SubQuery 嵌套 3 层测试
+type Product struct {
+	ID   uint   `gorm:"primaryKey"`
+	Name string `gorm:"column:name"`
+}
+
 // assertPanics 断言函数调用会触发 panic
 func assertPanics(t testing.TB, fn func(), msg string) {
 	t.Helper()
