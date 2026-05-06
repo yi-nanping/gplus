@@ -163,3 +163,52 @@ func (c *queryCore) hadRevokedHit(addr uintptr) bool {
 
 // 注意：*Query[T] 和 *Updater[T] 的 gplusCore() 方法实现在 query.go / update.go
 // 编译期断言放在它们各自所在文件，避免循环依赖
+
+// As 在 q（含 outerQueryRef 链）上注册一个 X 类型的 alias 实例。
+//
+// 错误处理：
+//   - q == nil：panic ErrAliasQueryNil（N5：API 入口编程错误，无 q 可挂错误）
+//   - name 不符合白名单正则：累积 ErrAliasInvalidName，返回规范单例 fallback
+//   - name 已在链中存在：累积 ErrAliasDuplicate，返回首次注册实例（决策 1B）
+//
+// 返回的 *X 实例字段地址独立于规范单例，仅用于取字段地址。
+func As[X any](q AnyQuery, alias string) *X {
+	if q == nil {
+		panic(ErrAliasQueryNil)
+	}
+	core := q.gplusCore()
+
+	// name 校验
+	if !aliasNameRegexp.MatchString(alias) {
+		core.appendErr(ErrAliasInvalidName)
+		return getModelInstance[X]()
+	}
+
+	// 沿 outerQueryRef 链检查是否已有同名 alias（决策 1B）
+	cur := q
+	for cur != nil {
+		curCore := cur.gplusCore()
+		if existing, ok := curCore.aliases[alias]; ok {
+			core.appendErr(ErrAliasDuplicate)
+			if inst, ok2 := existing.instance.(*X); ok2 && inst != nil {
+				return inst
+			}
+			// 同名但 X 类型不同，返回规范单例 fallback
+			return getModelInstance[X]()
+		}
+		next := curCore.outerQueryRef
+		if next == nil {
+			break
+		}
+		cur = next
+	}
+
+	// 创建独立 alias 实例（reflect.New，地址独立于规范单例）
+	typ := reflect.TypeOf((*X)(nil)).Elem()
+	instancePtr := reflect.New(typ)
+	instance := instancePtr.Interface().(*X)
+	if err := core.addAlias(alias, typ, instance); err != nil {
+		core.appendErr(err)
+	}
+	return instance
+}

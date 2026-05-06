@@ -16,6 +16,8 @@ type Query[T any] struct {
 	errs []error
 	// dataRuleApplied 防止 DataRuleBuilder 对同一 Query 重复追加数据权限条件
 	dataRuleApplied bool
+	// core 承载 alias 体系状态（v0.8.0）；懒惰初始化
+	core *queryCore
 }
 
 // NewQuery 创建泛型查询构建器，同时返回类型 T 的规范实例指针。
@@ -53,18 +55,22 @@ func (q *Query[T]) IsUnscoped() bool {
 	return q.unscoped
 }
 
-// GetError 将所有累积的错误合并为一个返回
+// GetError 将所有累积的错误合并为一个返回（含 alias core 中的错误）
 func (q *Query[T]) GetError() error {
-	if len(q.errs) == 0 {
+	all := q.errs
+	if q.core != nil && len(q.core.errs) > 0 {
+		all = append(all, q.core.errs...)
+	}
+	if len(all) == 0 {
 		return nil
 	}
-	n := len(q.errs)
+	n := len(all)
 	word := "errors"
 	if n == 1 {
 		word = "error"
 	}
 	summary := fmt.Errorf("gplus query builder failed with %d %s", n, word)
-	return errors.Join(append([]error{summary}, q.errs...)...)
+	return errors.Join(append([]error{summary}, all...)...)
 }
 
 // Clear 重写 Query 的清除逻辑
@@ -950,3 +956,15 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 
 // gplusSubquery 私有 guard 方法，阻止外部包冒名实现 Subquerier 接口。
 func (q *Query[T]) gplusSubquery() {}
+
+// gplusCore 返回 Query[T] 的 queryCore（懒惰初始化）。
+// 实现 AnyQuery 接口，供 As 包级函数使用。
+func (q *Query[T]) gplusCore() *queryCore {
+	if q.core == nil {
+		q.core = newQueryCore(q.ctx)
+	}
+	return q.core
+}
+
+// 编译期断言：*Query[T] 实现 AnyQuery 接口
+var _ AnyQuery = (*Query[struct{}])(nil)

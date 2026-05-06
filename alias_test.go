@@ -68,3 +68,49 @@ func TestQueryCore_LookupAddr_RevokedReturnsFalse_N4(t *testing.T) {
 		t.Fatalf("hadRevokedHit should return true for revoked entry")
 	}
 }
+
+func TestAs_HappyPath(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	o := As[TestUser](q, "o")
+	if o == nil {
+		t.Fatalf("expected non-nil alias instance")
+	}
+	if err := q.GetError(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAs_InvalidNameAccumulates(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	_ = As[TestUser](q, "1bad-name")
+	err := q.GetError()
+	if !errors.Is(err, ErrAliasInvalidName) {
+		t.Fatalf("expected ErrAliasInvalidName, got %v", err)
+	}
+}
+
+func TestAs_DuplicateAccumulates_DecisionB(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	o1 := As[TestUser](q, "o")
+	o2 := As[TestUser](q, "o")
+	if o1 != o2 {
+		t.Fatalf("expected first instance returned on duplicate")
+	}
+	if !errors.Is(q.GetError(), ErrAliasDuplicate) {
+		t.Fatalf("expected ErrAliasDuplicate accumulated")
+	}
+}
+
+func TestAs_NilQueryPanics_N5(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("expected panic")
+		}
+		err, _ := r.(error)
+		if !errors.Is(err, ErrAliasQueryNil) {
+			t.Fatalf("expected ErrAliasQueryNil panic, got %v", r)
+		}
+	}()
+	_ = As[TestUser](nil, "o")
+}
