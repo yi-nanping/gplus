@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"gorm.io/gorm"
@@ -20,6 +21,8 @@ type Updater[T any] struct {
 	errs []error
 	// dataRuleApplied 防止 DataRuleBuilder 对同一 Updater 重复追加数据权限条件
 	dataRuleApplied bool
+	// core 承载 alias 体系状态（v0.8.0）
+	core *queryCore
 }
 
 // NewUpdater 创建泛型更新构建器，同时返回类型 T 的规范实例指针。
@@ -28,13 +31,134 @@ type Updater[T any] struct {
 func NewUpdater[T any](ctx context.Context) (*Updater[T], *T) {
 	model := getModelInstance[T]()
 	return &Updater[T]{
-		ctx: ctx,
+		ctx:  ctx,
+		core: newQueryCore(ctx),
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
 		},
 		setMap: make(map[string]any),
 		errs:   make([]error, 0, 8),
 	}, model
+}
+
+// gplusCore 返回 Updater[T] 的 queryCore，实现 AnyQuery 接口。
+func (u *Updater[T]) gplusCore() *queryCore {
+	return u.core
+}
+
+// 编译期断言：*Updater[T] 实现 AnyQuery 接口
+var _ AnyQuery = (*Updater[struct{}])(nil)
+
+// resolveColumnName 解析字段地址到列名（v0.8.0 alias 体系）。
+// 路径：alias 链命中 → "alias.col"；全局 columnNameCache fallback。
+func (u *Updater[T]) resolveColumnName(addr uintptr) (string, error) {
+	if u.core == nil {
+		return "", fmt.Errorf("gplus: updater core not initialized")
+	}
+	var current AnyQuery = u
+	for current != nil {
+		core := current.gplusCore()
+		if alias, col, ok := core.lookupAddr(addr); ok {
+			return alias + "." + col, nil
+		}
+		if core.hadRevokedHit(addr) {
+			u.core.appendErr(ErrAliasRevoked)
+			return "", ErrAliasRevoked
+		}
+		current = core.outerQueryRef
+	}
+	// 顶层 fallback：全局 columnNameCache
+	if name, ok := columnNameCache.Load(addr); ok {
+		if len(u.core.aliases) > 0 {
+			mainTable := u.mainTableName()
+			if mainTable != "" {
+				return mainTable + "." + name.(string), nil
+			}
+		}
+		return name.(string), nil
+	}
+	u.core.appendErr(ErrFieldAddrUnregistered)
+	return "", ErrFieldAddrUnregistered
+}
+
+// mainTableName 返回 T 的主表名（用于 resolveColumnName fallback 场景加前缀）。
+func (u *Updater[T]) mainTableName() string {
+	var zero T
+	typ := reflect.TypeOf(zero)
+	if typ == nil {
+		return ""
+	}
+	return aliasSchemaTableName(typ)
+}
+
+// lookupAliasFromChain 沿 u 链（outerQueryRef 方向）查找某实例对应的 alias 注册项。
+func (u *Updater[T]) lookupAliasFromChain(alias any) (name string, typ reflect.Type, ok bool) {
+	if alias == nil {
+		return "", nil, false
+	}
+	addr := reflectPointerAddr(alias)
+	var current AnyQuery = u
+	for current != nil {
+		core := current.gplusCore()
+		for _, entry := range core.aliases {
+			if entry.addrLow == addr {
+				if entry.revoked {
+					return "", nil, false
+				}
+				return entry.name, entry.typ, true
+			}
+		}
+		current = core.outerQueryRef
+	}
+	return "", nil, false
+}
+
+// appendJoinAs 内部辅助：构建 alias JOIN 条目并追加到 ScopeBuilder.joins。
+func (u *Updater[T]) appendJoinAs(joinType string, alias any, leftCol any, rightCol any, extraSQL string, extraArgs []any) {
+	if u.core == nil {
+		return
+	}
+	aliasName, aliasTyp, ok := u.lookupAliasFromChain(alias)
+	if !ok {
+		u.core.appendErr(ErrAliasNotInChain)
+		return
+	}
+	leftStr, lerr := u.resolveColumnName(reflectPointerAddr(leftCol))
+	if lerr != nil {
+		return
+	}
+	rightStr, rerr := u.resolveColumnName(reflectPointerAddr(rightCol))
+	if rerr != nil {
+		return
+	}
+	tableName := aliasSchemaTableName(aliasTyp)
+	joinSQL := fmt.Sprintf("%s %s AS %s ON %s = %s",
+		joinType, tableName, aliasName, leftStr, rightStr)
+	if extraSQL != "" {
+		joinSQL += " " + extraSQL
+	}
+	u.joins = append(u.joins, joinInfo{
+		table:     joinSQL,
+		args:      extraArgs,
+		aliasName: aliasName,
+		rawSQL:    true,
+	})
+}
+
+// LeftJoinAs Updater 类型安全的 LEFT JOIN（v0.8.0 alias 体系，M2 精简）。
+//
+// alias 必须由 As[X](u, ...) 创建的实例，且属于当前 u 链；
+// leftCol / rightCol 为任意一侧的字段指针；
+// extraSQL 为额外的 ON 条件 SQL 片段（含 ? 占位符），extraArgs 对应参数。
+func (u *Updater[T]) LeftJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Updater[T] {
+	u.appendJoinAs("LEFT JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return u
+}
+
+// InnerJoinAs Updater 类型安全的 INNER JOIN（v0.8.0 alias 体系，M2 精简）。
+func (u *Updater[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Updater[T] {
+	u.appendJoinAs("INNER JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return u
 }
 
 // Context 返回上下文信息，若未设置则返回 context.Background()
@@ -87,10 +211,30 @@ func (u *Updater[T]) IsEmpty() bool {
 	return len(u.setMap) == 0
 }
 
-// resolveColumnNameAny 接受 col any，走包级 resolveColumnName。
-// Updater[T] 暂无 alias 体系，此方法保持接口一致（便于未来扩展）。
+// resolveColumnNameAny 接受 col any，v0.8.0 真正接入 alias 链。
+//
+// col 可能是字符串（直接列名）或字段指针（地址解析）：
+//   - 字符串：直接返回（保持 v0.6.0 字符串列名行为）
+//   - 指针且 u.core 已初始化：走 method resolveColumnName（alias 链 + 全局 cache）
+//   - u.core == nil 或非指针：回退包级 resolveColumnName（全局 cache）
 func (u *Updater[T]) resolveColumnNameAny(col any) (string, error) {
-	return resolveColumnName(col)
+	if s, ok := col.(string); ok {
+		if s == "" {
+			return "", ErrColumnEmpty
+		}
+		return s, nil
+	}
+	if col == nil {
+		return "", ErrInvalidPointer
+	}
+	if u.core == nil {
+		return resolveColumnName(col)
+	}
+	addr := reflectPointerAddr(col)
+	if addr == 0 {
+		return resolveColumnName(col)
+	}
+	return u.resolveColumnName(addr)
 }
 
 // Set 设置更新值
