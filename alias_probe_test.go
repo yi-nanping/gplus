@@ -1,6 +1,7 @@
 package gplus
 
 import (
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -18,7 +19,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 			Find(&users).Statement
 		got := stmt.SQL.String()
 		want := "LEFT JOIN orders AS o ON o.user_id = test_users.id"
-		if !contains(got, want) {
+		if !strings.Contains(got, want) {
 			t.Errorf("expected SQL contains %q, got %q", want, got)
 		}
 	})
@@ -31,7 +32,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 			Where("EXISTS (?)", subDB).
 			Find(&users).Statement
 		got := stmt.SQL.String()
-		if !contains(got, "EXISTS") {
+		if !strings.Contains(got, "EXISTS") {
 			t.Errorf("expected SQL contains EXISTS, got %q", got)
 		}
 	})
@@ -42,7 +43,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 			Joins("LEFT JOIN test_users AS boss ON test_users.id = boss.id").
 			Find(&users).Statement
 		got := stmt.SQL.String()
-		if !contains(got, "test_users AS boss") {
+		if !strings.Contains(got, "test_users AS boss") {
 			t.Errorf("self-join alias not preserved, got %q", got)
 		}
 	})
@@ -55,10 +56,10 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 			Model(&TestUser{}).Select("1").Where("age > ?", 18)
 		stmt := sub.Session(&gorm.Session{DryRun: true}).Find(&[]TestUser{}).Statement
 		got := stmt.SQL.String()
-		if contains(got, "status = ") {
+		if strings.Contains(got, "status = ") {
 			t.Errorf("subquery leaked outer WHERE: %q", got)
 		}
-		if contains(got, "id, name") {
+		if strings.Contains(got, "id, name") {
 			t.Errorf("subquery leaked outer SELECT: %q", got)
 		}
 	})
@@ -69,25 +70,11 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 			Joins("LEFT JOIN orders AS o ON o.user_id = test_users.id AND o.status = ?", "paid").
 			Find(&users).Statement
 		got := stmt.SQL.String()
-		if !contains(got, "?") {
+		if !strings.Contains(got, "?") {
 			t.Errorf("expected ? placeholder in DryRun SQL, got %q", got)
 		}
-		if contains(got, "'paid'") {
+		if strings.Contains(got, "'paid'") {
 			t.Errorf("paid value should not be inlined: %q", got)
 		}
 	})
-}
-
-// contains 简单包含判断
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
