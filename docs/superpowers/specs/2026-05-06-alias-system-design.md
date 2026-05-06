@@ -100,22 +100,22 @@ q, u := gplus.NewQueryAs[User](ctx, "u")
 ```
 解析顺序（沿 Query 链由内至外）：
   current := q
-  isSub   := (q.outerQueryRef != nil)   // 当前 q 是子查询吗
   while current != nil:
       for entry in current.aliases:
           if entry.addrLow <= addr < entry.addrHigh:
+              if entry.revoked:                          // N4：revoked 直接拒绝
+                  累积 ErrAliasRevoked，return ""
               offset := addr - entry.addrLow
               schema := schemaFor(entry.typ)
-              if col, ok := schema[offset]; ok:        // ← H2：offset 必须命中已知字段集合
+              if col, ok := schema[offset]; ok:        // H2：offset 必须命中已知字段
                   return entry.name + "." + col, nil
-              // offset 不在 schema：地址范围误命中（GC 重用 / size 巧合），视为未命中
+              // offset 不在 schema：地址范围误命中，视为未命中
       current = current.outerQuery()
 
-  顶层未命中（已遍历整条链）：
-      if isSub:                                         // ← H5：子查询严格闭合
-          return "", ErrFieldAddrUnregistered           // 不回退全局 cache，防跨链泄露
-      else:
-          回退 columnNameCache（规范单例）→ "table.col"
+  顶层 fallback（v0.8.0 Task 14 修订）：
+      从全局 columnNameCache 查找
+      若 q.aliases 非空（alias 场景）：返回 "<主表>.<col>"（防多表 JOIN 歧义）
+      否则：返回裸列名（v0.7.x 兼容）
 
   都失败：
       累积 ErrFieldAddrUnregistered，返回 ""
@@ -123,7 +123,12 @@ q, u := gplus.NewQueryAs[User](ctx, "u")
 
 **两条防御**：
 - **H2 offset 校验**：`addrLow <= addr < addrHigh` 命中区间后，必须再校验 `addr - addrLow` 是已知字段 offset；防止 GC 后地址重用 / 不同类型 size 巧合误命中
-- **H5 子查询严格闭合**：sub 模式下若链上找不到，**绝不**回退全局 columnNameCache。否则 `q1.SubQuery → sub.EqCol(&u_of_q2.ID, ...)` 这种跨链误用会因 q2.u 是规范单例派生而静默命中全局，生成错 SQL（FROM 无 users 表却引用 users.id）
+- **H5 修订（Task 14 发现）**：原 spec 设计 sub 严格闭合不回退全局 cache，但
+  `getModelInstance[T]` 保证 `*T` 规范单例全局唯一——q1 和 q2 的 `&u.ID` 是同一指针，
+  跨 Query 误用根本不存在。H5 防御场景架构上不可能发生。
+
+  实际实施允许 sub 路径回退全局 cache，让 correlated subquery 能引用外层规范单例字段
+  （这是 correlated subquery 的核心需求）。alias 实例字段仍由链遍历严格隔离（H5 的有效部分保留）。
 
 **关键不变量**：
 
@@ -482,12 +487,11 @@ func (q *Query[T]) Clear() *Query[T] {
 }
 ```
 
-注意：`resolveColumnName` 在 lookupAddr 命中 revoked entry 时（区间内但被拒），需在 sub 严格闭合 + 全局 fallback 的判断**之前**累积 `ErrAliasRevoked`。具体：
+注意：`resolveColumnName` 在 lookupAddr 命中 revoked entry 时（区间内但被拒），需在全局 fallback 判断**之前**累积 `ErrAliasRevoked`。具体：
 
 ```go
 func resolveColumnName(addr uintptr) (string, error) {
     current := q
-    isSub   := (q.core.outerQueryRef != nil)
     for current != nil {
         if alias, col, ok := current.lookupAddr(addr); ok {
             return alias + "." + col, nil
@@ -499,10 +503,10 @@ func resolveColumnName(addr uintptr) (string, error) {
         }
         current = current.outerQuery()
     }
-    if isSub {
-        return "", ErrFieldAddrUnregistered
-    }
-    // ...全局 fallback
+    // H5 修订（Task 14）：原设计要求 sub 严格闭合，实施过程发现该防御场景在架构上不存在
+    // （getModelInstance[T] 保证 *T 规范单例全局唯一）。实际允许 sub 回退全局 cache，
+    // 让 correlated subquery 引用外层规范单例字段。alias 实例字段地址仍由链遍历严格隔离。
+    // ...全局 fallback（sub 和顶层 q 均走此路径）
 }
 ```
 
@@ -776,7 +780,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 |---|---|---|
 | `alias_test.go` | As 创建 / **重复名累积 ErrAliasDuplicate**（决策 1B） / 非法名 / **As(nil) panic ErrAliasQueryNil**（N5） / 跨 query 复用检测 / 字段地址解析链 / **Clear 重置 aliases 与 outerQueryRef**（M5） / **Clear 后用 alias 实例累积 ErrAliasRevoked**（N4） | 15 |
 | `query_joinas_test.go` | 7 种 JoinAs × ON 形态 × **extraSQL 参数化路径**（C1） | 18 |
-| `query_subquery_correlated_test.go` | SubQuery 派生 / SubQuery(nil) 累积错误（H4） / 跨层 alias 引用 / 嵌套 sub 3 层 / **跨链泄露被 H5 拦截** | 12 |
+| `query_subquery_correlated_test.go` | SubQuery 派生 / SubQuery(nil) 累积错误（H4） / 跨层 alias 引用 / 嵌套 sub 3 层 / **sub 引用外层规范单例字段（H5 修订验收）** | 12 |
 | `query_exists_test.go` | Exists/NotExists/OrExists/OrNotExists × 简单/相关 sub | 12 |
 | `updater_alias_test.go` | Updater 镜像（精简后：LeftJoinAs/InnerJoinAs/SubQuery/Exists） | 8 |
 | `query_newqueryas_test.go` | NewQueryAs 主表 alias / 与副表 alias 冲突检测 / SQL 输出 | 8 |
@@ -820,7 +824,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 | 阶段 | 任务 | Commit 数 | 阻塞依赖 |
 |---|---|---|---|
 | **P0 探针** | `TestGORMAliasBehaviorProbe` 4 子测试，永久 RED-lock GORM v1.31.x 行为 | 1 | 无 |
-| **P1 内核** | `AnyQuery` 接口（phantom guard）+ `*queryCore` 内部类型；`queryCore.aliases / outerQueryRef / metadata` 字段；`As[X]` 创建函数；`resolveColumnName` 沿链查找（含 H2 offset 校验 / H5 sub 严格闭合）；5 个新错误哨兵；**Query.Clear() / Updater.Clear() 重置 aliases + outerQueryRef + errs**（M5） | 4-5 | P0 |
+| **P1 内核** | `AnyQuery` 接口（phantom guard）+ `*queryCore` 内部类型；`queryCore.aliases / outerQueryRef / metadata` 字段；`As[X]` 创建函数；`resolveColumnName` 沿链查找（含 H2 offset 校验 / H5 修订：sub 允许回退全局 cache）；5 个新错误哨兵；**Query.Clear() / Updater.Clear() 重置 aliases + outerQueryRef + errs**（M5） | 4-5 | P0 |
 | **P2 NewQueryAs** | 主表 alias 入口；schema 缓存按 alias 解析路径；name 冲突检测 | 2 | P1 |
 | **P3 JoinAs（Query）** | 7 种 JoinAs；`joinInfo.aliasName`；`applyJoinsAs`；deprecated 标记旧 Join | 4 | P1 |
 | **P4 SubQuery 派生** | `SubQuery / SubQueryAs`；outerQuery 链路；ctx 透传；errs 聚合 | 2 | P1 |
@@ -895,7 +899,9 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 - [ ] **H6 防御（决策 1B）**：`As` name 重复**累积** `ErrAliasDuplicate` + BuildQuery 入口 `len(errs) > 0` 强制短路（不生成 SQL），两条防御均测试覆盖
 - [ ] **N4 防御**：`Clear()` 翻转 alias entry.revoked，后续 `lookupAddr` 命中 revoked 累积 `ErrAliasRevoked`，测试覆盖 `TestQuery_Clear_AliasUseAfterClear` 必须 RED 验证
 - [ ] **N5 防御**：`As(nil, ...)` panic `ErrAliasQueryNil`，测试覆盖（panic + recover 断言）
-- [ ] **H5 防御**：跨链 alias 误用（q1 的 sub 内引用 q2 的字段）测试返回 `ErrFieldAddrUnregistered`，**不**回退全局 cache 静默成功
+- [ ] **H5 修订验收**（Task 14 发现 H5 架构前提不成立）：sub 能引用外层规范单例字段
+  （`TestSubQuery_OuterCanonicalSingletonReferenced`）+ 嵌套 3 层正确解析祖父/父/自身
+  （`TestSubQuery_NestedThreeLayers`）；alias 字段地址仍由链遍历严格隔离
 
 ---
 
@@ -923,6 +929,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 | **TD-5** | `joinInfo` 同时承载 raw 与 alias 两种形态 | v1.0 删 deprecated 旧 Join 时需清理；当前先加 `kind` 字段（rawJoin/aliasJoin）显式区分 | v1.0 删旧 Join API 时 |
 | **TD-6** | `NewQueryAs` vs `As` 命名不对称 | `q, u := NewQueryAs[User](ctx,"u")` vs `o := As[Order](q,"o")` 读起来两套范式；godoc 解释为"NewQueryAs 等价于 NewQuery + 主表 As" | 命名稳定后不改；v1.0 评估是否合并 |
 | **TD-7**（**N11 新增**） | 顶层 q 的 `resolveColumnName` 仍 fallback 全局 columnNameCache | 跨 Query 字段地址巧合静默命中规范单例的极端场景（`q1.Eq(&u_of_q2.X, ...)`），生成 SQL 引用未 FROM 的表，运行时报错而非 gplus 校验拦截。v0.7.x 已有同等行为，不破坏兼容 | v0.9 加 `Query.WithStrictColumnResolution()` 选项 + `ErrFieldAddrCrossModel` 哨兵 |
+| **TD-8**（**Task 14 实施发现**） | H5 严格闭合设计的架构前提失效 | spec 原 H5 防御场景"跨 Query 字段地址巧合命中规范单例"不可能发生（`getModelInstance` 全局唯一）。实施已合理放宽 sub 回退全局 cache，让 correlated subquery 工作。spec §3.2 / §5.2 / §10 已同步修订；TD-7 仍有效（v0.9 加 StrictColumnResolution 防 string 列名误用而非地址误用） | 已在 v0.8.0 处理；spec 已同步 |
 
 ---
 
