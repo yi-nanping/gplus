@@ -1053,6 +1053,18 @@ func (q *Query[T]) FullJoinAs(alias any, leftCol any, rightCol any, extraSQL str
 	return q
 }
 
+// CrossJoinAs 类型安全的 CROSS JOIN（无 ON 条件）
+func (q *Query[T]) CrossJoinAs(alias any) *Query[T] {
+	q.appendJoinAsNoOn("CROSS JOIN", alias)
+	return q
+}
+
+// NaturalJoinAs 类型安全的 NATURAL JOIN（无 ON 条件）
+func (q *Query[T]) NaturalJoinAs(alias any) *Query[T] {
+	q.appendJoinAsNoOn("NATURAL JOIN", alias)
+	return q
+}
+
 // appendJoinAs 内部辅助：构建 alias JOIN 条目并追加到 ScopeBuilder.joins。
 // joinType 为 "LEFT JOIN" / "INNER JOIN" 等字面量。
 // C1 保障：joinSQL 仅拼接结构化字面量（table 名 / alias 名 / 列名），
@@ -1099,6 +1111,36 @@ func (q *Query[T]) appendJoinAs(joinType string, alias any, leftCol any, rightCo
 	q.joins = append(q.joins, joinInfo{
 		table:     joinSQL,  // rawSQL 路径：table 存储完整 JOIN 片段
 		args:      extraArgs, // 走 GORM 参数化
+		aliasName: aliasName,
+		rawSQL:    true,
+	})
+}
+
+// appendJoinAsNoOn 内部辅助：无 ON 的 JOIN 构建（CrossJoinAs / NaturalJoinAs 共用）。
+// 与 appendJoinAs 区别：仅接收 joinType 和 alias，省去 leftCol/rightCol 解析。
+func (q *Query[T]) appendJoinAsNoOn(joinType string, alias any) {
+	if q.core == nil {
+		return
+	}
+
+	// 1. 校验 alias 实例属于 q 链，取其 alias name 和 reflect.Type
+	aliasName, aliasTyp, ok := q.lookupAliasFromChain(alias)
+	if !ok {
+		q.core.appendErr(ErrAliasNotInChain)
+		return
+	}
+
+	// 2. 构造 JOIN SQL 字面量（仅表名 + 别名，无 ON 条件）
+	tableName := aliasSchemaTableName(aliasTyp)
+	joinSQL := fmt.Sprintf("%s %s AS %s",
+		joinType,
+		tableName,
+		aliasName,
+	)
+
+	// 3. 追加到 joins（rawSQL=true，同 appendJoinAs 路径）
+	q.joins = append(q.joins, joinInfo{
+		table:     joinSQL,
 		aliasName: aliasName,
 		rawSQL:    true,
 	})

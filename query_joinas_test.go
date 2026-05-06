@@ -88,3 +88,31 @@ func TestLeftJoinAs_AliasNotInChain(t *testing.T) {
 		t.Errorf("expected ErrAliasNotInChain, got %v", q2.GetError())
 	}
 }
+
+func TestCrossJoinAs(t *testing.T) {
+	_, db := setupTestDB[TestUser](t)
+	q, _ := NewQuery[TestUser](context.Background())
+	o := As[Order](q, "o")
+	q.CrossJoinAs(o)
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL: %v", err)
+	}
+	if !strings.Contains(sql, "CROSS JOIN") {
+		t.Errorf("expected CROSS JOIN, got %s", sql)
+	}
+}
+
+func TestNaturalJoinAs(t *testing.T) {
+	_, db := setupTestDB[TestUser](t)
+	q, _ := NewQuery[TestUser](context.Background())
+	o := As[Order](q, "o")
+	q.NaturalJoinAs(o)
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL: %v", err)
+	}
+	if !strings.Contains(sql, "NATURAL JOIN") {
+		t.Errorf("expected NATURAL JOIN, got %s", sql)
+	}
+}
