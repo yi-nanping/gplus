@@ -98,53 +98,117 @@ q, u := gplus.NewQueryAs[User](ctx, "u")
 ```
 解析顺序（沿 Query 链由内至外）：
   current := q
+  isSub   := (q.outerQueryRef != nil)   // 当前 q 是子查询吗
   while current != nil:
       for entry in current.aliases:
           if entry.addrLow <= addr < entry.addrHigh:
               offset := addr - entry.addrLow
-              col   := schemaFor(entry.typ)[offset]
-              return entry.name + "." + col, nil
-      current = current.outerQuery
+              schema := schemaFor(entry.typ)
+              if col, ok := schema[offset]; ok:        // ← H2：offset 必须命中已知字段集合
+                  return entry.name + "." + col, nil
+              // offset 不在 schema：地址范围误命中（GC 重用 / size 巧合），视为未命中
+      current = current.outerQuery()
 
-  顶层未命中：
-      回退原有 columnNameCache（规范单例）→ "table.col"
+  顶层未命中（已遍历整条链）：
+      if isSub:                                         // ← H5：子查询严格闭合
+          return "", ErrFieldAddrUnregistered           // 不回退全局 cache，防跨链泄露
+      else:
+          回退 columnNameCache（规范单例）→ "table.col"
 
   都失败：
       累积 ErrFieldAddrUnregistered，返回 ""
 ```
+
+**两条防御**：
+- **H2 offset 校验**：`addrLow <= addr < addrHigh` 命中区间后，必须再校验 `addr - addrLow` 是已知字段 offset；防止 GC 后地址重用 / 不同类型 size 巧合误命中
+- **H5 子查询严格闭合**：sub 模式下若链上找不到，**绝不**回退全局 columnNameCache。否则 `q1.SubQuery → sub.EqCol(&u_of_q2.ID, ...)` 这种跨链误用会因 q2.u 是规范单例派生而静默命中全局，生成错 SQL（FROM 无 users 表却引用 users.id）
 
 **关键不变量**：
 
 1. **alias 实例只读**——业务代码绝对不该 `o.Amount = 100`，只用于取字段地址（godoc 警告）
 2. **alias name 在 Query 链中唯一**——`As()` 时检查 `current → outerQuery → ...` 全链
 3. **alias 实例不入全局缓存**——避免 Query GC 后僵尸条目内存累积
-4. **解析路径线性扫描**——通常 alias ≤ 5、outerQuery 链 ≤ 3 层，开销可忽略（实测在性能基线验证）
+4. **GC 安全**——`aliasEntry.instance any` 持有强引用，Query 存活期间实例不被 GC；`addrLow/addrHigh uintptr` 仅作 key 比较，不跨 GC 失效。`lookupAddr` 在 hot loop 中通过持有 entry 引用确保 instance 存活，无需 `runtime.KeepAlive`（因为 `for _, entry := range q.aliases` 的 entry 本身是值拷贝持有 instance）
+5. **解析路径线性扫描**——通常 alias ≤ 5、outerQuery 链 ≤ 3 层，开销可忽略（实测在性能基线验证）
 
-### 3.3 类型擦除接口 `AnyQuery`
+### 3.1.1 术语表
 
-由于 `Query[T]` 和 `Updater[T]` 都需要支持 alias 体系，且 `As / SubQuery` 必须接收"任意类型参数的 Query 或 Updater"，新增类型擦除接口：
+| 术语 | 含义 |
+|---|---|
+| `outerQueryRef` | `Query[T]` / `Updater[T]` 内 `*queryCore` 的字段，类型 `AnyQuery`，子查询时指向外层 |
+| `outerQuery()` | `AnyQuery` 接口暴露的方法（v0.8.0 内部使用），返回 outerQueryRef |
+| **outerQuery 链** | 叙述性术语，指 sub → outer → outer's outer → ... 的递归引用链路 |
+| **alias 实例** | `gplus.As[X]` 创建的独立 `*X`，字段地址独立于规范单例 |
+| **规范单例** | `getModelInstance[X]()` 返回的全局唯一 `*X`，字段地址注册在全局 columnNameCache |
+| **alias name** | SQL 中 `AS <name>` 的标识符，如 `o`、`boss` |
+
+### 3.3 类型擦除接口 `AnyQuery` + 内部共享类型 `queryCore`
+
+**设计要点**（M1 + H10 协同）：
+
+- `AnyQuery` 接口仅作 **phantom sentinel**——只暴露 `gplusCore() *queryCore` 一个 unexported method，外部包既无法冒名实现，也无法直接调用内部能力
+- `queryCore` 是 unexported 抽象类型，承载 alias 体系的所有共享状态与行为；`Query[T]` 和 `Updater[T]` 各自**内嵌** `*queryCore`
+- `queryCore.metadata` 字段预留扩展槽位（v0.8.0 仅 ctx；v0.9+ 可加 routing/tracing/sharding 而不破坏 AnyQuery 接口）
 
 ```go
-// AnyQuery 是 Query[T] 和 Updater[T] 的共同抽象，用于 alias / SubQuery 派生场景
-//
-// 仅暴露内部使用所需的最小方法集。业务代码不应直接实现该接口
-// （unexported method 阻止包外冒名实现）
+// AnyQuery 是 Query[T] 和 Updater[T] 的 phantom 标签接口
+// 业务代码无法实现（gplusCore 返回 unexported 类型）
 type AnyQuery interface {
-    addAlias(name string, typ reflect.Type, instance any) error
-    lookupAddr(addr uintptr) (alias, col string, ok bool)
-    outerQuery() AnyQuery
-    context() context.Context     // 子查询派生时透传 ctx
-    appendErr(err error)
-    GetError() error
-
-    // gplusAnyQuery 是 unexported guard，阻止外部冒名实现
-    gplusAnyQuery()
+    gplusCore() *queryCore
 }
+
+// queryCore 承载 alias 体系的共享状态与方法
+// unexported 类型，外部无法直接引用
+type queryCore struct {
+    aliases       map[string]aliasEntry
+    outerQueryRef AnyQuery               // 子查询时指向外层；顶层为 nil
+    metadata      coreMetadata           // 扩展槽位：v0.8.0 只用 ctx
+    errs          []error
+}
+
+// coreMetadata 是横切关注点的扩展容器
+// v0.8.0 只放 ctx；v0.9+ 加 routing / tracing / sharding 时不破坏 AnyQuery 接口
+type coreMetadata struct {
+    ctx context.Context
+    // 预留：routing *RoutingHint
+    // 预留：tracing *TraceContext
+    // 预留：shardKey any
+}
+
+// queryCore 内部方法（包内可直接调用，包外不可见）
+func (c *queryCore) addAlias(name string, typ reflect.Type, instance any) error
+func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool)
+func (c *queryCore) outerQuery() AnyQuery   // 返回 outerQueryRef（提供给伪代码引用）
+func (c *queryCore) context() context.Context
+func (c *queryCore) appendErr(err error)
+func (c *queryCore) getError() error
+
+// Query[T] / Updater[T] 内嵌 *queryCore 并实现 AnyQuery
+type Query[T any] struct {
+    *queryCore
+    // ...其他 Query 特定字段（conditions / selects / joins / orders / ...）
+}
+
+func (q *Query[T]) gplusCore() *queryCore { return q.queryCore }
+
+// 同样 Updater[T]
+func (u *Updater[T]) gplusCore() *queryCore { return u.queryCore }
 
 // 编译期断言
 var _ AnyQuery = (*Query[struct{}])(nil)
 var _ AnyQuery = (*Updater[struct{}])(nil)
 ```
+
+**包级函数访问内部能力**：
+
+```go
+func As[X any](q AnyQuery, alias string) *X {
+    core := q.gplusCore()      // 拿到 unexported 类型，但能用其方法
+    // core.addAlias(...)
+}
+```
+
+外部包：拿不到 `*queryCore` 的方法（unexported 类型 + unexported method），但能传 `AnyQuery` 给 gplus 的包级函数——这正是预期使用方式。
 
 ---
 
@@ -184,30 +248,45 @@ func As[X any](q AnyQuery, alias string) *X
 ### 4.3 JOIN with alias
 
 ```go
-// 7 种 JoinAs 方法，每种 JOIN 类型一对（Query 与 Updater 各一份）
+// 7 种 JoinAs 方法（Query），ON extra 必须参数化（防 SQL 注入）
 //
-// leftCol / rightCol 接受字段地址（*F）或 alias 实例的字段地址（*o.UserID 等）
-// 由于 Go method 不能新增类型参数，这里用 any 接收，运行时通过 resolveColumnName 解析
+// alias / leftCol / rightCol 接受字段地址，由于 Go method 不能新增类型参数，用 any 接收
+// 运行时通过 resolveColumnName 解析；类型不匹配时 SQL 在 GORM 层报错
 //
-// extra 接受 raw 字符串片段（如 "AND o.deleted_at IS NULL"），可带占位符 args
-// v0.8.0 不实现类型安全的 ON extra 三元组，留待 v0.9
-func (q *Query[T]) LeftJoinAs(alias any, leftCol any, rightCol any, extra ...any) *Query[T]
-func (q *Query[T]) RightJoinAs(alias any, leftCol any, rightCol any, extra ...any) *Query[T]
-func (q *Query[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extra ...any) *Query[T]
-func (q *Query[T]) OuterJoinAs(alias any, leftCol any, rightCol any, extra ...any) *Query[T]
-func (q *Query[T]) FullJoinAs (alias any, leftCol any, rightCol any, extra ...any) *Query[T]
+// extraSQL 是可选的额外 ON 条件 SQL 片段（如 "AND o.deleted_at IS NULL AND o.status = ?"）
+// extraArgs 是 extraSQL 占位符 ? 对应的参数，**必须**通过此参数传入，禁止 fmt.Sprintf 拼接
+// 该参数走 GORM 参数化预编译路径（与 db.Where / db.Joins 的 args 同语义）
+func (q *Query[T]) LeftJoinAs (alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T]
+func (q *Query[T]) RightJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T]
+func (q *Query[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T]
+func (q *Query[T]) OuterJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T]
+func (q *Query[T]) FullJoinAs (alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T]
 
 // CrossJoinAs / NaturalJoinAs 无 ON 条件
 func (q *Query[T]) CrossJoinAs   (alias any) *Query[T]
 func (q *Query[T]) NaturalJoinAs (alias any) *Query[T]
 
-// Updater 镜像（同形态）
-func (u *Updater[T]) LeftJoinAs(...)  // 与 Query 同
-func (u *Updater[T]) RightJoinAs(...)
-// ...其余 5 种
+// Updater 镜像（M2 精简：仅 LeftJoinAs / InnerJoinAs，UPDATE 中 Cross/Natural/Outer/Full Join 几乎无用）
+func (u *Updater[T]) LeftJoinAs (alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Updater[T]
+func (u *Updater[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Updater[T]
+// 其余 5 种 JoinAs 在 Updater 上**不提供**；如确需复杂 UPDATE JOIN，回退 deprecated 旧 LeftJoin(string)
 ```
 
 **alias 参数为何用 any 而非 *X**：method 不能引入新类型参数，无法写 `func (q *Query[T]) LeftJoinAs[X any](alias *X, ...)`。运行时通过 `lookupAddr` 校验 alias 实例确实属于当前 q 链。
+
+**⚠️ extraSQL 不可拼接用户输入**（CRITICAL，godoc 须显著警告）：
+
+```go
+// ❌ SQL 注入：userInput 来自请求参数，被字符串拼接进 ON 条件
+q.LeftJoinAs(o, &o.UserID, &u.ID,
+    fmt.Sprintf("AND o.status = '%s'", userInput))     // ← 危险
+
+// ✅ 正确：placeholder + args 走 GORM 参数化
+q.LeftJoinAs(o, &o.UserID, &u.ID,
+    "AND o.status = ?", userInput)                      // ← 安全
+```
+
+extraSQL 字面值在代码 review 时应可见为字符串字面量；任何动态构造（fmt.Sprintf / strings.Join 等）一律视为审计红线。
 
 **deprecated 旧 API 保留**：
 
@@ -224,7 +303,10 @@ func (q *Query[T]) LeftJoin(table string, on string, args ...any) *Query[T]
 ```go
 // SubQuery 派生子查询：sub.outerQueryRef = outer，sub 默认主表 alias = 表名
 //
-// outer 必须非 nil，否则 panic（编程错误，不该静默）
+// outer 为 nil 时返回 dud *Query[X]（带预置 ErrSubqueryOuterNil），
+// 与 v0.6.0 errs 累积哲学一致；调用方可在最终 q.GetError() 处统一感知，
+// 不会因 nil 在链中传递导致 panic
+//
 // sub 的 ctx 来自 outer 的 ctx（透传）
 // sub 的 errs 在 q.GetError() 时通过 outerQuery 链聚合上报
 //
@@ -262,17 +344,19 @@ type Subquerier interface {
 // *Query[X] 自动满足。SubQuery 派生出的也是 *Query[X]
 ```
 
-### 4.7 API 表面统计
+### 4.7 API 表面统计（M2 精简版）
 
 | 类别 | 数量 |
 |---|---|
 | Query 新增 | 1 NewQueryAs + 7 JoinAs + 4 EXISTS = **12** |
-| Updater 新增 | 7 JoinAs + 4 EXISTS = **11** |
+| Updater 新增 | 2 JoinAs（Left + Inner）+ 4 EXISTS = **6** |
 | 包级函数新增 | As + SubQuery + SubQueryAs = **3** |
-| Repository 新增 | NewQueryAs = **1** |
-| 哨兵错误新增 | 4 个 |
-| **合计新方法/函数** | **27** |
-| Deprecated（不删） | 7 旧 Join × 2（Query + Updater 各一份）= 14 |
+| Repository 新增 | NewQueryAs = **1**（Updater 通常从 Repository 取 db 后调用 `NewUpdater()`，再加 As() 即可，无需独立 `NewUpdaterAs` 入口） |
+| 哨兵错误新增 | **5 个**（不含沿用 ErrSubqueryNil） |
+| **合计新方法/函数** | **22** |
+| Deprecated（不删） | Query 7 旧 Join + Updater 7 旧 Join = 14 |
+
+**v0.6.0 既有沿用**：`ErrSubqueryNil`（v0.6.0 引入，本期 EXISTS / NotExists 复用，不重复列入新增）
 
 ---
 
@@ -295,9 +379,11 @@ type Subquerier interface {
 
 3. 创建独立实例：
    typ      := reflect.TypeOf((*X)(nil)).Elem()
-   instance := reflect.New(typ).Interface().(*X)
-   addrLow  := uintptr(unsafe.Pointer(instance))
+   instance := reflect.New(typ).Interface().(*X)         // 堆分配，Go runtime 不移动堆对象
+   addrLow  := uintptr(unsafe.Pointer(instance))         // 仅作 key 比较，不跨 GC
    addrHigh := addrLow + typ.Size()
+   // GC 安全说明：aliasEntry.instance（any）持有强引用，
+   // entry 存活期间 instance 必活；addrLow/addrHigh 只是该期间的稳定 key
 
 4. 触发 schema 缓存（如未缓存）：
    reflectStructSchema(typ)  // 偏移量 → 列名映射，按类型缓存
@@ -331,26 +417,32 @@ q.appendErr(ErrFieldAddrUnregistered)
 return "", ErrFieldAddrUnregistered
 ```
 
-`lookupAddr` 实现：
+`lookupAddr` 实现（由 `*queryCore` 提供）：
 
 ```go
-func (q *Query[T]) lookupAddr(addr uintptr) (alias, col string, ok bool) {
-    for _, entry := range q.aliases {
+func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
+    for _, entry := range c.aliases {
         if entry.addrLow <= addr && addr < entry.addrHigh {
             offset := addr - entry.addrLow
             schema := reflectStructSchema(entry.typ)
-            if c, found := schema[offset]; found {
-                return entry.name, c, true
+            if name, found := schema[offset]; found {       // ← H2：offset 必须在 schema 已知字段中
+                return entry.name, name, true
             }
+            // 区间命中但 offset 不在 schema：地址范围误命中（GC 重用 / size 巧合），视为未命中
+            // 不 return false 提前退出——继续遍历其他 entry（虽然实际不会命中第二个）
         }
     }
     return "", "", false
 }
 ```
 
+**为什么 H2 校验关键**：
+- 若 alias 实例 GC 后地址被新分配的对象（不同类型，size 相同）复用，`addr ∈ [low, high)` 仍可能命中已死 entry（虽不变量 4 持有强引用阻止 GC，但是防御性编码）
+- 若用户错误地把字段地址传给 `lookupAddr`（例如 `&someStruct.X`，someStruct 与 alias 实例 size 巧合），区间命中但 offset 完全不在 alias 的 schema 中——必须拒绝
+
 ### 5.3 JoinAs 链路
 
-`q.LeftJoinAs(alias, leftCol, rightCol, extra...)`：
+`q.LeftJoinAs(alias, leftCol, rightCol, extraSQL, extraArgs...)`：
 
 ```
 1. 校验 alias 实例属于 q 链：
@@ -363,39 +455,54 @@ func (q *Query[T]) lookupAddr(addr uintptr) (alias, col string, ok bool) {
    leftStr,  _ := q.resolveColumnName(addrOf(leftCol))
    rightStr, _ := q.resolveColumnName(addrOf(rightCol))
 
-3. 构造 joinInfo：
+3. 构造 joinSQL（仅拼接结构化字面量，绝不拼用户输入）：
    tableName := schemaTableName(typeOf(alias))
    aliasName := lookupAliasName(alias)
    joinSQL   := fmt.Sprintf("LEFT JOIN %s AS %s ON %s = %s",
        quoteIdent(tableName), quoteIdent(aliasName),
        leftStr, rightStr)
-   if extra != nil:
-       joinSQL += " " + extra[0].(string)  // 允许 raw 片段
+   if extraSQL != "":
+       joinSQL += " " + extraSQL                  // ← extraSQL 含占位符 ?，不含值
 
-4. 追加到 q.joins：
+4. 追加到 q.joins，extraArgs 走 GORM 参数化路径（与 db.Where 的 args 同语义）：
    q.joins = append(q.joins, joinInfo{
-       query:    joinSQL,
-       args:     extraArgs,
-       aliasName: aliasName,  // 新增字段
+       query:     joinSQL,
+       args:      extraArgs,                      // ← C1：args 单独传给 GORM，不参与字符串拼接
+       aliasName: aliasName,
    })
+
+5. applyJoinsAs 时调用 db.Joins(j.query, j.args...)，
+   GORM 内部对 j.args 做参数化预编译，与 ? 占位符一一对应
 ```
 
-生成 SQL 形态：
+生成 SQL 形态（args 走预编译，不入字面量）：
 
 ```sql
-LEFT JOIN orders AS o ON o.user_id = users.id [AND <extra raw>]
+-- joinSQL 字面量：
+LEFT JOIN orders AS o ON o.user_id = users.id AND o.status = ?
+                                                              ^
+                                                       预编译参数槽位
+-- extraArgs：
+[]any{"paid"}                                    -- 经 GORM 参数化绑定，绝不进入 SQL 字符串
 ```
+
+**C1 防御核心**：`joinSQL` 字符串中**永远只有占位符 `?`**，从不出现用户值。`extraArgs` 通过 GORM 的 `db.Joins(query, args...)` 路径传入，与 `db.Where` 同等参数化保护。即使下游写 `q.LeftJoinAs(o, &o.UserID, &u.ID, "AND o.status = ?", userInput)`，`userInput` 也只能进 `extraArgs`，不会拼进字符串。
 
 ### 5.4 SubQuery 派生
 
 ```go
 func SubQuery[X any](outer AnyQuery) (*Query[X], *X) {
     if outer == nil {
-        panic("gplus: SubQuery outer is nil (programmer error)")
+        // H4：与 errs 累积哲学一致，返回带预置错误的 dud sub
+        // 调用方在 q.GetError() 处统一感知；避免 panic 在链式调用中爆炸
+        sub, x := NewQuery[X](context.Background())
+        sub.gplusCore().appendErr(ErrSubqueryOuterNil)
+        return sub, x
     }
-    ctx := outer.context()                 // 透传 ctx
+    core := outer.gplusCore()
+    ctx  := core.context()                       // 透传 ctx
     sub, x := NewQuery[X](ctx)
-    sub.outerQueryRef = outer              // 关键：设置外层引用
+    sub.gplusCore().outerQueryRef = outer        // 关键：设置外层引用
     return sub, x
 }
 ```
@@ -453,11 +560,12 @@ case existsLeaf:
 
 ## 6. 错误处理
 
-### 6.1 新增哨兵错误
+### 6.1 新增哨兵错误（5 个，不含沿用）
 
 ```go
 var (
     // alias 名字在 q.aliases 或 outerQuery 链中已存在
+    // 注：实际触发时立即 panic（编程错误，见 §6.2 H6）；该 sentinel 保留供 errors.Is 检测
     ErrAliasDuplicate = errors.New("gplus: alias name already registered in this query chain")
 
     // alias name 不符合白名单
@@ -468,22 +576,36 @@ var (
 
     // alias 实例传给了 JoinAs 但该实例从未在当前 q（含 outer 链）注册过
     ErrAliasNotInChain = errors.New("gplus: alias instance does not belong to this query chain")
+
+    // SubQuery(nil) 调用：outer 为 nil（H4：与 errs 累积哲学一致，不再 panic）
+    ErrSubqueryOuterNil = errors.New("gplus: SubQuery outer is nil")
 )
 ```
 
+**沿用 v0.6.0 既有**（不计入新增）：
+- `ErrSubqueryNil`（v0.6.0）：用于 `Exists(nil)` / `NotExists(nil)` 等子查询入参为 nil 时
+
 ### 6.2 错误累积链路
 
-复用 v0.6.0 累积机制，新增触发节点：
+**panic 边界**（仅留给"程序设计错误且必须立即暴露"）：
+
+| 触发点 | 行为 | 理由 |
+|---|---|---|
+| `As[X](q, name)` name 重复 | **panic**（H6） | 编程错误：同一 q 上重复注册同名 alias，必有一处写错；累积错误返回 fallback 实例会让快乐路径生成错 SQL（`o2 := As[Invoice](q,"x")` 但 o2 实际是 `*Order`），下游难诊断 |
+| `reflect.New` 失败（OOM 等运行时崩溃） | **panic** | 不可恢复 |
+
+**累积错误**（与 v0.6.0 哲学一致，调用方在 `q.GetError()` 处统一感知）：
 
 | 触发点 | 处理 |
 |---|---|
 | `As[X](q, name)` name 非法 | 累积 `ErrAliasInvalidName`，返回 fallback 实例 |
-| `As[X](q, name)` name 重复 | 累积 `ErrAliasDuplicate`，返回首次注册的实例 |
 | `LeftJoinAs(o, ...)` o 不在链 | 累积 `ErrAliasNotInChain`，跳过该 JOIN |
 | `resolveColumnName(addr)` 失败 | 累积 `ErrFieldAddrUnregistered`，返回空字符串列名 |
-| `Exists(nil)` | 累积 `ErrSubqueryNil`（v0.6.0 既有） |
+| `Exists(nil)` / `NotExists(nil)` | 累积 `ErrSubqueryNil`（v0.6.0 既有） |
 | `Exists(sub)` 时 sub 自身有 errs | 透传到 q.errs |
-| `SubQuery(nil)` | **panic**（编程错误，不静默） |
+| `SubQuery(nil)` | 累积 `ErrSubqueryOuterNil`，返回 dud sub（H4） |
+
+**双重防御**（H6 备选）：BuildQuery 入口检查 `len(c.errs) > 0`，若有累积错误直接短路返回错误，不生成 SQL。这确保即使调用方忘记调 `GetError()`，错误也不会被生成的"看似成功"SQL 掩盖。
 
 ### 6.3 GetError 摘要
 
@@ -533,6 +655,18 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
     t.Run("Where_ExistsSubquery_SubqueryDBSubstitution", ...)
     t.Run("SelfJoin_SameTable_DifferentAlias_NoConflict", ...)
     t.Run("Session_NewDBTrue_BreaksOuterWhereInheritance", ...)
+    // M3：显式断言子查询 SQL 不泄漏外层 WHERE/SELECT/FROM clauses
+    // 若 GORM v1.31.x 实测 leak，需改用 db.Session(&gorm.Session{NewDB:true}).Model(...) 重建
+    t.Run("Subquery_NoOuterClauseLeak_AssertedExplicitly", func(t *testing.T) {
+        // 1. 外层 q 已积累 WHERE / SELECT
+        // 2. 派生 sub 并 ToDB(outerDB.Session(NewDB:true))
+        // 3. 断言生成的子查询 SQL 不含外层 WHERE 字面 / 不含外层 SELECT 列
+    })
+    // M3：extra args 走 GORM 参数化预编译，不入字面 SQL
+    t.Run("JoinsWithArgs_ArgsParameterized_NotInlined", func(t *testing.T) {
+        // db.Joins("LEFT JOIN ... ON ... AND status = ?", "paid")
+        // 断言 DryRun SQL 包含 ? 占位符且不含 'paid' 字面
+    })
 }
 ```
 
@@ -542,14 +676,16 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 
 | 测试文件（新增） | 覆盖点 | 子测试估计 |
 |---|---|---|
-| `alias_test.go` | As 创建 / 重复名 / 非法名 / 跨 query 复用检测 / 字段地址解析链 | 12 |
-| `query_joinas_test.go` | 7 种 JoinAs × ON 形态 × extra raw 片段 | 18 |
-| `query_subquery_correlated_test.go` | SubQuery 派生 / 跨层 alias 引用 / 嵌套 sub 3 层 | 10 |
+| `alias_test.go` | As 创建 / 重复名 panic（H6） / 非法名 / 跨 query 复用检测 / 字段地址解析链 / **Clear 重置 aliases 与 outerQueryRef**（M5） | 13 |
+| `query_joinas_test.go` | 7 种 JoinAs × ON 形态 × **extraSQL 参数化路径**（C1） | 18 |
+| `query_subquery_correlated_test.go` | SubQuery 派生 / SubQuery(nil) 累积错误（H4） / 跨层 alias 引用 / 嵌套 sub 3 层 / **跨链泄露被 H5 拦截** | 12 |
 | `query_exists_test.go` | Exists/NotExists/OrExists/OrNotExists × 简单/相关 sub | 12 |
-| `updater_alias_test.go` | Updater 镜像（JoinAs/SubQuery/Exists） | 10 |
+| `updater_alias_test.go` | Updater 镜像（精简后：LeftJoinAs/InnerJoinAs/SubQuery/Exists） | 8 |
 | `query_newqueryas_test.go` | NewQueryAs 主表 alias / 与副表 alias 冲突检测 / SQL 输出 | 8 |
-| `alias_datarule_test.go` | DataRule × alias 三种合规模式 + 一个反例（验证副表敞开警告） | 6 |
-| **合计** | | **76** |
+| `alias_datarule_test.go` | DataRule × alias 三种合规模式 + **e2e 反例 RED-locked**（H9：副表敞开必须能被反例测试捕获，否则验收不过） | 7 |
+| **合计** | | **78** |
+
+**实现 vs 测试比例**：22 新方法/函数 + 5 新错误哨兵 + Clear 扩展 ≈ 28 实现单元；78 子测试 ≈ 1:2.8（含探针 / 集成 / 反例），符合 v0.6.0 / v0.7.0 节奏。
 
 ### 7.3 集成测试（MySQL/SQLite 双方言）
 
@@ -586,7 +722,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 | 阶段 | 任务 | Commit 数 | 阻塞依赖 |
 |---|---|---|---|
 | **P0 探针** | `TestGORMAliasBehaviorProbe` 4 子测试，永久 RED-lock GORM v1.31.x 行为 | 1 | 无 |
-| **P1 内核** | `AnyQuery` 接口；`Query.aliases / outerQueryRef` 字段；`As[X]` 创建函数；`resolveColumnName` 沿链查找；4 个新错误哨兵 | 3-4 | P0 |
+| **P1 内核** | `AnyQuery` 接口（phantom guard）+ `*queryCore` 内部类型；`queryCore.aliases / outerQueryRef / metadata` 字段；`As[X]` 创建函数；`resolveColumnName` 沿链查找（含 H2 offset 校验 / H5 sub 严格闭合）；5 个新错误哨兵；**Query.Clear() / Updater.Clear() 重置 aliases + outerQueryRef + errs**（M5） | 4-5 | P0 |
 | **P2 NewQueryAs** | 主表 alias 入口；schema 缓存按 alias 解析路径；name 冲突检测 | 2 | P1 |
 | **P3 JoinAs（Query）** | 7 种 JoinAs；`joinInfo.aliasName`；`applyJoinsAs`；deprecated 标记旧 Join | 4 | P1 |
 | **P4 SubQuery 派生** | `SubQuery / SubQueryAs`；outerQuery 链路；ctx 透传；errs 聚合 | 2 | P1 |
@@ -633,7 +769,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 | GORM Joins 字符串模板对 alias 处理与预期不符 | 低 | 高 | P0 探针提前锁定；如失败先调整 SQL 拼装策略 |
 | 跨 3 层以上 outerQuery 性能不达标 | 中 | 中 | P9 benchmark 后加 Query 局部缓存（addr → alias 提前算好） |
 | DataRule × alias 副表敞开导致下游误用 | 中 | **高（安全）** | godoc + CHANGELOG 双重警告；example 给三种合规写法；security review |
-| `any` 类型 leftCol/rightCol 导致运行时类型不匹配 | 中 | 低（SQL 报错快速暴露） | 测试覆盖类型不匹配场景；godoc 示例引导 |
+| `any` 类型 leftCol/rightCol 导致运行时类型不匹配 | 中 | 低（SQL 报错快速暴露） | 测试覆盖类型不匹配场景；godoc 示例引导；**v0.9 升级路径**：包级泛型函数 `gplus.LeftJoinAs[L,R any](q, alias, *L, *R, extraSQL, args...)` 提供编译期类型保证（method 受 Go #49085 限制，包级函数可绕开） |
 | alias 实例跨 Query 复用（用户误用） | 低 | 中 | `ErrAliasNotInChain` 检测 + godoc 警告 |
 | 子查询深层嵌套（≥4 层）解析性能 | 低 | 低 | 在病态情况，不优化（SQL 也无法 review） |
 
@@ -648,21 +784,38 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 - [ ] CHANGELOG / README / godoc 三处文档更新
 - [ ] 至少 1 个下游项目（gvs-server）实测落地无回归
 - [ ] DataRule × alias 安全契约在 godoc + README + CHANGELOG 三处警告齐全
+- [ ] **DataRule × alias 副表敞开 e2e 反例测试 RED-locked**（H9）：构造跨租户场景，未在 JoinAs extra 加副表数据权限时，断言能查到他租户副表数据（即漏洞复现）；加上合规 extra 后断言无泄漏。该测试存在的目的是 **永久锁住** "本期决定不自动注入副表 DataRule" 的设计契约——若未来策略变更（v0.9+ 加 cross-table DataRule），该反例自然 fail，提醒同步更新策略
 - [ ] deprecated 旧 Join API 仍可编译，下游升级零破坏
-- [ ] AnyQuery 接口的 unexported guard `gplusAnyQuery()` 阻止外部冒名实现
+- [ ] AnyQuery 接口的 phantom guard（unexported method `gplusCore() *queryCore`）阻止外部冒名实现
 - [ ] `NewQueryAs` / `As` / `SubQuery` 所有错误路径测试覆盖
+- [ ] **C1 防御**：`extraSQL` 含 `?` 占位符 + `extraArgs` 参数化路径在 DryRun 测试中可见参数不入字面 SQL
+- [ ] **H6 防御**：`As` name 重复 panic + BuildQuery 入口 `len(errs) > 0` 短路，两条防御均测试覆盖
+- [ ] **H5 防御**：跨链 alias 误用（q1 的 sub 内引用 q2 的字段）测试返回 `ErrFieldAddrUnregistered`，**不**回退全局 cache 静默成功
 
 ---
 
 ## 11. 不在本期范围
 
-- **EXISTS 子查询里使用 ANY/ALL**：依赖 ANY/ALL 实现，v0.8.1
+### 11.1 已规划版本
+
+- **EXISTS 子查询里使用 ANY/ALL**：依赖 ANY/ALL 实现；v0.8.1
 - **SelectSub**：依赖 GORM Select 嵌套子查询实测；v0.8.1
-- **类型安全 ON extra 三元组**（`extra: (col, op, value)`）：签名歧义复杂；v0.9
-- **全局 alias 包级 var**（模型 B）：需 weak ref，YAGNI；v0.9 候选
+- **类型安全 ON extra 三元组 / 包级 LeftJoinAs[L,R]**：签名歧义复杂；v0.9
+- **全局 alias 包级 var**（模型 B）：需 weak ref；v0.9 候选
 - **JOIN 子查询表**（`JOIN (SELECT ...) sub`）：deprecated 旧 Join 暂时兜底；v0.9 单独设计
 - **UNION / WITH CTE / 窗口函数**：与 alias 体系正交；v1.0+ 独立立项
-- **Repository 直接的 EXISTS 短路** （`repo.ExistsByJoin(...)`）：组合形态太多，先看 v0.8.0 实战需求
+- **Repository 直接的 EXISTS 短路**（`repo.ExistsByJoin(...)`）：组合形态太多，先看 v0.8.0 实战需求
+
+### 11.2 已知技术债（v0.8.0 不修，未来评估）
+
+| ID | 技术债 | 影响 | 触发条件 |
+|---|---|---|---|
+| **TD-1** | `DataRule.Column` 当前只 `string`，无 alias / table 维度 | v0.9 若加 cross-table DataRule，需扩字段或改语义；godoc 已建议用户写 `"o.tenant_id"` 形态，未来要区分"用户显式 alias 前缀" vs "系统自动注入"会很尴尬 | v0.9+ 决定做 cross-table DataRule 时 |
+| **TD-2** | `outerQueryRef` 是单链表 | CTE / UNION 的 sibling sub 互相引用拓扑无法表达；v1.0 升级到 DAG 是底层数据结构变更 | v1.0 加 CTE/UNION 时 |
+| **TD-3** | `lookupAddr` 线性扫描 alias 数组 | 5 alias / 100ns 在 §7.4 阈值内；BI 多维场景（8-15 alias）会到 1μs/解析 | 单 Query alias 数 ≥ 8 时切 hash map（lookup 抽接口 `aliasIndex`，sliceIndex → mapIndex 不破 API） |
+| **TD-4** | alias 实例只读契约不可强制 | reflect / 误用导致字段被改写时 lookupAddr 仍命中，bug 隐藏 | v0.9 候选 debug 模式 sentinel `ErrAliasInstanceMutated` |
+| **TD-5** | `joinInfo` 同时承载 raw 与 alias 两种形态 | v1.0 删 deprecated 旧 Join 时需清理；当前先加 `kind` 字段（rawJoin/aliasJoin）显式区分 | v1.0 删旧 Join API 时 |
+| **TD-6** | `NewQueryAs` vs `As` 命名不对称 | `q, u := NewQueryAs[User](ctx,"u")` vs `o := As[Order](q,"o")` 读起来两套范式；godoc 解释为"NewQueryAs 等价于 NewQuery + 主表 As" | 命名稳定后不改；v1.0 评估是否合并 |
 
 ---
 
