@@ -33,6 +33,34 @@ func TestLeftJoinAs_BasicSQL(t *testing.T) {
 	}
 }
 
+func TestJoinAsVariants(t *testing.T) {
+	cases := []struct {
+		name    string
+		method  func(q *Query[TestUser], alias any, l, r any)
+		wantSQL string
+	}{
+		{"RightJoinAs", func(q *Query[TestUser], a, l, r any) { q.RightJoinAs(a, l, r, "") }, "RIGHT JOIN"},
+		{"InnerJoinAs", func(q *Query[TestUser], a, l, r any) { q.InnerJoinAs(a, l, r, "") }, "INNER JOIN"},
+		{"OuterJoinAs", func(q *Query[TestUser], a, l, r any) { q.OuterJoinAs(a, l, r, "") }, "OUTER JOIN"},
+		{"FullJoinAs", func(q *Query[TestUser], a, l, r any) { q.FullJoinAs(a, l, r, "") }, "FULL JOIN"},
+	}
+	_, db := setupTestDB[TestUser](t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, u := NewQuery[TestUser](context.Background())
+			o := As[Order](q, "o")
+			tc.method(q, o, &o.UserID, &u.ID)
+			sql, err := q.ToSQL(db)
+			if err != nil {
+				t.Fatalf("ToSQL: %v", err)
+			}
+			if !strings.Contains(sql, tc.wantSQL) {
+				t.Errorf("expected %s in %s", tc.wantSQL, sql)
+			}
+		})
+	}
+}
+
 func TestLeftJoinAs_ExtraSQLParameterized_C1(t *testing.T) {
 	_, db := setupTestDB[TestUser](t)
 	q, u := NewQuery[TestUser](context.Background())

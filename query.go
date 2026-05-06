@@ -1029,6 +1029,30 @@ func (q *Query[T]) LeftJoinAs(alias any, leftCol any, rightCol any, extraSQL str
 	return q
 }
 
+// RightJoinAs 类型安全的 RIGHT JOIN（参数语义同 LeftJoinAs）
+func (q *Query[T]) RightJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T] {
+	q.appendJoinAs("RIGHT JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return q
+}
+
+// InnerJoinAs 类型安全的 INNER JOIN
+func (q *Query[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T] {
+	q.appendJoinAs("INNER JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return q
+}
+
+// OuterJoinAs 类型安全的 OUTER JOIN（部分方言别名为 FULL OUTER JOIN）
+func (q *Query[T]) OuterJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T] {
+	q.appendJoinAs("OUTER JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return q
+}
+
+// FullJoinAs 类型安全的 FULL JOIN
+func (q *Query[T]) FullJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T] {
+	q.appendJoinAs("FULL JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return q
+}
+
 // appendJoinAs 内部辅助：构建 alias JOIN 条目并追加到 ScopeBuilder.joins。
 // joinType 为 "LEFT JOIN" / "INNER JOIN" 等字面量。
 // C1 保障：joinSQL 仅拼接结构化字面量（table 名 / alias 名 / 列名），
