@@ -88,6 +88,8 @@ q, u := gplus.NewQueryAs[User](ctx, "u")
     typ      reflect.Type
     addrLow  uintptr     // 实例地址范围下界（含），用于 lookupAddr
     addrHigh uintptr     // 实例地址范围上界（不含）
+    revoked  bool        // N4：Clear() 时翻转，lookupAddr 命中 revoked 直接返回错误
+                         //     防止 "残骸 alias 实例" 的 use-after-clear 静默错 SQL
   }
 ```
 
@@ -183,16 +185,25 @@ func (c *queryCore) context() context.Context
 func (c *queryCore) appendErr(err error)
 func (c *queryCore) getError() error
 
-// Query[T] / Updater[T] 内嵌 *queryCore 并实现 AnyQuery
+// Query[T] / Updater[T] 用命名字段持有 *queryCore（N3：不内嵌，避免 method promotion 把 queryCore 的
+// unexported 方法泄漏到 Query[T] 的 method set，污染包内调用）
 type Query[T any] struct {
-    *queryCore
+    core *queryCore
     // ...其他 Query 特定字段（conditions / selects / joins / orders / ...）
 }
 
-func (q *Query[T]) gplusCore() *queryCore { return q.queryCore }
+func (q *Query[T]) gplusCore() *queryCore { return q.core }
 
 // 同样 Updater[T]
-func (u *Updater[T]) gplusCore() *queryCore { return u.queryCore }
+type Updater[T any] struct {
+    core *queryCore
+    // ...
+}
+func (u *Updater[T]) gplusCore() *queryCore { return u.core }
+
+// N3 设计后果：包内任何代码访问 queryCore 必须显式走 q.core.xxx() 或 q.gplusCore().xxx()，
+// 不会出现 q.outerQuery() / q.appendErr() 这种"看起来像 Query[T] 自己方法"的歧义；
+// 未来 v0.9+ 重构 queryCore 内部时，受影响范围严格限于 q.core 引用点
 
 // 编译期断言
 var _ AnyQuery = (*Query[struct{}])(nil)
@@ -266,7 +277,10 @@ func (q *Query[T]) FullJoinAs (alias any, leftCol any, rightCol any, extraSQL st
 func (q *Query[T]) CrossJoinAs   (alias any) *Query[T]
 func (q *Query[T]) NaturalJoinAs (alias any) *Query[T]
 
-// Updater 镜像（M2 精简：仅 LeftJoinAs / InnerJoinAs，UPDATE 中 Cross/Natural/Outer/Full Join 几乎无用）
+// Updater 镜像（M2 精简）：
+//   - JoinAs 仅 LeftJoinAs / InnerJoinAs（UPDATE 中 Cross/Natural/Outer/Full Join 几乎无用）
+//   - EXISTS 完整 4 个见 §4.5（Exists/NotExists/OrExists/OrNotExists）
+//   - SubQuery 派生：使用包级 SubQuery[X](outer AnyQuery)，Updater 自动满足 AnyQuery
 func (u *Updater[T]) LeftJoinAs (alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Updater[T]
 func (u *Updater[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Updater[T]
 // 其余 5 种 JoinAs 在 Updater 上**不提供**；如确需复杂 UPDATE JOIN，回退 deprecated 旧 LeftJoin(string)
@@ -352,7 +366,7 @@ type Subquerier interface {
 | Updater 新增 | 2 JoinAs（Left + Inner）+ 4 EXISTS = **6** |
 | 包级函数新增 | As + SubQuery + SubQueryAs = **3** |
 | Repository 新增 | NewQueryAs = **1**（Updater 通常从 Repository 取 db 后调用 `NewUpdater()`，再加 As() 即可，无需独立 `NewUpdaterAs` 入口） |
-| 哨兵错误新增 | **5 个**（不含沿用 ErrSubqueryNil） |
+| 哨兵错误新增 | **7 个**（不含沿用 ErrSubqueryNil；含 N5 ErrAliasQueryNil + N4 ErrAliasRevoked） |
 | **合计新方法/函数** | **22** |
 | Deprecated（不删） | Query 7 旧 Join + Updater 7 旧 Join = 14 |
 
@@ -369,12 +383,22 @@ type Subquerier interface {
    ^[a-zA-Z_][a-zA-Z0-9_]{0,31}$
    非法 → q.appendErr(ErrAliasInvalidName)，return getModelInstance[X]()（fallback 防 nil）
 
-2. 检查 name 在 q 链中是否已存在：
+2. 检查 q 是否 nil（N5 — 与 SubQuery(nil) 处理不同的理由）：
+   if q == nil:
+       panic(ErrAliasQueryNil)
+   // SubQuery(outer) 中 outer==nil 时累积错误返回 dud sub —— 因为 outer 可能来自配置/参数，
+   //   是"运行时数据"，应让调用方在 q.GetError() 处统一感知；
+   // As(q, name) 中 q==nil 时直接 panic —— 因为 q 必须由 NewQuery 创建并直接传入，
+   //   nil 必然是 API 入口编程错误，且无 q.appendErr 入口可挂错误。
+
+3. 检查 name 在 q 链中是否已存在（N6 决策 1B：累积错误，BuildQuery 时短路）：
    current := q
    while current != nil:
        if name in current.aliases:
            q.appendErr(ErrAliasDuplicate)
            return current.aliases[name].instance.(*X)  // 返回首次注册实例
+           // 注：BuildQuery 入口检查 len(errs) > 0 强制短路，
+           //     重名错误不会被快乐路径生成的 SQL 掩盖
        current = current.outerQuery()
 
 3. 创建独立实例：
@@ -423,6 +447,11 @@ return "", ErrFieldAddrUnregistered
 func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
     for _, entry := range c.aliases {
         if entry.addrLow <= addr && addr < entry.addrHigh {
+            // N4：检查 revoked — Clear() 后 entry.revoked = true，alias 实例残骸用法在此被拦截
+            if entry.revoked {
+                // 由调用方 resolveColumnName 累积 ErrAliasRevoked
+                return "", "", false
+            }
             offset := addr - entry.addrLow
             schema := reflectStructSchema(entry.typ)
             if name, found := schema[offset]; found {       // ← H2：offset 必须在 schema 已知字段中
@@ -436,8 +465,49 @@ func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
 }
 ```
 
+**N4 残骸 alias 防御**：
+```go
+func (q *Query[T]) Clear() *Query[T] {
+    // 翻转所有 alias entry 的 revoked 标记 — 用户后续传 &o.Field 调用会被拦截
+    for name, entry := range q.core.aliases {
+        entry.revoked = true
+        q.core.aliases[name] = entry
+    }
+    // 然后清空 aliases / outerQueryRef / errs / 其他条件...
+    q.core.aliases = nil
+    q.core.outerQueryRef = nil
+    q.core.errs = nil
+    // ...
+    return q
+}
+```
+
+注意：`resolveColumnName` 在 lookupAddr 命中 revoked entry 时（区间内但被拒），需在 sub 严格闭合 + 全局 fallback 的判断**之前**累积 `ErrAliasRevoked`。具体：
+
+```go
+func resolveColumnName(addr uintptr) (string, error) {
+    current := q
+    isSub   := (q.core.outerQueryRef != nil)
+    for current != nil {
+        if alias, col, ok := current.lookupAddr(addr); ok {
+            return alias + "." + col, nil
+        }
+        // N4：检查是否因 revoked 被拦截 — 若是，立即累积 ErrAliasRevoked，不继续 fallback
+        if current.hadRevokedHit(addr) {                    // 内部辅助：上次 lookupAddr 是否命中 revoked
+            q.core.appendErr(ErrAliasRevoked)
+            return "", ErrAliasRevoked
+        }
+        current = current.outerQuery()
+    }
+    if isSub {
+        return "", ErrFieldAddrUnregistered
+    }
+    // ...全局 fallback
+}
+```
+
 **为什么 H2 校验关键**：
-- 若 alias 实例 GC 后地址被新分配的对象（不同类型，size 相同）复用，`addr ∈ [low, high)` 仍可能命中已死 entry（虽不变量 4 持有强引用阻止 GC，但是防御性编码）
+- 若 alias 实例 GC 后地址被新分配的对象（不同类型，size 相同）复用，`addr ∈ [low, high)` 仍可能命中已死 entry（虽然 `aliasEntry.instance any` 的强引用通常阻止 GC，但是防御性编码 — 用户在 Clear() 或子查询销毁后仍持有 instance 弱引用是可能的）
 - 若用户错误地把字段地址传给 `lookupAddr`（例如 `&someStruct.X`，someStruct 与 alias 实例 size 巧合），区间命中但 offset 完全不在 alias 的 schema 中——必须拒绝
 
 ### 5.3 JoinAs 链路
@@ -560,12 +630,11 @@ case existsLeaf:
 
 ## 6. 错误处理
 
-### 6.1 新增哨兵错误（5 个，不含沿用）
+### 6.1 新增哨兵错误（7 个，不含沿用）
 
 ```go
 var (
-    // alias 名字在 q.aliases 或 outerQuery 链中已存在
-    // 注：实际触发时立即 panic（编程错误，见 §6.2 H6）；该 sentinel 保留供 errors.Is 检测
+    // alias 名字在 q.aliases 或 outerQuery 链中已存在（决策 1B：累积 + BuildQuery 短路，不再 panic）
     ErrAliasDuplicate = errors.New("gplus: alias name already registered in this query chain")
 
     // alias name 不符合白名单
@@ -579,33 +648,57 @@ var (
 
     // SubQuery(nil) 调用：outer 为 nil（H4：与 errs 累积哲学一致，不再 panic）
     ErrSubqueryOuterNil = errors.New("gplus: SubQuery outer is nil")
+
+    // As(nil, ...) 调用：q 为 nil（N5：API 入口编程错误，仅作 panic 时携带的语义标识）
+    ErrAliasQueryNil = errors.New("gplus: As query is nil")
+
+    // alias 实例在 Clear() 后仍被使用（N4：Clear 翻转 revoked，lookupAddr 命中即累积此错误）
+    ErrAliasRevoked = errors.New("gplus: alias instance has been revoked by Clear()")
 )
 ```
 
 **沿用 v0.6.0 既有**（不计入新增）：
 - `ErrSubqueryNil`（v0.6.0）：用于 `Exists(nil)` / `NotExists(nil)` 等子查询入参为 nil 时
 
-### 6.2 错误累积链路
+### 6.2 错误累积链路（决策 1B：累积 + BuildQuery 短路代替 panic）
 
-**panic 边界**（仅留给"程序设计错误且必须立即暴露"）：
+**panic 边界**（仅留给"无 q 句柄可挂错误"或"运行时崩溃"）：
 
 | 触发点 | 行为 | 理由 |
 |---|---|---|
-| `As[X](q, name)` name 重复 | **panic**（H6） | 编程错误：同一 q 上重复注册同名 alias，必有一处写错；累积错误返回 fallback 实例会让快乐路径生成错 SQL（`o2 := As[Invoice](q,"x")` 但 o2 实际是 `*Order`），下游难诊断 |
+| `As(nil, ...)` q 为 nil | **panic** `ErrAliasQueryNil`（N5） | q 必须由 NewQuery 创建直接传入；nil 必然是 API 入口编程错误，且无 q.appendErr 可挂错误 |
 | `reflect.New` 失败（OOM 等运行时崩溃） | **panic** | 不可恢复 |
 
-**累积错误**（与 v0.6.0 哲学一致，调用方在 `q.GetError()` 处统一感知）：
+**累积错误 + BuildQuery 短路**（决策 1B 双重防御，与 v0.6.0 哲学一致）：
 
 | 触发点 | 处理 |
 |---|---|
 | `As[X](q, name)` name 非法 | 累积 `ErrAliasInvalidName`，返回 fallback 实例 |
+| `As[X](q, name)` name 重复（决策 1B） | 累积 `ErrAliasDuplicate`，返回**首次注册**的实例；BuildQuery 入口短路 |
+| `As` 后 alias 被 Clear 残骸使用（N4） | `lookupAddr` 命中 revoked entry → 累积 `ErrAliasRevoked` |
 | `LeftJoinAs(o, ...)` o 不在链 | 累积 `ErrAliasNotInChain`，跳过该 JOIN |
 | `resolveColumnName(addr)` 失败 | 累积 `ErrFieldAddrUnregistered`，返回空字符串列名 |
 | `Exists(nil)` / `NotExists(nil)` | 累积 `ErrSubqueryNil`（v0.6.0 既有） |
 | `Exists(sub)` 时 sub 自身有 errs | 透传到 q.errs |
 | `SubQuery(nil)` | 累积 `ErrSubqueryOuterNil`，返回 dud sub（H4） |
 
-**双重防御**（H6 备选）：BuildQuery 入口检查 `len(c.errs) > 0`，若有累积错误直接短路返回错误，不生成 SQL。这确保即使调用方忘记调 `GetError()`，错误也不会被生成的"看似成功"SQL 掩盖。
+**BuildQuery 短路**（强制防御）：
+
+```go
+func (q *Query[T]) BuildQuery() *gorm.DB {
+    if len(q.core.errs) > 0 {
+        // 累积错误存在 → 强制返回带错误的 db，不生成实际 SQL
+        // 即使调用方忘记调 GetError()，下游 Find/Scan 也会立即返回错误
+        return db.Session(&gorm.Session{}).AddError(q.GetError())
+    }
+    // ...正常构建路径
+}
+```
+
+**为什么累积 + 短路代替 panic**：
+1. 与 v0.6.0/v0.7.0 错误累积哲学一致（gplus 全库零 panic 设计）
+2. 生产 HTTP 服务一个 panic 即使 recover 也污染 goroutine 栈，且日志中 alias 重名 ≠ 业务 panic 难分类
+3. BuildQuery 短路提供同等强度的"错误 SQL 不会生成"防御，且支持 `errors.Is(err, ErrAliasDuplicate)` 优雅判断
 
 ### 6.3 GetError 摘要
 
@@ -623,11 +716,16 @@ gplus query builder failed with 2 errors:
 
 godoc / README / CHANGELOG 三处必须明确警告：
 
-> ⚠️ **DataRule 不会自动应用到 alias 副表**。JOIN 进来的副表如果含敏感数据（如 `tenant_id`），必须采取以下三种合规做法之一：
+> ⚠️ **DataRule 不会自动应用到 alias 副表**。JOIN 进来的副表如果含敏感数据（如 `tenant_id`），必须采取以下两种合规做法之一：
 >
-> 1. 在 JoinAs 的 `extra` 参数手写副表的数据权限条件
-> 2. 派生 sub 并显式调用 `sub.DataRuleBuilder()`，将 sub 作为 JOIN 子查询表（暂走 deprecated 旧 Join API）
-> 3. 在 DataRule.Column 字段显式带 alias 前缀（如 `"o.tenant_id"`），并依赖外层 q 应用
+> 1. **首选：在 JoinAs 的 `extraSQL` 参数手写副表的数据权限条件**（参数化形态）：
+>    ```go
+>    q.LeftJoinAs(o, &o.UserID, &u.ID,
+>        "AND o.tenant_id = ?", tenantID)   // ← 副表 tenant 显式过滤
+>    ```
+> 2. **派生 sub 并显式调用 `sub.DataRuleBuilder()`**，将 sub 作为 JOIN 子查询表（v0.8.0 暂走 deprecated 旧 LeftJoin(string) 兜底）
+>
+> **N2：不推荐在 `DataRule.Column` 写 alias 前缀（如 `"o.tenant_id"`）。** v0.8.0 起 `DataRule.Column` 仅承诺**主表列**语义；alias 维度 DataRule 待 v0.9 通过新增 `DataRule.Table string` 字段提供。提前在 Column 写 alias 前缀，会让 v0.9 的 cross-table 自动注入逻辑无法机械区分"用户显式" vs "系统注入"——导致兼容性陷阱。
 >
 > **典型陷阱**：
 > ```go
@@ -676,16 +774,16 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 
 | 测试文件（新增） | 覆盖点 | 子测试估计 |
 |---|---|---|
-| `alias_test.go` | As 创建 / 重复名 panic（H6） / 非法名 / 跨 query 复用检测 / 字段地址解析链 / **Clear 重置 aliases 与 outerQueryRef**（M5） | 13 |
+| `alias_test.go` | As 创建 / **重复名累积 ErrAliasDuplicate**（决策 1B） / 非法名 / **As(nil) panic ErrAliasQueryNil**（N5） / 跨 query 复用检测 / 字段地址解析链 / **Clear 重置 aliases 与 outerQueryRef**（M5） / **Clear 后用 alias 实例累积 ErrAliasRevoked**（N4） | 15 |
 | `query_joinas_test.go` | 7 种 JoinAs × ON 形态 × **extraSQL 参数化路径**（C1） | 18 |
 | `query_subquery_correlated_test.go` | SubQuery 派生 / SubQuery(nil) 累积错误（H4） / 跨层 alias 引用 / 嵌套 sub 3 层 / **跨链泄露被 H5 拦截** | 12 |
 | `query_exists_test.go` | Exists/NotExists/OrExists/OrNotExists × 简单/相关 sub | 12 |
 | `updater_alias_test.go` | Updater 镜像（精简后：LeftJoinAs/InnerJoinAs/SubQuery/Exists） | 8 |
 | `query_newqueryas_test.go` | NewQueryAs 主表 alias / 与副表 alias 冲突检测 / SQL 输出 | 8 |
 | `alias_datarule_test.go` | DataRule × alias 三种合规模式 + **e2e 反例 RED-locked**（H9：副表敞开必须能被反例测试捕获，否则验收不过） | 7 |
-| **合计** | | **78** |
+| **合计** | | **80** |
 
-**实现 vs 测试比例**：22 新方法/函数 + 5 新错误哨兵 + Clear 扩展 ≈ 28 实现单元；78 子测试 ≈ 1:2.8（含探针 / 集成 / 反例），符合 v0.6.0 / v0.7.0 节奏。
+**实现 vs 测试比例**：22 新方法/函数 + 7 新错误哨兵 + Clear 扩展 ≈ 30 实现单元；80 子测试 ≈ 1:2.7（含探针 / 集成 / 反例），符合 v0.6.0 / v0.7.0 节奏。
 
 ### 7.3 集成测试（MySQL/SQLite 双方言）
 
@@ -757,6 +855,7 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 | `SelectSub` | **v0.8.1** | 依赖 GORM Select 嵌套子查询实测 |
 | `EqAny/NeAny/.../EqAll/...` 24 方法 | **v0.8.1** | 用得少，可延期 |
 | `JoinAs` extra 三元组类型安全 ON | **v0.9** | 签名歧义复杂，独立设计 |
+| **包级泛型 `gplus.LeftJoinAs[L,R](q, alias, *L, *R, extraSQL, args...)`** | **v0.9** | 提供 leftCol/rightCol 编译期类型保证（绕开 method 类型参数限制） |
 | 全局 alias（包级 var） | **v0.9 候选** | 模型 B；需 weak ref 设计；YAGNI |
 | UNION / WITH CTE / 窗口函数 | **v1.0+** | 与 alias 体系正交，独立立项 |
 
@@ -784,12 +883,18 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 - [ ] CHANGELOG / README / godoc 三处文档更新
 - [ ] 至少 1 个下游项目（gvs-server）实测落地无回归
 - [ ] DataRule × alias 安全契约在 godoc + README + CHANGELOG 三处警告齐全
-- [ ] **DataRule × alias 副表敞开 e2e 反例测试 RED-locked**（H9）：构造跨租户场景，未在 JoinAs extra 加副表数据权限时，断言能查到他租户副表数据（即漏洞复现）；加上合规 extra 后断言无泄漏。该测试存在的目的是 **永久锁住** "本期决定不自动注入副表 DataRule" 的设计契约——若未来策略变更（v0.9+ 加 cross-table DataRule），该反例自然 fail，提醒同步更新策略
+- [ ] **DataRule × alias 副表敞开 e2e 测试**（H9 + N1 PASS 条件明确化）：
+  - 测试文件 `alias_datarule_e2e_test.go` 含**两段并列断言**，**两段都 PASS** 才算验收通过：
+  - **段 A**（锁敞开契约 v0.8.0）：`TestDataRuleAliasContract_NoAutoInjectionToSideTable` —— 构造跨租户场景，未在 JoinAs extraSQL 加副表 tenant 过滤时，**断言能查到他租户副表数据**（即漏洞复现）。该段 PASS 表示 v0.8.0 "副表敞开"契约成立；若未来 v0.9+ 加 cross-table 自动注入，此段会 fail，提醒同步更新策略
+  - **段 B**（验合规模式）：`TestDataRuleAliasContract_ExplicitExtraBlocksLeak` —— 在 JoinAs extraSQL 加 `"AND o.tenant_id = ?", tenantID`，**断言无泄漏**。该段 PASS 表示文档推荐的合规写法确实有效
+  - 两段并存，CI 机械化判定明确：段 A 不再"漏洞复现成功"= 副表自动注入策略变更；段 B 失败 = 合规写法失效
 - [ ] deprecated 旧 Join API 仍可编译，下游升级零破坏
 - [ ] AnyQuery 接口的 phantom guard（unexported method `gplusCore() *queryCore`）阻止外部冒名实现
 - [ ] `NewQueryAs` / `As` / `SubQuery` 所有错误路径测试覆盖
 - [ ] **C1 防御**：`extraSQL` 含 `?` 占位符 + `extraArgs` 参数化路径在 DryRun 测试中可见参数不入字面 SQL
-- [ ] **H6 防御**：`As` name 重复 panic + BuildQuery 入口 `len(errs) > 0` 短路，两条防御均测试覆盖
+- [ ] **H6 防御（决策 1B）**：`As` name 重复**累积** `ErrAliasDuplicate` + BuildQuery 入口 `len(errs) > 0` 强制短路（不生成 SQL），两条防御均测试覆盖
+- [ ] **N4 防御**：`Clear()` 翻转 alias entry.revoked，后续 `lookupAddr` 命中 revoked 累积 `ErrAliasRevoked`，测试覆盖 `TestQuery_Clear_AliasUseAfterClear` 必须 RED 验证
+- [ ] **N5 防御**：`As(nil, ...)` panic `ErrAliasQueryNil`，测试覆盖（panic + recover 断言）
 - [ ] **H5 防御**：跨链 alias 误用（q1 的 sub 内引用 q2 的字段）测试返回 `ErrFieldAddrUnregistered`，**不**回退全局 cache 静默成功
 
 ---
@@ -805,17 +910,19 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 - **JOIN 子查询表**（`JOIN (SELECT ...) sub`）：deprecated 旧 Join 暂时兜底；v0.9 单独设计
 - **UNION / WITH CTE / 窗口函数**：与 alias 体系正交；v1.0+ 独立立项
 - **Repository 直接的 EXISTS 短路**（`repo.ExistsByJoin(...)`）：组合形态太多，先看 v0.8.0 实战需求
+- **PostgreSQL `UPDATE ... FROM <table> ...` 子句**（PG 特有 multi-table UPDATE 语法）：v0.8.0 Updater 仅镜像 LeftJoinAs/InnerJoinAs，不覆盖 PG `UPDATE FROM` 这种 UPDATE 主语句体级别的 multi-table 语义；如需，使用 `RawExec` 或 deprecated `LeftJoin(string)` 兜底
 
 ### 11.2 已知技术债（v0.8.0 不修，未来评估）
 
 | ID | 技术债 | 影响 | 触发条件 |
 |---|---|---|---|
-| **TD-1** | `DataRule.Column` 当前只 `string`，无 alias / table 维度 | v0.9 若加 cross-table DataRule，需扩字段或改语义；godoc 已建议用户写 `"o.tenant_id"` 形态，未来要区分"用户显式 alias 前缀" vs "系统自动注入"会很尴尬 | v0.9+ 决定做 cross-table DataRule 时 |
-| **TD-2** | `outerQueryRef` 是单链表 | CTE / UNION 的 sibling sub 互相引用拓扑无法表达；v1.0 升级到 DAG 是底层数据结构变更 | v1.0 加 CTE/UNION 时 |
-| **TD-3** | `lookupAddr` 线性扫描 alias 数组 | 5 alias / 100ns 在 §7.4 阈值内；BI 多维场景（8-15 alias）会到 1μs/解析 | 单 Query alias 数 ≥ 8 时切 hash map（lookup 抽接口 `aliasIndex`，sliceIndex → mapIndex 不破 API） |
+| **TD-1**（**N2 升格语义契约**） | `DataRule.Column` 当前承诺"主表列"语义；godoc 已**明确禁止**用户写 alias 前缀（如 `"o.tenant_id"`）。v0.9 cross-table DataRule 通过新增 `DataRule.Table string` 字段提供。**此项已不是模糊技术债，而是 v0.8.0 锁定的语义契约**——godoc + e2e 反例（H9 段 A）共同保护 | v0.9 决定做 cross-table DataRule 时，加 `Table` 字段，旧 `Column` 语义不破坏 |
+| **TD-2** | `outerQueryRef` 是单链表 | CTE / UNION 的 sibling sub 互相引用拓扑无法表达。**phantom guard 红利（N12）**：DAG 升级局限于 queryCore 内部字段重构（`outerQueryRef` 改成 `dag *queryDAG`），Query[T] / Updater[T] / 用户代码全部不感知，不破 AnyQuery 契约 | v1.0 加 CTE/UNION 时 |
+| **TD-3** | `lookupAddr` 线性扫描 alias 数组 | 5 alias / 100ns 在 §7.4 阈值内；BI 多维场景（8-15 alias）会到 1μs/解析。**与 H10 metadata 协调（N12）**：先做 sharding metadata（用户可见 API 演进）再做 aliasIndex（纯性能优化），避免单 PR 同时改 queryCore 内部 schema 增加 review 负担 | 单 Query alias 数 ≥ 8 时切 hash map（lookup 抽接口 `aliasIndex`，sliceIndex → mapIndex 不破 API） |
 | **TD-4** | alias 实例只读契约不可强制 | reflect / 误用导致字段被改写时 lookupAddr 仍命中，bug 隐藏 | v0.9 候选 debug 模式 sentinel `ErrAliasInstanceMutated` |
 | **TD-5** | `joinInfo` 同时承载 raw 与 alias 两种形态 | v1.0 删 deprecated 旧 Join 时需清理；当前先加 `kind` 字段（rawJoin/aliasJoin）显式区分 | v1.0 删旧 Join API 时 |
 | **TD-6** | `NewQueryAs` vs `As` 命名不对称 | `q, u := NewQueryAs[User](ctx,"u")` vs `o := As[Order](q,"o")` 读起来两套范式；godoc 解释为"NewQueryAs 等价于 NewQuery + 主表 As" | 命名稳定后不改；v1.0 评估是否合并 |
+| **TD-7**（**N11 新增**） | 顶层 q 的 `resolveColumnName` 仍 fallback 全局 columnNameCache | 跨 Query 字段地址巧合静默命中规范单例的极端场景（`q1.Eq(&u_of_q2.X, ...)`），生成 SQL 引用未 FROM 的表，运行时报错而非 gplus 校验拦截。v0.7.x 已有同等行为，不破坏兼容 | v0.9 加 `Query.WithStrictColumnResolution()` 选项 + `ErrFieldAddrCrossModel` 哨兵 |
 
 ---
 
