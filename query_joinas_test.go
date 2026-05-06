@@ -27,6 +27,10 @@ func TestLeftJoinAs_BasicSQL(t *testing.T) {
 	if !strings.Contains(sql, " AS ") || !strings.Contains(sql, "o") {
 		t.Errorf("expected alias AS o, got %s", sql)
 	}
+	// ON 条件必须含主表前缀，防多表 JOIN 时 SQL 报 ambiguous（CRITICAL fix v0.8.0）
+	if !strings.Contains(sql, "test_users.id") {
+		t.Errorf("expected ON condition to contain main table prefix 'test_users.id' (ambiguous fix), got %s", sql)
+	}
 }
 
 func TestLeftJoinAs_ExtraSQLParameterized_C1(t *testing.T) {

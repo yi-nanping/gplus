@@ -1130,6 +1130,17 @@ func aliasSchemaTableName(typ reflect.Type) string {
 	return nsColumnName(typ.Name()) + "s"
 }
 
+// mainTableName 返回 T 的主表 table 名（用于 resolveColumnName 顶层 fallback 加前缀）。
+// 复用 aliasSchemaTableName 逻辑（处理 TableName() interface + 命名规则）。
+func (q *Query[T]) mainTableName() string {
+	var zero T
+	typ := reflect.TypeOf(zero)
+	if typ == nil {
+		return ""
+	}
+	return aliasSchemaTableName(typ)
+}
+
 // gplusSubquery 私有 guard 方法，阻止外部包冒名实现 Subquerier 接口。
 func (q *Query[T]) gplusSubquery() {}
 
@@ -1184,6 +1195,15 @@ func (q *Query[T]) resolveColumnName(addr uintptr) (string, error) {
 	// 全局 cache 会静默命中产生跨 Query SQL（FROM 表与列引用不匹配）。
 	// v0.7.x 既有行为，不破坏兼容；spec §11.2 TD-7 已记录，v0.9 加 StrictColumnResolution 选项。
 	if name, ok := columnNameCache.Load(addr); ok {
+		// v0.8.0 fix: 若 q 已注册 alias（说明在 JOIN/alias 场景），给主表列名加表前缀，
+		// 避免多表 JOIN 时 SQL 报 ambiguous（如 ON o.user_id = id 缺主表前缀）。
+		// 仅在 alias 场景下触发，单表查询保持 v0.7.x 裸列名行为（向后兼容）。
+		if len(q.core.aliases) > 0 {
+			mainTable := q.mainTableName()
+			if mainTable != "" {
+				return mainTable + "." + name.(string), nil
+			}
+		}
 		return name.(string), nil
 	}
 
