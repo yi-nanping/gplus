@@ -28,6 +28,7 @@ func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 	model := getModelInstance[T]()
 	return &Query[T]{
 		ctx:  ctx,
+		core: newQueryCore(ctx),
 		errs: make([]error, 0, 8),
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
@@ -58,9 +59,7 @@ func (q *Query[T]) IsUnscoped() bool {
 // GetError 将所有累积的错误合并为一个返回（含 alias core 中的错误）
 func (q *Query[T]) GetError() error {
 	all := append([]error(nil), q.errs...) // 显式拷贝避免 slice aliasing
-	if q.core != nil && len(q.core.errs) > 0 {
-		all = append(all, q.core.errs...)
-	}
+	all = append(all, q.core.errs...)
 	if len(all) == 0 {
 		return nil
 	}
@@ -957,12 +956,9 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 // gplusSubquery 私有 guard 方法，阻止外部包冒名实现 Subquerier 接口。
 func (q *Query[T]) gplusSubquery() {}
 
-// gplusCore 返回 Query[T] 的 queryCore（懒惰初始化）。
+// gplusCore 返回 Query[T] 的 queryCore。
 // 实现 AnyQuery 接口，供 As 包级函数使用。
 func (q *Query[T]) gplusCore() *queryCore {
-	if q.core == nil {
-		q.core = newQueryCore(q.ctx)
-	}
 	return q.core
 }
 

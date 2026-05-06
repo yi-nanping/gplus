@@ -4,6 +4,7 @@ package gplus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 )
@@ -189,12 +190,14 @@ func As[X any](q AnyQuery, alias string) *X {
 	for cur != nil {
 		curCore := cur.gplusCore()
 		if existing, ok := curCore.aliases[alias]; ok {
-			core.appendErr(ErrAliasDuplicate)
 			if inst, ok2 := existing.instance.(*X); ok2 && inst != nil {
+				// 同类型重名：累积错误返回首次实例（决策 1B）
+				core.appendErr(ErrAliasDuplicate)
 				return inst
 			}
-			// 同名但 X 类型不同，返回规范单例 fallback
-			return getModelInstance[X]()
+			// 同名但类型不一致：编程错误，立即 panic
+			panic(fmt.Errorf("gplus: alias %q already registered as %T, but As called with different type %T",
+				alias, existing.instance, (*X)(nil)))
 		}
 		next := curCore.outerQueryRef
 		if next == nil {

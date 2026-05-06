@@ -134,3 +134,18 @@ func TestAs_DuplicateAcrossOuterChain_DecisionB(t *testing.T) {
 		t.Fatalf("expected ErrAliasDuplicate accumulated on sub, got %v", sub.GetError())
 	}
 }
+
+// TestAs_TypeConflictPanics CRITICAL：同名 alias 不同类型应立即 panic
+// 而非返回 fallback 静默继续，避免数据类型安全破坏
+func TestAs_TypeConflictPanics(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	_ = As[TestUser](q, "x")
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("expected panic on type conflict")
+		}
+	}()
+	// 同名 "x" 但类型不同（Order 而非 TestUser）
+	_ = As[Order](q, "x")
+}
