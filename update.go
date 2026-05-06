@@ -289,7 +289,7 @@ func (u *Updater[T]) resolveColumnNameAny(col any) (string, error) {
 // Set 设置更新值
 // 示例: u.Set(&User.Name, "NewName")
 func (u *Updater[T]) Set(col any, val any) *Updater[T] {
-	name, err := resolveColumnName(col)
+	name, err := u.resolveColumnNameAny(col)
 	if err != nil {
 		u.errs = append(u.errs, fmt.Errorf("gplus: Set invalid column pointer: %w", err))
 		return u
@@ -301,7 +301,7 @@ func (u *Updater[T]) Set(col any, val any) *Updater[T] {
 // SetExpr 设置 SQL 表达式更新 (原子更新)
 // 示例: u.SetExpr(&User.Age, "age + ?", 1) -> UPDATE ... SET age = age + 1
 func (u *Updater[T]) SetExpr(col any, expr string, args ...any) *Updater[T] {
-	name, err := resolveColumnName(col)
+	name, err := u.resolveColumnNameAny(col)
 	if err != nil {
 		u.errs = append(u.errs, fmt.Errorf("gplus: SetExpr invalid column pointer: %w", err))
 		return u

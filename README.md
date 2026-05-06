@@ -21,7 +21,7 @@ GPlus 是一个基于 GORM 的 Go 语言增强库，提供类型安全的查询�
 ### 安装
 
 ```bash
-go get github.com/yi-nanping/gplus@v0.6.0
+go get github.com/yi-nanping/gplus@v0.8.0
 ```
 
 ### 基础用法
