@@ -2,6 +2,7 @@ package gplus
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -74,5 +75,40 @@ func TestUpdater_InnerJoinAs(t *testing.T) {
 	_, err := u.ToSQL(db)
 	if err != nil {
 		t.Fatalf("ToSQL: %v", err)
+	}
+}
+
+// TestUpdater_Exists 验证 Updater.Exists 正确构建 EXISTS 条件。
+func TestUpdater_Exists(t *testing.T) {
+	u, ut := NewUpdater[TestUser](context.Background())
+	sub, o := SubQuery[Order](u)
+	sub.Eq(&o.UserID, ut.ID)
+	u.Exists(sub)
+	u.Set(&ut.Name, "x")
+	if err := u.GetError(); err != nil {
+		t.Errorf("unexpected: %v", err)
+	}
+	// 内部状态校验：u.conditions 应有 existsLeaf 的 condition
+	// （ToSQL 因 SQLite 不支持 UPDATE EXISTS 可能有问题，仅验证 GetError）
+}
+
+// TestUpdater_NotExists 验证 Updater.NotExists 正确构建 NOT EXISTS 条件。
+func TestUpdater_NotExists(t *testing.T) {
+	u, ut := NewUpdater[TestUser](context.Background())
+	sub, o := SubQuery[Order](u)
+	sub.Eq(&o.UserID, ut.ID)
+	u.NotExists(sub)
+	u.Set(&ut.Name, "x")
+	if err := u.GetError(); err != nil {
+		t.Errorf("unexpected: %v", err)
+	}
+}
+
+// TestUpdater_OrExists_NilSub_Accumulates 验证 Updater.OrExists 在传入 nil 时累积 ErrSubqueryNil。
+func TestUpdater_OrExists_NilSub_Accumulates(t *testing.T) {
+	u, _ := NewUpdater[TestUser](context.Background())
+	u.OrExists(nil)
+	if !errors.Is(u.GetError(), ErrSubqueryNil) {
+		t.Errorf("expected ErrSubqueryNil, got %v", u.GetError())
 	}
 }

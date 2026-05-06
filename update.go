@@ -161,6 +161,51 @@ func (u *Updater[T]) InnerJoinAs(alias any, leftCol any, rightCol any, extraSQL 
 	return u
 }
 
+// Exists 添加 EXISTS 子查询条件（AND）。
+// 等价于 WHERE EXISTS (subquery)。
+// 若 sub 为 nil 或子查询有错误，错误会累积到 Updater，可通过 GetError() 获取。
+func (u *Updater[T]) Exists(sub Subquerier) *Updater[T] {
+	return u.appendExists("EXISTS", false, sub)
+}
+
+// NotExists 添加 NOT EXISTS 子查询条件（AND）。详见 Exists。
+func (u *Updater[T]) NotExists(sub Subquerier) *Updater[T] {
+	return u.appendExists("NOT EXISTS", false, sub)
+}
+
+// OrExists 添加 OR EXISTS 子查询条件。与 Exists 相同，但使用 OR 逻辑。
+func (u *Updater[T]) OrExists(sub Subquerier) *Updater[T] {
+	return u.appendExists("EXISTS", true, sub)
+}
+
+// OrNotExists 添加 OR NOT EXISTS 子查询条件。与 NotExists 相同，但使用 OR 逻辑。
+func (u *Updater[T]) OrNotExists(sub Subquerier) *Updater[T] {
+	return u.appendExists("NOT EXISTS", true, sub)
+}
+
+// appendExists 内部辅助：构建 EXISTS / NOT EXISTS 条件并追加到 conditions。
+// 若 sub.GetError() 非空，立即透传到 u.core.errs（与 InSub 等一致的错误累积策略）。
+func (u *Updater[T]) appendExists(op string, isOr bool, sub Subquerier) *Updater[T] {
+	if sub == nil {
+		if u.core != nil {
+			u.core.appendErr(ErrSubqueryNil)
+		}
+		return u
+	}
+	// 子查询已有错误，立即透传到外层 u.core.errs，使调用方 GetError() 可感知
+	if subErr := sub.GetError(); subErr != nil {
+		if u.core != nil {
+			u.core.appendErr(subErr)
+		}
+	}
+	u.conditions = append(u.conditions, condition{
+		subExpr:  sub,
+		existsOp: op,
+		isOr:     isOr,
+	})
+	return u
+}
+
 // Context 返回上下文信息，若未设置则返回 context.Background()
 func (u *Updater[T]) Context() context.Context {
 	if u.ctx == nil {
@@ -169,18 +214,22 @@ func (u *Updater[T]) Context() context.Context {
 	return u.ctx
 }
 
-// GetError 将所有累积的错误合并为一个返回
+// GetError 将所有累积的错误合并为一个返回（含 alias core 中的错误）
 func (u *Updater[T]) GetError() error {
-	if len(u.errs) == 0 {
+	all := append([]error(nil), u.errs...) // 显式拷贝避免 slice aliasing
+	if u.core != nil {
+		all = append(all, u.core.errs...)
+	}
+	if len(all) == 0 {
 		return nil
 	}
-	n := len(u.errs)
+	n := len(all)
 	word := "errors"
 	if n == 1 {
 		word = "error"
 	}
 	summary := fmt.Errorf("gplus updater failed with %d %s", n, word)
-	return errors.Join(append([]error{summary}, u.errs...)...)
+	return errors.Join(append([]error{summary}, all...)...)
 }
 
 // Table 动态切换更新表名
