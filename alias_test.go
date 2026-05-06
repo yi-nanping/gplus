@@ -36,9 +36,19 @@ func TestQueryCore_LookupAddr_OffsetMustBeInSchema_H2(t *testing.T) {
 	_ = c.addAlias("o", reflect.TypeOf(o).Elem(), o)
 	// 取实例区间内但非任何字段起始的 padding 偏移
 	base := uintptr(reflect.ValueOf(o).Pointer())
-	// 找一个一定不在 schema 中的 offset：取 typ.Size()-1（通常是 padding）
+	// 找一个一定不在 schema 中的 offset：取最大已知 offset + 1
 	typ := reflect.TypeOf(o).Elem()
-	paddingOffset := typ.Size() - 1
+	schema := reflectStructSchema(o, "gorm", "COLUMN")
+	var maxOff uintptr
+	for off := range schema {
+		if off > maxOff {
+			maxOff = off
+		}
+	}
+	paddingOffset := maxOff + 1
+	if paddingOffset >= typ.Size() {
+		t.Skip("TestUser has no padding bytes after last field; H2 padding test not applicable")
+	}
 	paddingAddr := base + paddingOffset
 	if _, _, ok := c.lookupAddr(paddingAddr); ok {
 		t.Fatalf("padding offset should not be considered a hit (H2)")
@@ -53,5 +63,8 @@ func TestQueryCore_LookupAddr_RevokedReturnsFalse_N4(t *testing.T) {
 	base := uintptr(reflect.ValueOf(o).Pointer())
 	if _, _, ok := c.lookupAddr(base); ok {
 		t.Fatalf("revoked entry should not be considered a hit (N4)")
+	}
+	if !c.hadRevokedHit(base) {
+		t.Fatalf("hadRevokedHit should return true for revoked entry")
 	}
 }

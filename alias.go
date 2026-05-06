@@ -139,7 +139,8 @@ func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
 			}
 			offset := addr - entry.addrLow
 			// 使用 gorm tag + COLUMN label 与 registerModel/resolveColumnName 保持一致
-			schema := reflectStructSchema(reflect.New(entry.typ).Interface(), "gorm", "COLUMN")
+			// 直接使用 entry.instance（已存储的实例），避免每次 lookup 的 reflect.New 堆分配
+			schema := reflectStructSchema(entry.instance, "gorm", "COLUMN")
 			if name, found := schema[offset]; found {
 				return entry.name, name, true
 			}
