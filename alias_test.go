@@ -197,12 +197,32 @@ func TestBuildQuery_ErrsShortCircuit_DecisionB(t *testing.T) {
 	_ = As[TestUser](q, "o")
 	_ = As[TestUser](q, "o") // 重名累积 ErrAliasDuplicate
 	_, db := setupTestDB[TestUser](t)
-	finalDB := q.DataRuleBuilder().BuildQueryDB(db)
+	// 通过 BuildQuery closure 验证短路（覆盖 promoted method 的决策 1B 路径）
+	scope := q.DataRuleBuilder().BuildQuery()
+	finalDB := scope(db)
 	if finalDB.Error == nil {
-		t.Fatalf("expected BuildQuery to short-circuit on accumulated errors")
+		t.Fatalf("expected BuildQuery closure to short-circuit on accumulated errors")
 	}
 	if !errors.Is(finalDB.Error, ErrAliasDuplicate) {
 		t.Errorf("expected ErrAliasDuplicate in db.Error, got %v", finalDB.Error)
+	}
+}
+
+// TestRepositoryList_ShortCircuitOnAliasErrs_DecisionB
+// 验证决策 1B 真正落地到生产路径：repo.List 在 q.core.errs 非空时返回错误而非执行 SQL。
+// 覆盖 BuildQuery() wrapper 对 .Scopes(q.BuildQuery()) 的短路保护。
+func TestRepositoryList_ShortCircuitOnAliasErrs_DecisionB(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	q, _ := NewQuery[TestUser](context.Background())
+	_ = As[TestUser](q, "o")
+	_ = As[TestUser](q, "o") // 重名累积 ErrAliasDuplicate
+
+	_, err := repo.List(q)
+	if err == nil {
+		t.Fatalf("expected list to fail due to accumulated alias errors")
+	}
+	if !errors.Is(err, ErrAliasDuplicate) {
+		t.Errorf("expected ErrAliasDuplicate, got %v", err)
 	}
 }
 

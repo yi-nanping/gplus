@@ -72,19 +72,35 @@ func (q *Query[T]) GetError() error {
 	return errors.Join(append([]error{summary}, all...)...)
 }
 
+// BuildQuery 覆盖 ScopeBuilder.BuildQuery（promoted method），在闭包入口添加 v0.8.0 决策 1B errs 短路。
+//
+// 行为：
+//   - 若 q.core.errs 非空（含 As 重名/Clear 后用残骸等错误）：返回的 closure 调用时
+//     直接 db.AddError 返回，不生成 SQL
+//   - 若 q.core.errs 为空：与 ScopeBuilder.BuildQuery 既有行为一致（DataRule + 条件构建）
+//
+// 这确保所有 .Scopes(q.BuildQuery()) 生产路径（repo.GetById/List/Page/FindAs 等）
+// 在 As 重名 / Clear 残骸 / 字段地址未注册等错误下自动短路，不依赖调用方先调 GetError。
+func (q *Query[T]) BuildQuery() func(db *gorm.DB) *gorm.DB {
+	innerScope := q.ScopeBuilder.BuildQuery()
+	return func(db *gorm.DB) *gorm.DB {
+		if q.core != nil && len(q.core.errs) > 0 {
+			session := db.Session(&gorm.Session{})
+			_ = session.AddError(errors.Join(q.core.errs...))
+			return session
+		}
+		return innerScope(db)
+	}
+}
+
 // BuildQueryDB 将当前 Query 的条件应用到 db 并返回带条件的 *gorm.DB。
 // v0.8.0 决策 1B：若 q.core.errs 非空（含 As 重名等错误），直接返回带聚合错误的 db，不生成 SQL。
 // 防止重名 alias / Clear 后用 alias 等错误被快乐路径 SQL 静默掩盖。
 //
-// 与 ScopeBuilder.BuildQuery()（无参，返回闭包供 Scopes 使用）互补；
+// 与 BuildQuery()（返回闭包供 Scopes 使用）互补；
 // BuildQueryDB 用于需要直接获得 *gorm.DB 的场景（如 DataRuleBuilder 链式调用末尾）。
 func (q *Query[T]) BuildQueryDB(db *gorm.DB) *gorm.DB {
-	if q.core != nil && len(q.core.errs) > 0 {
-		session := db.Session(&gorm.Session{})
-		_ = session.AddError(errors.Join(q.core.errs...))
-		return session
-	}
-	return q.ScopeBuilder.BuildQuery()(db)
+	return q.BuildQuery()(db)
 }
 
 // Clear 重写 Query 的清除逻辑
