@@ -733,7 +733,18 @@ func (u *Updater[T]) applyDataRule(rule DataRule) {
 }
 
 // Clear 重写 Updater 的清除逻辑
+// v0.8.0 N4：翻转所有 alias entry 的 revoked 标志，防 Clear 后用 alias 残骸。
+// 保留 entries（不清空 aliases map），让后续 lookupAddr 命中 revoked 拦截。
 func (u *Updater[T]) Clear() {
+	// v0.8.0 N4：翻转所有 alias entry 的 revoked，防 Clear 后用 alias 残骸
+	// 保留 entries（不清空 aliases map），让后续 lookupAddr 命中 revoked 拦截
+	if u.core != nil {
+		for _, entry := range u.core.aliases {
+			entry.revoked = true
+		}
+		u.core.outerQueryRef = nil
+		u.core.errs = nil
+	}
 	u.ScopeBuilder.Clear()
 	clear(u.setMap)
 	u.errs = u.errs[:0:0]

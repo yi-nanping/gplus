@@ -112,3 +112,15 @@ func TestUpdater_OrExists_NilSub_Accumulates(t *testing.T) {
 		t.Errorf("expected ErrSubqueryNil, got %v", u.GetError())
 	}
 }
+
+// TestUpdater_Clear_AliasUseAfterClear_N4 验证 Updater.Clear() 翻转 alias entry.revoked，防 Clear 后用 alias 残骸。
+func TestUpdater_Clear_AliasUseAfterClear_N4(t *testing.T) {
+	u, _ := NewUpdater[TestUser](context.Background())
+	o := As[Order](u, "o")
+	u.Clear()
+	// 业务代码仍持有 o，使用 &o.UserID 应被 revoked 拦截
+	_, err := u.resolveColumnName(uintptrOf(&o.UserID))
+	if !errors.Is(err, ErrAliasRevoked) {
+		t.Errorf("expected ErrAliasRevoked after Updater.Clear, got %v", err)
+	}
+}
