@@ -1242,6 +1242,38 @@ func (q *Query[T]) mainTableName() string {
 	return aliasSchemaTableName(typ)
 }
 
+// Exists 添加 EXISTS 子查询条件（AND）。
+//
+// sub 通常通过 SubQuery[X](q) 派生，能引用外层 q 的字段（相关子查询）。
+// sub == nil 时累积 ErrSubqueryNil；sub.GetError() 非空时在 BuildQuery 执行时透传到外层 GORM 错误链。
+func (q *Query[T]) Exists(sub Subquerier) *Query[T] {
+	return q.appendExists("EXISTS", false, sub)
+}
+
+// NotExists 添加 NOT EXISTS 子查询条件（AND）。详见 Exists。
+func (q *Query[T]) NotExists(sub Subquerier) *Query[T] {
+	return q.appendExists("NOT EXISTS", false, sub)
+}
+
+// appendExists 内部辅助：构建 EXISTS / NOT EXISTS 条件并追加到 conditions。
+// 若 sub.GetError() 非空，立即透传到 q.errs（与 InSub 等一致的错误累积策略）。
+func (q *Query[T]) appendExists(op string, isOr bool, sub Subquerier) *Query[T] {
+	if sub == nil {
+		q.errs = append(q.errs, ErrSubqueryNil)
+		return q
+	}
+	// 子查询已有错误，立即透传到外层 q.errs，使调用方 GetError() 可感知
+	if subErr := sub.GetError(); subErr != nil {
+		q.errs = append(q.errs, subErr)
+	}
+	q.conditions = append(q.conditions, condition{
+		subExpr:  sub,
+		existsOp: op,
+		isOr:     isOr,
+	})
+	return q
+}
+
 // gplusSubquery 私有 guard 方法，阻止外部包冒名实现 Subquerier 接口。
 func (q *Query[T]) gplusSubquery() {}
 

@@ -19,6 +19,9 @@ type condition struct {
 	isRaw    bool // 是否为原生 SQL
 	// 用于存储嵌套的子条件块
 	group []condition
+	// subExpr 存储 EXISTS / NOT EXISTS 子查询（v0.8.0）；非空时 existsOp 为 "EXISTS" 或 "NOT EXISTS"
+	subExpr  Subquerier
+	existsOp string // "EXISTS" 或 "NOT EXISTS"
 }
 
 // orderItem 存储单个排序项，isRaw=true 时 expr 为原生表达式，不经转义
@@ -307,6 +310,21 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 	var buildCond func(d *gorm.DB, conds []condition) *gorm.DB
 	buildCond = func(d *gorm.DB, conds []condition) *gorm.DB {
 		for _, cond := range conds {
+			// --- EXISTS / NOT EXISTS 子查询（v0.8.0）---
+			if cond.subExpr != nil {
+				if subErr := cond.subExpr.GetError(); subErr != nil {
+					_ = d.AddError(subErr)
+				}
+				subDB := cond.subExpr.ToDB(d)
+				clause := cond.existsOp + " (?)"
+				if cond.isOr {
+					d = d.Or(clause, subDB)
+				} else {
+					d = d.Where(clause, subDB)
+				}
+				continue
+			}
+
 			// 如果是嵌套组
 			if len(cond.group) > 0 {
 				// GORM v2 分组条件需传入 *gorm.DB，不支持 func(*gorm.DB)*gorm.DB 签名
