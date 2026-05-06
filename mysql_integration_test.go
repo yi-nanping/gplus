@@ -3,6 +3,7 @@ package gplus
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/mysql"
@@ -262,6 +263,49 @@ func TestMySQL_JoinQuery(t *testing.T) {
 		result, err := repo.List(q)
 		assertError(t, err, false, "LeftJoin 应成功")
 		assertEqual(t, 1, len(result), "LeftJoin 结果应为 1 条")
+	})
+}
+
+// TestIntegration_SelfJoin_BothDialects 验证 alias 体系自连接（users JOIN users boss）在 sqlite / mysql 两种方言下均正确
+func TestIntegration_SelfJoin_BothDialects(t *testing.T) {
+	// sqlite：始终可用
+	t.Run("sqlite", func(t *testing.T) {
+		_, db := setupTestDB[MySQLUser](t)
+
+		q, u := NewQueryAs[MySQLUser](context.Background(), "u")
+		boss := As[MySQLUser](q, "boss")
+		// 使用 id 做自连接（模拟 boss_id = boss.id，此处借用 id 字段简化）
+		q.LeftJoinAs(boss, &u.ID, &boss.ID, "")
+
+		sql, err := q.ToSQL(db)
+		if err != nil {
+			t.Fatalf("自连接 ToSQL（sqlite）失败: %v", err)
+		}
+		// 期望 SQL 含 boss alias
+		if !strings.Contains(sql, "boss") {
+			t.Errorf("sqlite 自连接 SQL 应包含 boss alias，实际: %s", sql)
+		}
+		// 期望 SQL 含 LEFT JOIN
+		if !strings.Contains(strings.ToUpper(sql), "LEFT JOIN") {
+			t.Errorf("sqlite 自连接 SQL 应含 LEFT JOIN，实际: %s", sql)
+		}
+	})
+
+	// mysql：依赖 TEST_MYSQL_DSN 环境变量，不可用时跳过
+	t.Run("mysql", func(t *testing.T) {
+		_, db := setupMySQLDB(t) // 连不到 MySQL 时内部 Skipf
+
+		q, u := NewQueryAs[MySQLUser](context.Background(), "u")
+		boss := As[MySQLUser](q, "boss")
+		q.LeftJoinAs(boss, &u.ID, &boss.ID, "")
+
+		sql, err := q.ToSQL(db)
+		if err != nil {
+			t.Fatalf("自连接 ToSQL（mysql）失败: %v", err)
+		}
+		if !strings.Contains(sql, "boss") {
+			t.Errorf("mysql 自连接 SQL 应包含 boss alias，实际: %s", sql)
+		}
 	})
 }
 

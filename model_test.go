@@ -20,7 +20,8 @@ type TestUser struct {
 	Email    string  // 默认驼峰转蛇形 -> email
 	IsActive bool    `gorm:"column:is_active"`
 	Score    float64 `gorm:"column:score"`
-	Ignore   string  `gorm:"-"` // 忽略字段
+	BossID   int64   `gorm:"column:boss_id"` // 自连接（v0.8.0 别名测试用）
+	Ignore   string  `gorm:"-"`              // 忽略字段
 }
 
 // assertEqual 断言相等
