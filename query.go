@@ -57,7 +57,7 @@ func (q *Query[T]) IsUnscoped() bool {
 
 // GetError 将所有累积的错误合并为一个返回（含 alias core 中的错误）
 func (q *Query[T]) GetError() error {
-	all := q.errs
+	all := append([]error(nil), q.errs...) // 显式拷贝避免 slice aliasing
 	if q.core != nil && len(q.core.errs) > 0 {
 		all = append(all, q.core.errs...)
 	}

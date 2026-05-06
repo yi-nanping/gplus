@@ -114,3 +114,23 @@ func TestAs_NilQueryPanics_N5(t *testing.T) {
 	}()
 	_ = As[TestUser](nil, "o")
 }
+
+// TestAs_DuplicateAcrossOuterChain 验证 As 沿 outerQueryRef 链向上查重名
+// 子查询里若注册的 alias name 已在外层 q 上存在，应累积 ErrAliasDuplicate
+func TestAs_DuplicateAcrossOuterChain_DecisionB(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	o1 := As[TestUser](q, "o")
+
+	// 派生 sub（手工设置 outerQueryRef 模拟 SubQuery，因 SubQuery 在 Task 14 实现）
+	sub, _ := NewQuery[TestUser](context.Background())
+	sub.gplusCore().outerQueryRef = q
+
+	// 在 sub 上注册同名 alias，应命中外层 q 的 "o" 并返回 o1
+	o2 := As[TestUser](sub, "o")
+	if o1 != o2 {
+		t.Fatalf("expected outer chain duplicate to return first instance")
+	}
+	if !errors.Is(sub.GetError(), ErrAliasDuplicate) {
+		t.Fatalf("expected ErrAliasDuplicate accumulated on sub, got %v", sub.GetError())
+	}
+}
