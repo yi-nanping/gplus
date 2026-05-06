@@ -721,38 +721,73 @@ func (q *Query[T]) join(table, method, on string, args ...any) *Query[T] {
 }
 
 // LeftJoin 左连接：返回左表所有记录，即使右表无匹配
+//
+// Deprecated: use LeftJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) LeftJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinLeft, on, args...)
 }
 
 // RightJoin 右连接：返回右表所有记录，即使左表无匹配
+//
+// Deprecated: use RightJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) RightJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinRight, on, args...)
 }
 
 // InnerJoin 内连接：仅返回两个表中匹配的记录（交集）
+//
+// Deprecated: use InnerJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) InnerJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinInner, on, args...)
 }
 
 // OuterJoin 注意：裸 "OUTER JOIN" 不是标准 SQL，MySQL/PostgreSQL/SQLite 均不支持，
 // 调用此方法将导致数据库语法错误。如需外连接，请使用 FullJoin ("FULL OUTER JOIN")。
+//
+// Deprecated: use OuterJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) OuterJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinOuter, on, args...)
 }
 
 // FullJoin 全外连接：返回左右表中所有的记录
+//
+// Deprecated: use FullJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) FullJoin(table string, on string, args ...any) *Query[T] {
 	return q.join(table, JoinFull, on, args...)
 }
 
 // CrossJoin 交叉连接：返回笛卡尔积
 // 注意：交叉连接通常不需要 ON 条件
+//
+// Deprecated: use CrossJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) CrossJoin(table string) *Query[T] {
 	return q.join(table, JoinCross, "")
 }
 
 // NaturalJoin 自然连接：基于相同列名自动匹配
+//
+// Deprecated: use NaturalJoinAs for type-safe column references.
+// Will be removed in v1.0. Still useful for joining subquery tables /
+// function-returning tables / USING clauses where alias instances
+// cannot represent the join target.
 func (q *Query[T]) NaturalJoin(table string) *Query[T] {
 	return q.join(table, JoinNatural, "")
 }
