@@ -36,6 +36,26 @@ func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 	}, model
 }
 
+// NewQueryAs 创建 Query 并给主表起 alias。
+//
+// 返回的 *T 是独立 alias 实例（字段地址绑定到 alias），而非规范单例；
+// 使用 &t.Field 时解析为 "alias.col" 而非 "table.col"。
+//
+// alias 必须满足 ^[a-zA-Z_][a-zA-Z0-9_]{0,31}$，否则累积 ErrAliasInvalidName。
+func NewQueryAs[T any](ctx context.Context, alias string) (*Query[T], *T) {
+	q := &Query[T]{
+		ctx:  ctx,
+		core: newQueryCore(ctx),
+		errs: make([]error, 0, 8),
+		ScopeBuilder: ScopeBuilder{
+			conditions: make([]condition, 0, 8),
+		},
+	}
+	// 复用 As 的全部校验逻辑（name 正则 / 链查重 / 创建独立实例）
+	t := As[T](q, alias)
+	return q, t
+}
+
 // Context 获取上下文
 func (q *Query[T]) Context() context.Context {
 	if q.ctx == nil {
