@@ -106,5 +106,59 @@ func (c *queryCore) getError() error {
 	return errors.Join(all...)
 }
 
+// addAlias 注册一个 alias 实例。
+// 不做 nameRegexp 校验（由 As 包级函数完成）；不做 nil 校验（内部方法）。
+// 重名直接返回 ErrAliasDuplicate（不累积），由 As 决定如何处理。
+func (c *queryCore) addAlias(name string, typ reflect.Type, instance any) error {
+	if _, ok := c.aliases[name]; ok {
+		return ErrAliasDuplicate
+	}
+	addrLow := uintptr(reflect.ValueOf(instance).Pointer())
+	addrHigh := addrLow + typ.Size()
+	c.aliases[name] = &aliasEntry{
+		instance: instance,
+		name:     name,
+		typ:      typ,
+		addrLow:  addrLow,
+		addrHigh: addrHigh,
+		revoked:  false,
+	}
+	return nil
+}
+
+// lookupAddr 反向查找：给定字段地址，返回 alias name 和列名。
+//
+// H2：offset 必须在 schema 已知字段集合内（防 GC 重用 / size 巧合误命中）。
+// N4：revoked entry 直接返回未命中（让调用方累积 ErrAliasRevoked）。
+func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
+	for _, entry := range c.aliases {
+		if entry.addrLow <= addr && addr < entry.addrHigh {
+			if entry.revoked {
+				// N4：revoked，由调用方 resolveColumnName 累积 ErrAliasRevoked
+				return "", "", false
+			}
+			offset := addr - entry.addrLow
+			// 使用 gorm tag + COLUMN label 与 registerModel/resolveColumnName 保持一致
+			schema := reflectStructSchema(reflect.New(entry.typ).Interface(), "gorm", "COLUMN")
+			if name, found := schema[offset]; found {
+				return entry.name, name, true
+			}
+			// H2：区间命中但 offset 不在 schema，视为未命中
+		}
+	}
+	return "", "", false
+}
+
+// hadRevokedHit 辅助：检查给定地址是否落在某个 revoked entry 的区间内。
+// 用于 resolveColumnName 在 lookupAddr 返回 false 后累积 ErrAliasRevoked。
+func (c *queryCore) hadRevokedHit(addr uintptr) bool {
+	for _, entry := range c.aliases {
+		if entry.addrLow <= addr && addr < entry.addrHigh && entry.revoked {
+			return true
+		}
+	}
+	return false
+}
+
 // 注意：*Query[T] 和 *Updater[T] 的 gplusCore() 方法实现在 query.go / update.go
 // 编译期断言放在它们各自所在文件，避免循环依赖
