@@ -149,3 +149,45 @@ func TestAs_TypeConflictPanics(t *testing.T) {
 	// 同名 "x" 但类型不同（Order 而非 TestUser）
 	_ = As[Order](q, "x")
 }
+
+// uintptrOf 测试辅助：取指针变量的 uintptr 地址
+func uintptrOf(v any) uintptr {
+	return uintptr(reflect.ValueOf(v).Pointer())
+}
+
+func TestResolveColumnName_AliasField_Resolves(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	o := As[TestUser](q, "o")
+	col, err := q.resolveColumnName(uintptrOf(&o.Name))
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	// TestUser.Name 的 gorm tag 为 column:username
+	if col != "o.username" {
+		t.Errorf("expected o.username, got %s", col)
+	}
+}
+
+func TestResolveColumnName_SubStrictClosure_H5(t *testing.T) {
+	q2, _ := NewQuery[TestUser](context.Background())
+	// 派生 sub from q2（手工设置 outerQueryRef，因 SubQuery 在 Task 14 实现）
+	sub, _ := NewQuery[TestUser](context.Background())
+	sub.gplusCore().outerQueryRef = q2
+	// 错误地引用一个完全无关的全局规范单例字段地址
+	u := getModelInstance[TestUser]()
+	col, err := sub.resolveColumnName(uintptrOf(&u.Name))
+	if !errors.Is(err, ErrFieldAddrUnregistered) {
+		t.Errorf("H5 sub 必须严格闭合，不回退全局 cache，got col=%q err=%v", col, err)
+	}
+}
+
+func TestResolveColumnName_AliasRevoked_AccumulatesError_N4(t *testing.T) {
+	q, _ := NewQuery[TestUser](context.Background())
+	o := As[TestUser](q, "o")
+	// 翻转 revoked（模拟 Clear 效果，不调真正的 Clear 因 Task 7 才实现）
+	q.gplusCore().aliases["o"].revoked = true
+	_, err := q.resolveColumnName(uintptrOf(&o.Name))
+	if !errors.Is(err, ErrAliasRevoked) {
+		t.Errorf("expected ErrAliasRevoked, got %v", err)
+	}
+}

@@ -964,3 +964,49 @@ func (q *Query[T]) gplusCore() *queryCore {
 
 // 编译期断言：*Query[T] 实现 AnyQuery 接口
 var _ AnyQuery = (*Query[struct{}])(nil)
+
+// resolveColumnName 解析字段地址到列名（v0.8.0 alias 体系）
+//
+// 路径：
+//  1. 当前 q.core.aliases 命中（含 H2 offset 校验）→ "alias.col"
+//  2. 沿 outerQueryRef 链向上重复（含 N4 revoked 检查）
+//  3. 顶层未命中：
+//     - sub 模式（q.core.outerQueryRef != nil）→ 严格闭合 ErrFieldAddrUnregistered（H5）
+//     - 顶层模式 → 回退全局 columnNameCache（v0.7.x 既有行为）
+//
+// 错误累积到 q.core.errs；调用方可通过 q.GetError() 感知
+func (q *Query[T]) resolveColumnName(addr uintptr) (string, error) {
+	if q.core == nil {
+		// Task 4 强制初始化后此分支不应触发；防御性处理
+		return "", fmt.Errorf("gplus: query core not initialized")
+	}
+	isSub := q.core.outerQueryRef != nil
+
+	var current AnyQuery = q
+	for current != nil {
+		core := current.gplusCore()
+		if alias, col, ok := core.lookupAddr(addr); ok {
+			return alias + "." + col, nil
+		}
+		// N4：lookupAddr 命中 revoked 区间但被拒，立即累积 ErrAliasRevoked 不再继续
+		if core.hadRevokedHit(addr) {
+			q.core.appendErr(ErrAliasRevoked)
+			return "", ErrAliasRevoked
+		}
+		current = core.outerQueryRef
+	}
+
+	if isSub {
+		// H5：sub 严格闭合，不回退全局 cache
+		q.core.appendErr(ErrFieldAddrUnregistered)
+		return "", ErrFieldAddrUnregistered
+	}
+
+	// 顶层 fallback：用 schema.go 的全局 columnNameCache 查找
+	if name, ok := columnNameCache.Load(addr); ok {
+		return name.(string), nil
+	}
+
+	q.core.appendErr(ErrFieldAddrUnregistered)
+	return "", ErrFieldAddrUnregistered
+}
