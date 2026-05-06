@@ -36,6 +36,11 @@ type coreMetadata struct {
 // queryCore 承载 alias 体系的共享状态与方法
 // unexported 类型，外部包无法直接引用
 type queryCore struct {
+	// aliases：alias name → entry 指针
+	// 用 *aliasEntry 而非 aliasEntry（spec §3.3 原文是值 map）的理由：
+	// - 支持 N4 revoked 翻转：Clear() 时原地修改 entry 标志，无需赋值回 map
+	// - lookupAddr 命中 revoked alias 可直接返回错误，语义清晰
+	// - GC 安全等价：entry 指针持有 instance 强引用，与值 map 生命期同步
 	aliases       map[string]*aliasEntry
 	outerQueryRef AnyQuery     // 子查询时指向外层；顶层为 nil
 	metadata      coreMetadata // v0.8.0 仅含 ctx
@@ -84,15 +89,21 @@ func (c *queryCore) appendErr(err error) {
 	}
 }
 
-// getError 聚合错误（沿 outerQuery 链）
+// getError 聚合错误（沿整个 outerQuery 链）
 func (c *queryCore) getError() error {
-	if len(c.errs) == 0 {
-		if c.outerQueryRef != nil {
-			return c.outerQueryRef.gplusCore().getError()
+	var all []error
+	cur := c
+	for cur != nil {
+		all = append(all, cur.errs...)
+		if cur.outerQueryRef == nil {
+			break
 		}
+		cur = cur.outerQueryRef.gplusCore()
+	}
+	if len(all) == 0 {
 		return nil
 	}
-	return errors.Join(c.errs...)
+	return errors.Join(all...)
 }
 
 // 注意：*Query[T] 和 *Updater[T] 的 gplusCore() 方法实现在 query.go / update.go
