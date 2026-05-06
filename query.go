@@ -182,9 +182,40 @@ func (q *Query[T]) Table(name string) *Query[T] {
 	return q
 }
 
+// resolveColumnNameAny 接受 col any（兼容 v0.6.0 既有签名），
+// 内部走 v0.8.0 alias 链解析路径 + 全局 fallback。
+//
+// col 可能是字符串（直接列名）或字段指针（地址解析）：
+//   - 字符串：直接返回（保持 v0.6.0 字符串列名行为）
+//   - 指针且 q.core 已初始化：走 method resolveColumnName（alias 链 + 全局 cache）
+//   - q.core == nil（And/Or 内部子 Query）或非指针：回退包级 resolveColumnName（全局 cache）
+func (q *Query[T]) resolveColumnNameAny(col any) (string, error) {
+	if s, ok := col.(string); ok {
+		// 字符串列名直接校验并返回（与包级函数行为一致）
+		if s == "" {
+			return "", ErrColumnEmpty
+		}
+		return s, nil
+	}
+	if col == nil {
+		return "", ErrInvalidPointer
+	}
+	// q.core == nil 时（如 And/Or 嵌套块的临时子 Query），回退包级路径（全局 cache）
+	// 这等价于 v0.7.x 既有行为，不影响无 alias 场景
+	if q.core == nil {
+		return resolveColumnName(col)
+	}
+	addr := reflectPointerAddr(col)
+	if addr == 0 {
+		// 非指针类型或零地址，回退包级路径
+		return resolveColumnName(col)
+	}
+	return q.resolveColumnName(addr)
+}
+
 // addCond 内部辅助方法
 func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
-	name, err := resolveColumnName(col)
+	name, err := q.resolveColumnNameAny(col)
 	if err != nil {
 		q.errs = append(q.errs, fmt.Errorf("gplus: invalid column pointer: %w", err))
 		return q
@@ -201,7 +232,7 @@ func (q *Query[T]) addCond(isOr bool, col any, op string, val any) *Query[T] {
 // Select 指定查询字段
 func (q *Query[T]) Select(cols ...any) *Query[T] {
 	for _, c := range cols {
-		name, err := resolveColumnName(c)
+		name, err := q.resolveColumnNameAny(c)
 		if err != nil {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
@@ -625,7 +656,7 @@ func (q *Query[T]) OrNotBetween(col any, val1 any, val2 any) *Query[T] {
 
 // Order 排序
 func (q *Query[T]) Order(col any, isAsc bool) *Query[T] {
-	name, err := resolveColumnName(col)
+	name, err := q.resolveColumnNameAny(col)
 	if err != nil {
 		q.errs = append(q.errs, fmt.Errorf("gplus: Order invalid column pointer: %w", err))
 		return q
@@ -668,7 +699,7 @@ func (q *Query[T]) Offset(offset int) *Query[T] {
 // Omit 排除某些字段（不查询某些字段）
 func (q *Query[T]) Omit(cols ...any) *Query[T] {
 	for _, c := range cols {
-		name, err := resolveColumnName(c)
+		name, err := q.resolveColumnNameAny(c)
 		if err != nil {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Omit invalid column pointer: %w", err))
 			continue
@@ -686,7 +717,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 	q.distinct = true
 	// 如果传入了特定列，将它们也作为 Select 字段处理
 	for _, c := range cols {
-		name, err := resolveColumnName(c)
+		name, err := q.resolveColumnNameAny(c)
 		if err != nil {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Distinct invalid column pointer: %w", err))
 			continue
@@ -699,7 +730,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 // Group 分组
 func (q *Query[T]) Group(cols ...any) *Query[T] {
 	for _, c := range cols {
-		name, err := resolveColumnName(c)
+		name, err := q.resolveColumnNameAny(c)
 		if err != nil {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Group invalid column pointer: %w", err))
 			continue

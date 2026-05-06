@@ -87,6 +87,12 @@ func (u *Updater[T]) IsEmpty() bool {
 	return len(u.setMap) == 0
 }
 
+// resolveColumnNameAny 接受 col any，走包级 resolveColumnName。
+// Updater[T] 暂无 alias 体系，此方法保持接口一致（便于未来扩展）。
+func (u *Updater[T]) resolveColumnNameAny(col any) (string, error) {
+	return resolveColumnName(col)
+}
+
 // Set 设置更新值
 // 示例: u.Set(&User.Name, "NewName")
 func (u *Updater[T]) Set(col any, val any) *Updater[T] {
@@ -130,7 +136,7 @@ func (u *Updater[T]) SetMap(m map[string]any) *Updater[T] {
 // Select 指定只更新哪些字段 (即使 setMap 里有其他字段也不会更新)
 func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 	for _, c := range cols {
-		name, err := resolveColumnName(c)
+		name, err := u.resolveColumnNameAny(c)
 		if err != nil {
 			u.errs = append(u.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
@@ -143,7 +149,7 @@ func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 // Omit 指定排除哪些字段不更新
 func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 	for _, c := range cols {
-		name, err := resolveColumnName(c)
+		name, err := u.resolveColumnNameAny(c)
 		if err != nil {
 			u.errs = append(u.errs, fmt.Errorf("gplus: Omit invalid column pointer: %w", err))
 			continue
@@ -157,7 +163,7 @@ func (u *Updater[T]) Omit(cols ...any) *Updater[T] {
 
 // 私有辅助方法：统一添加条件
 func (u *Updater[T]) addCond(isOr bool, col any, op string, val any) *Updater[T] {
-	name, err := resolveColumnName(col)
+	name, err := u.resolveColumnNameAny(col)
 	if err != nil {
 		u.errs = append(u.errs, fmt.Errorf("gplus: invalid column pointer: %w", err))
 		return u
