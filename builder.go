@@ -30,10 +30,12 @@ type orderItem struct {
 // joinInfo 结构化 Join 存储，优化性能
 // joinInfo 结构化存储 Join 信息，避免闭包带来的额外开销
 type joinInfo struct {
-	method string // LEFT JOIN, RIGHT JOIN, INNER JOIN
-	table  string // 表名
-	on     string // 关联条件
-	args   []any  // 条件参数
+	method    string // LEFT JOIN, RIGHT JOIN, INNER JOIN
+	table     string // 表名
+	on        string // 关联条件
+	args      []any  // 条件参数
+	aliasName string // v0.8.0：alias join 的别名（空字符串表示走旧 Join 路径）
+	rawSQL    bool   // v0.8.0：true 时 table 字段存储完整 JOIN SQL 片段，method/on 忽略
 }
 
 // DataRule 对外开放的核心规则字段
@@ -378,7 +380,10 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 func (b *ScopeBuilder) applyJoins(db *gorm.DB) *gorm.DB {
 	for _, j := range b.joins {
 		var query string
-		if j.on != "" {
+		if j.rawSQL {
+			// v0.8.0 alias join：table 字段存储完整 JOIN SQL 片段（含 AS alias ON ...）
+			query = j.table
+		} else if j.on != "" {
 			// 标准连接：METHOD TABLE ON CONDITION
 			query = fmt.Sprintf("%s %s ON %s", j.method, j.table, j.on)
 		} else {

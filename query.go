@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"gorm.io/gorm"
@@ -1012,6 +1013,121 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 			column, rule.Condition,
 		))
 	}
+}
+
+// LeftJoinAs 类型安全的 LEFT JOIN（v0.8.0 alias 体系）。
+//
+// alias 必须由 As[X](q, ...) 创建的实例，且属于当前 q 链；
+// leftCol / rightCol 为任意一侧的字段指针（主表或副表均可）；
+// extraSQL 为额外的 ON 条件 SQL 片段，仅含 ? 占位符（如 "AND o.status = ?"）——
+// 绝不直接拼接用户输入，extraSQL 本身不经 fmt.Sprintf 处理；
+// extraArgs 对应占位符参数，走 GORM 参数化预编译，与 db.Joins(sql, args...) 同语义。
+//
+// 错误处理：alias 不属于 q 链时累积 ErrAliasNotInChain 并跳过该 JOIN（保持链式）。
+func (q *Query[T]) LeftJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T] {
+	q.appendJoinAs("LEFT JOIN", alias, leftCol, rightCol, extraSQL, extraArgs)
+	return q
+}
+
+// appendJoinAs 内部辅助：构建 alias JOIN 条目并追加到 ScopeBuilder.joins。
+// joinType 为 "LEFT JOIN" / "INNER JOIN" 等字面量。
+// C1 保障：joinSQL 仅拼接结构化字面量（table 名 / alias 名 / 列名），
+// extraArgs 全程不进入字符串，由 GORM 以参数化方式注入。
+func (q *Query[T]) appendJoinAs(joinType string, alias any, leftCol any, rightCol any, extraSQL string, extraArgs []any) {
+	if q.core == nil {
+		return
+	}
+
+	// 1. 校验 alias 实例属于 q 链，取其 alias name 和 reflect.Type
+	aliasName, aliasTyp, ok := q.lookupAliasFromChain(alias)
+	if !ok {
+		q.core.appendErr(ErrAliasNotInChain)
+		return
+	}
+
+	// 2. 解析 leftCol / rightCol（调用 v0.8.0 resolveColumnName，addr 路径）
+	leftStr, lerr := q.resolveColumnName(reflectPointerAddr(leftCol))
+	if lerr != nil {
+		// resolveColumnName 已 appendErr，直接返回
+		return
+	}
+	rightStr, rerr := q.resolveColumnName(reflectPointerAddr(rightCol))
+	if rerr != nil {
+		return
+	}
+
+	// 3. 构造 JOIN SQL 字面量（C1：仅拼接类型安全的标识符，不拼 extraArgs）
+	// 注意：此处不带方言引号（qL/qR 未知）；方言感知转义由 applyJoins 调用 db.Joins 时由 GORM 处理。
+	tableName := aliasSchemaTableName(aliasTyp)
+	joinSQL := fmt.Sprintf("%s %s AS %s ON %s = %s",
+		joinType,
+		tableName,
+		aliasName,
+		leftStr,
+		rightStr,
+	)
+	if extraSQL != "" {
+		// extraSQL 含 ? 占位符，参数由 extraArgs 提供，绝不内联
+		joinSQL += " " + extraSQL
+	}
+
+	// 4. 追加到 joins（rawSQL=true 表示 table 字段存储完整 SQL）
+	q.joins = append(q.joins, joinInfo{
+		table:     joinSQL,  // rawSQL 路径：table 存储完整 JOIN 片段
+		args:      extraArgs, // 走 GORM 参数化
+		aliasName: aliasName,
+		rawSQL:    true,
+	})
+}
+
+// lookupAliasFromChain 沿 q 链（outerQueryRef 方向）查找某个实例对应的 alias 注册项。
+// 返回 alias name、reflect.Type 和是否找到。
+func (q *Query[T]) lookupAliasFromChain(alias any) (name string, typ reflect.Type, ok bool) {
+	if alias == nil {
+		return "", nil, false
+	}
+	addr := reflectPointerAddr(alias)
+
+	var current AnyQuery = q
+	for current != nil {
+		core := current.gplusCore()
+		for _, entry := range core.aliases {
+			if entry.addrLow == addr {
+				// 精确匹配实例基地址（alias 是整个实例，非字段）
+				if entry.revoked {
+					return "", nil, false
+				}
+				return entry.name, entry.typ, true
+			}
+		}
+		current = core.outerQueryRef
+	}
+	return "", nil, false
+}
+
+// reflectPointerAddr 取指针类型 any 的底层地址（uintptr）。
+// alias 和 col 参数均为指针（*X 或 *field），此函数统一提取。
+func reflectPointerAddr(v any) uintptr {
+	return reflect.ValueOf(v).Pointer()
+}
+
+// aliasSchemaTableName 根据 reflect.Type 推导 GORM 默认表名（复用 nsColumnName 转蛇形 + 复数）。
+// 例：Order → "orders"，UserProfile → "user_profiles"。
+// 若 X 实现了 TableName() string，则使用自定义表名；否则走默认规则。
+func aliasSchemaTableName(typ reflect.Type) string {
+	// 检查是否实现 TableName 接口（GORM 约定）
+	// 通过 reflect.New 构造实例，调用 TableName() 方法
+	ptrTyp := reflect.PointerTo(typ)
+	tableNameMethod, has := ptrTyp.MethodByName("TableName")
+	if has && tableNameMethod.Type.NumIn() == 1 && tableNameMethod.Type.NumOut() == 1 &&
+		tableNameMethod.Type.Out(0) == reflect.TypeOf("") {
+		result := tableNameMethod.Func.Call([]reflect.Value{reflect.New(typ)})
+		if len(result) == 1 {
+			return result[0].String()
+		}
+	}
+	// 默认：蛇形 + 复数（GORM 默认命名规范）
+	return nsColumnName(typ.Name()) + "s"
 }
 
 // gplusSubquery 私有 guard 方法，阻止外部包冒名实现 Subquerier 接口。
