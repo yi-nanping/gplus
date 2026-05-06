@@ -2,6 +2,42 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.8.0] - 2026-05-06
+
+### 新增
+
+- **alias 体系**：类型安全的跨表列引用 / 同表自连接 / correlated EXISTS 子查询
+  - `gplus.As[X](q, name)`：在 q 上注册 X 类型的 alias 实例
+  - `gplus.NewQueryAs[T](ctx, name)`：主表起 alias 入口
+  - `gplus.SubQuery[X](outer)` / `SubQueryAs[X](outer, name)`：派生子查询，支持跨层引用外层 alias
+  - 7 种 JoinAs（Query）/ 2 种 JoinAs（Updater）：LeftJoinAs / RightJoinAs / InnerJoinAs / OuterJoinAs / FullJoinAs / CrossJoinAs / NaturalJoinAs
+  - Exists / NotExists / OrExists / OrNotExists（Query + Updater 镜像）
+- 7 个新错误哨兵：ErrAliasDuplicate / ErrAliasInvalidName / ErrFieldAddrUnregistered / ErrAliasNotInChain / ErrSubqueryOuterNil / ErrAliasQueryNil / ErrAliasRevoked
+- Repository.NewQueryAs 便捷方法
+
+### 行为约束（须知）
+
+- **DataRule × alias 安全契约**：DataRule 仅作用主表，alias 副表用户自负责。详见 README "Alias 与跨表查询" 章节
+- **DataRule.Column 不应写 alias 前缀**：v0.9 cross-table DataRule 通过新增 Table 字段提供，提前在 Column 写 alias 前缀会形成兼容性陷阱
+- **JoinAs extraSQL 必须参数化**：禁止 fmt.Sprintf 拼接用户输入；占位符 `?` + extraArgs 走 GORM 参数化
+- **As(q=nil) panic ErrAliasQueryNil**（API 入口编程错误）；其他错误均累积 + BuildQuery 短路（决策 1B）
+- **Clear() 后 alias 实例失效**：Clear 翻转所有 alias entry 的 revoked 标记，后续使用累积 ErrAliasRevoked
+- **GORM 版本锁定 v1.31.x**：升级前必须重跑 TestGORMAliasBehaviorProbe
+
+### Deprecated
+
+- `LeftJoin / RightJoin / InnerJoin / OuterJoin / FullJoin / CrossJoin / NaturalJoin`（Query + Updater 各 7 个）：使用对应 JoinAs 替代；v1.0 删除。仍保留用于 JOIN 子查询表 / USING 子句等 alias 不能表达的场景
+
+### 不在本期范围
+
+- ANY / ALL 24 方法 → v0.8.1
+- SelectSub → v0.8.1（依赖 GORM Select 嵌套实测）
+- 类型安全 ON extra 三元组 / 包级泛型 LeftJoinAs[L,R] → v0.9
+- 跨表 DataRule（DataRule.Table 字段）→ v0.9
+- UNION / WITH CTE / 窗口函数 → v1.0+
+
+---
+
 ## [0.7.1] - 2026-05-01
 
 ### 修复 (文档)

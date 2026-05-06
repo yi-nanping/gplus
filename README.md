@@ -805,6 +805,50 @@ Raw SQL 路径 Schema=nil，下游 callback 在正确实现下应短路（`if Sc
 
 `Sum/Max/Min/Avg/Pluck` 接受字符串列名时，gplus 不做白名单校验（与 `DataRule.Column` 不同）。**禁止将用户输入直接传入 `col`**。
 
+## Alias 与跨表查询（v0.8.0）
+
+类型安全的跨表列引用、自连接、相关 EXISTS 子查询。
+
+### 跨表列引用
+
+```go
+q, u := gplus.NewQuery[User](ctx)
+o := gplus.As[Order](q, "o")
+q.LeftJoinAs(o, &o.UserID, &u.ID, "").
+    Eq(&o.Amount, 100)
+// SQL: SELECT users.* FROM users
+//      LEFT JOIN orders AS o ON o.user_id = users.id
+//      WHERE o.amount = 100
+```
+
+### 同表自连接
+
+```go
+q, u := gplus.NewQueryAs[User](ctx, "u")
+boss := gplus.As[User](q, "boss")
+q.LeftJoinAs(boss, &u.BossID, &boss.ID, "")
+```
+
+### Correlated EXISTS
+
+```go
+q, u := gplus.NewQuery[User](ctx)
+sub, o := gplus.SubQuery[Order](q)
+sub.Eq(&o.UserID, u.ID)
+q.Exists(sub)
+```
+
+### ⚠️ DataRule × alias 安全契约
+
+**DataRule 不会自动应用到 alias 副表。** 副表敏感字段（tenant_id 等）必须在 JoinAs 的 extraSQL 显式过滤：
+
+```go
+q.LeftJoinAs(o, &o.UserID, &u.ID,
+    "AND o.tenant_id = ?", tenantID) // ← 显式 + 参数化
+```
+
+**禁止**用 fmt.Sprintf 拼接用户输入到 extraSQL（SQL 注入）。**禁止**在 DataRule.Column 写 alias 前缀（如 `"o.tenant_id"`）—— v0.9 cross-table DataRule 通过新增 `DataRule.Table` 字段提供，提前写 alias 前缀会形成兼容性陷阱。
+
 ## 许可证
 
 MIT License

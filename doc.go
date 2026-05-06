@@ -61,4 +61,11 @@
 //	q, m := gplus.NewQuery[User](ctx)
 //	q.Eq(&m.Name, "Alice")
 //	sql, args, err := gplus.ToSQL[uint, User](repo, q)
+//
+// # Alias 体系（v0.8.0）
+//
+// 通过 As[X](q, name) 创建 alias 实例（独立于规范单例的 *X），
+// 支持跨表列引用 / 自连接 / correlated EXISTS。
+//
+// 详见 docs/superpowers/specs/2026-05-06-alias-system-design.md。
 package gplus
