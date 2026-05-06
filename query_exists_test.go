@@ -84,3 +84,35 @@ func TestAliasField_InQEq_Works(t *testing.T) {
 		t.Errorf("expected 'o.amount' or '\"o\".\"amount\"' in SQL, got %s", sql)
 	}
 }
+
+func TestOrExists_OrBranchSQL(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.Eq(&u.Name, "alice")
+	sub, o := SubQuery[Order](q)
+	sub.Eq(&o.UserID, u.ID)
+	q.OrExists(sub)
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL: %v", err)
+	}
+	if !strings.Contains(sql, "OR EXISTS") {
+		t.Errorf("expected 'OR EXISTS' in SQL, got %s", sql)
+	}
+}
+
+func TestOrNotExists_OrBranchSQL(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.Eq(&u.Name, "alice")
+	sub, o := SubQuery[Order](q)
+	sub.Eq(&o.UserID, u.ID)
+	q.OrNotExists(sub)
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL: %v", err)
+	}
+	if !strings.Contains(sql, "OR NOT EXISTS") {
+		t.Errorf("expected 'OR NOT EXISTS' in SQL, got %s", sql)
+	}
+}

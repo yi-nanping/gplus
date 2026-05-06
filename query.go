@@ -1286,6 +1286,16 @@ func (q *Query[T]) NotExists(sub Subquerier) *Query[T] {
 	return q.appendExists("NOT EXISTS", false, sub)
 }
 
+// OrExists 添加 OR EXISTS 子查询条件。与 Exists 相同，但使用 OR 逻辑。
+func (q *Query[T]) OrExists(sub Subquerier) *Query[T] {
+	return q.appendExists("EXISTS", true, sub)
+}
+
+// OrNotExists 添加 OR NOT EXISTS 子查询条件。与 NotExists 相同，但使用 OR 逻辑。
+func (q *Query[T]) OrNotExists(sub Subquerier) *Query[T] {
+	return q.appendExists("NOT EXISTS", true, sub)
+}
+
 // appendExists 内部辅助：构建 EXISTS / NOT EXISTS 条件并追加到 conditions。
 // 若 sub.GetError() 非空，立即透传到 q.errs（与 InSub 等一致的错误累积策略）。
 func (q *Query[T]) appendExists(op string, isOr bool, sub Subquerier) *Query[T] {
