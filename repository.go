@@ -133,6 +133,12 @@ func (r *Repository[D, T]) NewUpdater(ctx context.Context) (*Updater[T], *T) {
 	return NewUpdater[T](ctx)
 }
 
+// NewQueryAs 创建带主表 alias 的 Query，便捷方法。
+// 等价于 gplus.NewQueryAs[T](ctx, alias)，但类型由 Repository 自动推导。
+func (r *Repository[D, T]) NewQueryAs(ctx context.Context, alias string) (*Query[T], *T) {
+	return NewQueryAs[T](ctx, alias)
+}
+
 // dbResolver 现在的逻辑变得很简单：如果有 tx 用 tx，否则用结构体里的 db
 func (r *Repository[D, T]) dbResolver(ctx context.Context, tx *gorm.DB) *gorm.DB {
 	if tx != nil {

@@ -35,3 +35,15 @@ func TestNewQueryAs_ConflictsWithSideAlias(t *testing.T) {
 		t.Fatalf("expected ErrAliasDuplicate, got %v", q.GetError())
 	}
 }
+
+func TestRepository_NewQueryAs(t *testing.T) {
+	repo, _ := setupTestDB[TestUser](t)
+	q, u := repo.NewQueryAs(context.Background(), "u")
+	col, err := q.resolveColumnName(uintptrOf(&u.Name))
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if col != "u.username" {
+		t.Errorf("expected u.username, got %s", col)
+	}
+}
