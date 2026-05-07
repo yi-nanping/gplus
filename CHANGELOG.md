@@ -2,6 +2,21 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.8.1] - 2026-05-07
+
+### 修复 (测试基建)
+
+- **MySQL 集成测试连接池泄漏导致 `Error 1040: Too many connections`**：3 处 `gorm.Open(mysql.Open)`（`setupMySQLDB` / `TestMySQL_QuoteColumn` / `openDB`）测试结束后未关闭底层 `*sql.DB`，GORM 默认 `MaxOpenConns=0`（无限制），多个 MySQL 集成测试反复 Open 后连接未释放，CI 跑到中途即触发 MySQL 8.0 默认 `max_connections=151` 上限，后续测试全部 `Skipf` 跳过。修复：抽 `applyMySQLPoolLimits` helper 三处复用，限制 `MaxOpenConns=5` / `MaxIdleConns=2` / `ConnMaxLifetime=1m`，并通过 `t.Cleanup` 关闭 `*sql.DB`（commit `fbcea7d`）
+- **alias 测试断言写死 SQLite 引号风格**：`TestAliasField_InQEq_Works` 仅检查 `"o"."amount"` / `o.amount`，MySQL 反引号方言 `` `o`.`amount` `` 不匹配。改为方言无关：脱掉所有引号字符后判断含 `o.amount`（commit `0753ac3`）
+
+### 已知限制 (文档)
+
+- **MySQL 1093 — UPDATE 目标表不能与子查询 FROM 同表**：`InSub / NotInSub / GtSub / LtSub / EqSub` 等 16 个 Updater 子查询方法在 MySQL 下，若子查询源表与 UPDATE 目标表相同会报 `Error 1093 (HY000): You can't specify target table 'T' for update in FROM clause`。SQLite / PostgreSQL 无此限制。README "已知陷阱" 章节新增一节，含 derived table workaround 示例（`SELECT * FROM (subq) AS t`）。`TestUpdater_GtSub_RealUpdate` 在 `db.Name() == "mysql"` 时 `t.Skip`，sqlite 路径仍覆盖语义；`TestUpdater_AllSub_DryRun/GtSub` 仍覆盖 SQL 生成（commit `0753ac3`）
+
+仅测试基建 + 文档变更，不涉及代码、API、行为；GORM 版本锁定保持 v1.31.x；`v0.8.0` tag 不受影响。
+
+---
+
 ## [0.8.0] - 2026-05-06
 
 ### 新增
