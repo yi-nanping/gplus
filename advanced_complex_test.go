@@ -168,17 +168,18 @@ func TestComplex_QueryBuilder_MultiCondOr(t *testing.T) {
 	repo, db := setupComplexDB(t)
 	seedComplexData(t, db)
 
-	// WHERE (age = 30 OR age = 25) AND name LIKE '%a%'
+	// WHERE (age = 30 OR age = 25) AND name LIKE '%A%'
+	// 注：用大写 A 匹配 Alice 首字母，避开 PG 大小写敏感 LIKE 与 MySQL ci collation 差异
 	q, u := NewQuery[UserWithDelete](context.Background())
 	q.And(func(sub *Query[UserWithDelete]) {
 		sub.Eq(&u.Age, 30).OrEq(&u.Age, 25)
-	}).Like(&u.Name, "a")
+	}).Like(&u.Name, "A")
 
 	results, err := repo.List(q)
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
-	// Alice(age=30,name含a) 匹配，Bob(age=25,name不含a) 不匹配
+	// Alice(age=30,name 含 A) 匹配，Bob(age=25,name 不含 A) 不匹配
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}

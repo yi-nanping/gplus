@@ -342,8 +342,9 @@ func TestRepository_RawScan_Having(t *testing.T) {
 	db.Create(&TestUser{Name: "C", Age: 30})
 
 	var groups []AgeGroup
+	// 注：PG 标准 SQL 不允许 HAVING 引用 SELECT 列别名，必须重复聚合表达式 COUNT(*)
 	err := repo.RawScan(ctx, &groups,
-		"SELECT age, COUNT(*) as cnt FROM test_users GROUP BY age HAVING cnt > ?", 1)
+		"SELECT age, COUNT(*) as cnt FROM test_users GROUP BY age HAVING COUNT(*) > ?", 1)
 	if err != nil {
 		t.Fatalf("RawScan Having failed: %v", err)
 	}
@@ -508,12 +509,13 @@ func TestRepository_RawScan_JoinGroupBy(t *testing.T) {
 		OrderCount int    `gorm:"column:order_count"`
 	}
 	var results []UserOrderCount
+	// 注：PG 标准 SQL 不允许 HAVING 引用 SELECT 列别名，必须重复聚合表达式 COUNT(o.id)
 	err := repo.RawScan(ctx, &results,
 		`SELECT u.username, COUNT(o.id) as order_count
 		 FROM test_users u
 		 INNER JOIN test_orders o ON o.user_id = u.id
 		 GROUP BY u.id, u.username
-		 HAVING order_count > ?
+		 HAVING COUNT(o.id) > ?
 		 ORDER BY u.username`, 1)
 	if err != nil {
 		t.Fatalf("RawScan JoinGroupBy failed: %v", err)

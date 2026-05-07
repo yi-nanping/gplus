@@ -70,8 +70,9 @@ func TestGORMAliasBehaviorProbe(t *testing.T) {
 			Joins("LEFT JOIN orders AS o ON o.user_id = test_users.id AND o.status = ?", "paid").
 			Find(&users).Statement
 		got := stmt.SQL.String()
-		if !strings.Contains(got, "?") {
-			t.Errorf("expected ? placeholder in DryRun SQL, got %q", got)
+		// 方言无关：MySQL/SQLite 用 ?，PG 用 $1，断言任一占位符存在即可
+		if !strings.Contains(got, "?") && !strings.Contains(got, "$1") {
+			t.Errorf("expected ? or $1 placeholder in DryRun SQL, got %q", got)
 		}
 		if strings.Contains(got, "'paid'") {
 			t.Errorf("paid value should not be inlined: %q", got)
