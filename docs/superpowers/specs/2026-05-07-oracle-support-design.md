@@ -73,7 +73,8 @@ v0.8.1 已完成 PG 三方言 CI 验证（sqlite + MySQL 8.0 + PostgreSQL 16）�
 
 | 文件 | build tag | 内容 |
 |---|---|---|
-| `oracle_setup_test.go` | `//go:build oracle` | `setupOracleDB` helper、`defaultOracleDSN`、Oracle truncate 分支处理 IDENTITY 列重置 |
+| `oracle_setup_test.go` | `//go:build oracle` | `setupOracleDB` helper、`defaultOracleDSN`、`truncateOracleTables`（DROP TABLE PURGE + AutoMigrate） |
+| `oracle_contract_test.go` | `//go:build oracle` | Dialector 契约断言：`db.Name() == "oracle"`、`getQuoteChar` 返回双引号 |
 | `oracle_integration_test.go` | `//go:build oracle` | 5 个测试：BasicCRUD / WhereConditions / OrderGroupHaving / JoinQuery / QuoteColumn |
 | `alias_oracle_test.go` | `//go:build oracle` | 3 个测试：自连接 / alias 字段 q.Eq / correlated EXISTS |
 
@@ -117,13 +118,17 @@ Oracle 验证（手动）：
 ```go
 //go:build oracle
 
-// 警告：仅限本地 Docker 开发，system 是 Oracle 超级管理账户，密码 oracle 是
-// Oracle 23c Free Docker 镜像的默认密码——绝不能用于生产环境。CI/生产请用
-// TEST_ORACLE_DSN 环境变量提供独立测试账户，并仅授予最小测试权限。
+// 警告：仅限本地 Docker 开发。`system` 是 Oracle DBA 权限账户（非 SYS 超级账户但
+// 仍可执行所有数据库管理操作），密码 oracle 是 Oracle 23c Free Docker 镜像的默认
+// 密码——绝不能用于生产。CI/生产请用 TEST_ORACLE_DSN 提供独立测试账户，且仅授予
+// 最小测试权限（CONNECT + RESOURCE 即可）。
 const defaultOracleDSN = "oracle://system:oracle@127.0.0.1:1521/FREEPDB1"
 
 // setupOracleDB 与 PG/MySQL 同模式：非泛型，绑定 MySQLUser 复用既有测试 struct。
 // 镜像 setupPGDB(t) 风格保持代码组织一致。
+//
+// 标识符长度自检：MySQLUser → my_sql_users (12 chars)；id/username/age/email
+// 字段全部 ≤8 chars——满足 Oracle 12c R1 的 30 字符上限要求。
 func setupOracleDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
     t.Helper()
     dsn := os.Getenv("TEST_ORACLE_DSN")
@@ -141,21 +146,32 @@ func setupOracleDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
     return NewRepository[int64, MySQLUser](db), db
 }
 
-// truncateOracleTables：DROP + AutoMigrate 策略
+// truncateOracleTables：DROP TABLE PURGE + AutoMigrate 策略
 //
 // 决策原因（数据库审计建议）：
 //   - Oracle TRUNCATE 不重置 IDENTITY 序列
 //   - ALTER TABLE MODIFY IDENTITY 流程复杂（先去掉 IDENTITY 再重建）
-//   - DROP + AutoMigrate 是最可靠的 IDENTITY 重置方式，测试场景性能损耗可接受
+//   - DROP + AutoMigrate 是最可靠的 IDENTITY 重置方式
+//
+// PURGE 必要性：Oracle DROP TABLE 默认进入回收站（USER_RECYCLEBIN），测试循环
+// 反复 DROP 同名表会触发 ORA-38301 或空间耗尽。GORM Migrator().DropTable 不会
+// 自动加 PURGE，必须用原生 SQL 显式 PURGE。
 func truncateOracleTables(t *testing.T, db *gorm.DB, models ...any) {
     t.Helper()
     for _, m := range models {
-        if err := db.Migrator().DropTable(m); err != nil {
-            t.Logf("drop table warn: %v", err)
+        stmt := &gorm.Statement{DB: db}
+        if err := stmt.Parse(m); err != nil {
+            t.Logf("parse table name failed: %v", err)
+            continue
+        }
+        // 显式 PURGE 避免回收站积压
+        if err := db.Exec("DROP TABLE \"" + stmt.Table + "\" PURGE").Error; err != nil {
+            t.Logf("drop table %s warn (可能不存在): %v", stmt.Table, err)
         }
         if err := db.AutoMigrate(m); err != nil {
-            t.Fatalf("re-migrate failed: %v", err)
+            t.Fatalf("re-migrate %s failed: %v", stmt.Table, err)
         }
+        t.Logf("truncateOracle: drop+migrate OK: %s", stmt.Table)
     }
 }
 ```
@@ -206,9 +222,11 @@ PG 那次的工作流复用：作者本地实测发现 FAIL → 分析根因（�
 |---|---|---|
 | **空字符串 = NULL** | `IsNull` 测试种子用空字符串 → Oracle 自动转 NULL，断言失败 | 显式 NULL 种子 + 注释说明 |
 | **表名 UPPERCASE** | `my_sql_users` 在 Oracle 默认成 `MY_SQL_USERS` | 实测 Dialector 行为，按以下 fallback 链处理：<br>1. Dialector 默认 lowercase 强转 → 不需做任何事<br>2. Dialector 不强转但接受 lowercase → 加 GORM `gorm:"column:..."` 标签到测试 struct<br>3. Dialector 完全 case-sensitive 且不强转 → 本期 patch 库代码（getQuoteChar 之外的额外改动），更新 §3.1 改动清单 |
-| **CLOB/TEXT WHERE 限制（高概率）** | Go `string` 长字段映射成 CLOB 时 `LikeRight`/`In` 会报 `ORA-00932` | 测试 struct 字段保持短字符串（VARCHAR2 范围 ≤4000 字节），用 `gorm:"size:64"` 等显式约束避免 Dialector 默认成 CLOB |
+| **CLOB/TEXT WHERE 限制（高概率）** | Go `string` 长字段映射成 CLOB 时 `LikeRight`/`In` 会报 `ORA-00932` | 测试 struct 所有 `string` 字段**强制加 `gorm:"size:N"` tag**（N ≤ 4000 字节），避免 Dialector 默认成 CLOB；NLS 字符语义下中文要按 `size * 4` 估算 |
 | **NULLS 排序默认** | Oracle 升序 NULL 排末尾，与 PG/SQLite 相反 | `OrderGroupHaving` 测试避免对含 NULL 列的排序顺序做强断言；如必要用 `Order RAW("col NULLS FIRST")` 显式指定 |
 | **RETURNING 批量** | `SaveBatch`/`UpsertBatch` 走 RETURNING 路径在 Oracle 12c 上失败 | 实测发现失败时，将相关测试在 Oracle 下 `t.Skip` 并加 README 注明；不修库代码 |
+| **TIMESTAMP WITH TIME ZONE** | go-ora 把 `time.Time` 映射到 `TIMESTAMP WITH TIME ZONE` 还是 `TIMESTAMP WITH LOCAL TIME ZONE` 决定夏令时边界行为 | 本期不专项测试时区边界；测试 struct 仅用 `time.Time` 通用语义，不依赖具体时区类型；如发现夏令时下断言失败，记入技术债 |
+| **SELECT FOR UPDATE / SKIP LOCKED** | gplus `GetByLock` 走 GORM Lock 接口，go-ora/gorm-oracle 是否正确翻译 `FOR UPDATE` 和 12c+ `SKIP LOCKED` 未知 | 本期不专项测试 GetByLock；如未来下游用到再补；记入 §9.1 推迟项 |
 | **标识符长度（30/128 字符）** | 长表名/列名超限报 `ORA-00972` | 测试 struct 保持短命名（≤30 字符以兼容 12c R1）；CI 不验 12c R1，但 spec 明确支持版本基线 |
 | **`RETURNING "id"` 语法** | GORM 默认会调用，Oracle 12c+ 支持但语法可能略不同 | 实测，gorm-oracle Dialector 应已处理 |
 | **LikeRight 大小写敏感** | Oracle 默认大小写敏感（同 PG） | 测试用首字母大写匹配（同 PG 修复策略） |
@@ -258,7 +276,7 @@ PG 那次的工作流复用：作者本地实测发现 FAIL → 分析根因（�
 | Commit | 内容 | 验收 |
 |---|---|---|
 | 1 | 依赖 + `oracle_setup_test.go` 基础 helper | 默认 build/test 不破坏；oracle tag 编译过 |
-| 2 | `builder.go: getQuoteChar` 加 oracle 分支 + 既有方言测试加 oracle case + Dialector Name 契约断言（build-tag 下） | 默认 quote 测试加 oracle case 全过；Oracle 实例返回 `db.Name() == "oracle"` |
+| 2 | `builder.go: getQuoteChar` 加 oracle 分支 + 既有方言测试加 oracle case + 新建 `oracle_contract_test.go` 承载 Dialector Name 契约断言 | 默认 quote 测试加 oracle case 全过；Oracle 实例返回 `db.Name() == "oracle"` |
 | 3 | `oracle_integration_test.go` 5 个 CRUD 测试 | 本地 docker 全过 |
 | 4 | `alias_oracle_test.go` 3 个 alias 测试 | 本地 docker 全过 |
 | 5 | README 方言矩阵 + Oracle 限制清单 + CHANGELOG v0.8.2 | 文档评审 |
@@ -269,17 +287,17 @@ PG 那次的工作流复用：作者本地实测发现 FAIL → 分析根因（�
 |---|---|---|---|
 | godoes/gorm-oracle 与 GORM v1.31 兼容性 | 中 | 阻塞 | Commit 1 完成后立即 `go build` 验证 |
 | Oracle 默认 UPPERCASE 与 gplus snake_case 冲突 | 中 | 测试失败可能要修库 | 实测 Dialector 行为；不行的话本期 Patch，长期 v0.9 重构 |
-| **CLOB/TEXT WHERE 限制** | 高 | 测试失败 | 测试 struct 字段加 `gorm:"size:64"` 显式 VARCHAR2 约束 |
+| **CLOB/TEXT WHERE 限制** | 高 | 测试失败 | 见 §4.1 缓解策略（强制所有 string 字段加 size tag） |
 | 空字符串 = NULL 在 IsNull 测试 | 高 | 测试失败 | 测试中显式 NULL 种子 + 注释说明 |
 | 作者本地 docker 起不来 Oracle Free | 低 | 工作流回退 | Commit 1 之前先验证 docker；起不来切"用户本地验证"模式 |
 | Commit 2 库改动影响其他测试 | 低 | 不应影响 | `getQuoteChar` 加 case 不破坏现有逻辑（postgres/sqlite 已用同样的双引号） |
 | GORM 升级时 gorm-oracle 不兼容 | 中 | 长期债 | CHANGELOG 标注；下游需要时再适配 |
 | Oracle license 风险 | 低 | 下游使用限制 | Oracle Free 商用 OK，README 提示下游自查 license |
-| **下游 go.sum 膨胀**（HIGH-1，方案 P 接受） | 中 | 下游 `go mod tidy` 写入 sijms/go-ora 等 transitive | 接受单模块带可选 driver 模式（同 GORM 自身）；README 说明：二进制不链接 driver 因 build tag 隔离；下游介意可用 `replace` 排除 |
-| **`db.Name() == "oracle"` 字符串契约** | 低 | 上游 Dialector 改名导致库默认分支 fallback | Commit 2 加 build-tag 下的 Dialector Name 契约断言测试，验证返回 `"oracle"` |
+| **下游 go.sum 膨胀**（HIGH-1，方案 P 接受） | 中 | 下游 `go mod tidy` 写入 sijms/go-ora 等 transitive | 接受单模块带可选 driver 模式（同 GORM 自身）。**澄清**：build tag 仅隔离测试代码编译——`go mod tidy` 不受 build tag 影响，仍会拉取所有 require 模块到 go.sum，但二进制不会链接 driver 代码。go.sum 膨胀是单模块带可选 driver 的固有代价；下游介意可用 `replace` 排除 |
+| **`db.Name() == "oracle"` 字符串契约** | 低 | 上游 Dialector 改名导致库默认分支 fallback | Commit 2 新建 `oracle_contract_test.go` 承载断言（不放 missing_coverage_test.go 因为它无 build tag） |
 | **标识符长度 30/128 字符上限** | 低 | 测试 struct 长名报 `ORA-00972` | 命名约束在 Commit 1 测试 struct 自检时确认 |
-| **NULLS LAST 排序默认与 PG 相反** | 中 | OrderBy 含 NULL 列断言失败 | 测试避免依赖 NULL 排序顺序；必要时显式 `NULLS FIRST/LAST` |
-| **RETURNING 不支持批量** | 中 | `SaveBatch`/`UpsertBatch` 失败 | 实测发现失败时 `t.Skip` 并 README 注明 |
+| **NULLS LAST 排序默认与 PG 相反** | 中 | OrderBy 含 NULL 列断言失败 | 见 §4.1 缓解策略 |
+| **RETURNING 不支持批量** | 中 | `SaveBatch`/`UpsertBatch` 失败 | 见 §4.1 缓解策略 |
 
 ## 8. 验收清单
 
@@ -303,9 +321,11 @@ PG 那次的工作流复用：作者本地实测发现 FAIL → 分析根因（�
 | Oracle 11g 及更老（sequence + trigger 自增、ROWNUM 重写） | 用户后续要求时 |
 | Oracle CI service 集成 | 评估 CI 时间影响后决定 |
 | 达梦数据库 dm | 下一轮（v0.8.3 候选） |
-| 命名 case 库代码层强转（如果 Dialector 不处理） | 实测后定，必要时本期 patch |
 | 子模块拆分（gplus/oracle 独立 go.mod） | 当出现第 2/3 个可选 driver（如达梦+Oracle+SQLServer）时再做，符合 Rule of Three |
 | `SaveBatch`/`UpsertBatch` 在 Oracle 下的批量 RETURNING 适配 | 若实测失败，本期仅 `t.Skip` 标注；库代码批量 RETURNING 重写推到 v0.9+ |
+| `GetByLock` / `SELECT FOR UPDATE` / `SKIP LOCKED` 在 Oracle 下专项验证 | 本期不测；下游用到再补 |
+| TIMESTAMP WITH TIME ZONE 时区边界专项测试 | 本期不测；如夏令时下断言失败再补 |
+| 命名 case 库代码层强转（如果 Dialector 不处理） | 见 §4.1 表名 UPPERCASE fallback 链 |
 
 ### 9.2 已知技术债
 
@@ -314,7 +334,7 @@ PG 那次的工作流复用：作者本地实测发现 FAIL → 分析根因（�
 | TD-9：Oracle 测试无 CI 守护 | build tag 测试腐烂风险，依赖下游手动跑发现问题 |
 | TD-10：第三方 Dialector 维护风险 | gorm-oracle 由社区维护，GORM 升级时可能滞后 |
 | TD-11：Oracle 11g 不支持 | 老版本仍存在企业场景，本期不做 |
-| TD-12：单模块带可选 driver | go.sum 膨胀（6+ transitive），主流 Go 库共有问题；下游可 `replace` 排除 |
+| TD-12：单模块带可选 driver | go.sum 膨胀（6+ transitive），主流 Go 库共有问题。**注意**：build tag 仅隔离测试编译，不影响 `go mod tidy` 拉取。下游可 `replace` 排除 |
 | TD-13：批量 RETURNING 不重写 | `SaveBatch`/`UpsertBatch` 在 Oracle 下若失败仅 `t.Skip`，未做库层适配 |
 
 ---
