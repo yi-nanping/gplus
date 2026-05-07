@@ -1,0 +1,291 @@
+# v0.8.2 Oracle 数据库支持设计
+
+> **版本**：v0.8.2（草案）
+> **日期**：2026-05-07
+> **作者**：通过 brainstorming skill 协作产出
+> **状态**：待用户复核 → 进入 writing-plans
+> **前置版本**：v0.8.1（PG 三方言验证）
+> **后续候选**：达梦数据库（dm）支持
+
+---
+
+## 1. 背景与动机
+
+### 1.1 下游需求
+
+v0.8.1 已完成 PG 三方言 CI 验证（sqlite + MySQL 8.0 + PostgreSQL 16），证实 v0.8.0 alias 体系在三方言下零库代码 bug。但下游项目存在**国产化与企业场景需求**：
+
+- 部分企业级下游需用 Oracle 12c+（金融、政务、电信）
+- 后续还需支持达梦数据库 dm（信创场景，沿用 Oracle 兼容模式）
+
+本期仅做 Oracle，达梦留给下一轮（先把 Oracle 框架铺好，达梦多半 80% 复用）。
+
+### 1.2 Oracle 与已有方言的差异
+
+| 维度 | sqlite/mysql/pg | Oracle |
+|---|---|---|
+| **GORM 官方驱动** | ✅ 有 | ❌ 无，需第三方 |
+| **Docker 镜像** | ✅ Docker Hub 公开 | ⚠️ `oracle/database-free:23c-slim` 在 Docker Hub，但启动慢（~3 min）、镜像大（~3 GB） |
+| **CI service 集成** | ✅ 秒级启动 | ⚠️ 启动慢 + license 复杂度 |
+| **占位符** | `?` / `$N` | `:1, :2`（命名占位符，由驱动 rebase） |
+| **AUTO_INCREMENT** | 标准 | 12c+ `IDENTITY` 列；11g 及更老用 sequence + trigger |
+| **LIMIT/OFFSET** | 标准 | 12c+ `FETCH FIRST N ROWS ONLY`；11g 及更老用 ROWNUM 嵌套 |
+| **空字符串 vs NULL** | 区分 | **Oracle 把 `''` 自动转 NULL**（致命差异） |
+| **ON CONFLICT** | 标准 | 不存在，用 `MERGE INTO` |
+| **BOOL 类型** | 标准 | 不存在，用 `NUMBER(1)` 模拟 |
+| **默认命名 case** | lowercase | UPPERCASE（GORM Dialector 通常做 lowercase 强转） |
+
+## 2. 决策摘要
+
+### 2.1 范围决策
+
+| 项 | 决策 | 理由 |
+|---|---|---|
+| Oracle 版本目标 | **12c+（含 23c Free）** | 现代特性齐全，11g 已 EOL；老版本以后再加 |
+| GORM Dialector | **`github.com/godoes/gorm-oracle v1.6.18`** | 活跃维护 2024+；社区推荐 |
+| Go 驱动 | **`github.com/sijms/go-ora/v2`**（transitive） | 纯 Go，无 Oracle Client C 库依赖 |
+| 测试隔离 | **`//go:build oracle` build tag** | 默认 build/test 不触及，CI 不变 |
+| CI 集成 | **不做** | Oracle 启动慢、license 复杂；build tag 留给下游验证入口 |
+| 本地验证 | **作者用 docker 起 `oracle/database-free:23c-slim` 实测** | 等价 PG 那次本地迭代 |
+| 达梦 | **不在本期** | 留给下一轮；Oracle 框架铺好后达梦复用率高 |
+
+### 2.2 架构决策
+
+| 决策点 | 选择 | 备选 |
+|---|---|---|
+| 测试代码组织 | 自包含 build tag 文件，不动 `testdb_test.go` | 在 `testdb_test.go` 加 oracle 分支 → 默认 build 拉 driver，污染 |
+| 库代码改动 | **仅 `builder.go: getQuoteChar` 加 oracle 分支** | 改 update.go / query.go 的 LIMIT/OFFSET 重写器 → 12c+ 不需要 |
+| 驱动方言名 | `db.Name() == "oracle"`（gorm-oracle Dialector 默认） | — |
+| Oracle 命名 case | **依赖 gorm-oracle Dialector 默认行为** | 实测后再决定要不要库代码层强转 |
+| 工作流 | 每 commit 作者本地实测 + 用户 review GitHub commit | CI 不参与 |
+
+## 3. 架构
+
+### 3.1 文件改动清单
+
+**新建（3 个，全 build tag 隔离）：**
+
+| 文件 | build tag | 内容 |
+|---|---|---|
+| `oracle_setup_test.go` | `//go:build oracle` | `setupOracleDB` helper、`defaultOracleDSN`、Oracle truncate 分支处理 IDENTITY 列重置 |
+| `oracle_integration_test.go` | `//go:build oracle` | 5 个测试：BasicCRUD / WhereConditions / OrderGroupHaving / JoinQuery / QuoteColumn |
+| `alias_oracle_test.go` | `//go:build oracle` | 3 个测试：自连接 / alias 字段 q.Eq / correlated EXISTS |
+
+**修改（4 个，必需）：**
+
+| 文件 | 改动 | build tag |
+|---|---|---|
+| `go.mod` | `require github.com/godoes/gorm-oracle v1.6.18` | 默认 |
+| `go.sum` | 加 transitive deps（sijms/go-ora、emirpasic/gods） | 默认 |
+| `builder.go` | `getQuoteChar` 加 `case "oracle":` 分支返回 `"`（**唯一库代码改动**） | 默认 |
+| `missing_coverage_test.go` | `TestQuoteColumn_Dialects` / `TestGetQuoteChar_Dialects` 加 oracle case 覆盖 | 默认 |
+
+**不动**：
+
+- `testdb_test.go`（不在默认 import 中带 Oracle driver）
+- 其他库代码（query.go / update.go / repository.go / alias.go / subquery.go / schema.go / debug.go）
+- CI 配置（`.github/workflows/ci.yml` 保持 sqlite + mysql + pg）
+- 现有所有测试
+
+### 3.2 测试运行流程
+
+```text
+默认（无 build tag）：
+  go test ./...
+  → 跑 sqlite/mysql/pg 路径（CI 也走这条）
+  → Oracle 测试文件因 //go:build oracle 不参与编译
+  → 行为不变
+
+Oracle 验证（手动）：
+  docker run -d --name ora -p 1521:1521 ... oracle/database-free:23c-slim
+  export TEST_ORACLE_DSN="oracle://system:oracle@127.0.0.1:1521/FREEPDB1"
+  go test -tags=oracle -v ./...
+  → 默认测试 + Oracle 测试都跑
+  → Oracle 测试本地拿 DSN 连，无 DSN 时 t.Skip
+```
+
+### 3.3 setupOracleDB 与 truncateOracleTables
+
+`oracle_setup_test.go` 提供：
+
+```go
+//go:build oracle
+
+const defaultOracleDSN = "oracle://system:oracle@127.0.0.1:1521/FREEPDB1"
+
+func setupOracleDB[T any](t *testing.T) (*Repository[int64, T], *gorm.DB) {
+    t.Helper()
+    dsn := os.Getenv("TEST_ORACLE_DSN")
+    if dsn == "" { dsn = defaultOracleDSN }
+    db, err := gorm.Open(oracle.Open(dsn), &gorm.Config{
+        Logger: logger.Default.LogMode(logger.Info),
+    })
+    if err != nil { t.Skipf("Oracle 不可用，跳过: %v", err) }
+    applyDBPoolLimits(t, db)  // 复用既有 helper
+    if err := db.AutoMigrate(new(T)); err != nil { t.Fatalf("迁移失败: %v", err) }
+    truncateOracleTables(t, db, new(T))
+    t.Cleanup(func() { truncateOracleTables(t, db, new(T)) })
+    return NewRepository[int64, T](db), db
+}
+
+// truncateOracleTables：12c+ IDENTITY 列重置策略
+func truncateOracleTables(t *testing.T, db *gorm.DB, models ...any) {
+    // DELETE FROM <table>
+    // ALTER TABLE <table> MODIFY id GENERATED AS IDENTITY (START WITH 1)
+    //   或：DROP + RECREATE（最简单但慢）；或重置 sequence（如果显式建过）
+}
+```
+
+注：truncate 中 IDENTITY 列重置策略待 Commit 1 实测后确定，文档会同步更新。
+
+### 3.4 getQuoteChar 改动
+
+`builder.go` 现状：
+
+```go
+switch db.Name() {
+case "postgres", "sqlite":
+    return "\"", "\""
+case "sqlserver":
+    return "[", "]"
+case "mysql", "tidb":
+    return "`", "`"
+default:
+    return "", ""
+}
+```
+
+改为：
+
+```go
+switch db.Name() {
+case "postgres", "sqlite", "oracle":
+    return "\"", "\""
+case "sqlserver":
+    return "[", "]"
+case "mysql", "tidb":
+    return "`", "`"
+default:
+    return "", ""
+}
+```
+
+**唯一库代码改动**。Oracle 与 sqlite/postgres 同走双引号分支。
+
+## 4. 数据流与错误处理
+
+### 4.1 测试失败 → 修复路径
+
+PG 那次的工作流复用：作者本地实测发现 FAIL → 分析根因（库 bug vs 测试方言假设）→ 修复 → commit。
+
+预期高概率踩坑（先打预防针）：
+
+| 场景 | 预期问题 | 应对 |
+|---|---|---|
+| **空字符串 = NULL** | `IsNull` 测试种子用空字符串 → Oracle 自动转 NULL，断言失败 | 显式 NULL 种子 + 注释说明 |
+| **表名 UPPERCASE** | `my_sql_users` 在 Oracle 默认成 `MY_SQL_USERS` | 实测 Dialector 行为，按以下 fallback 链处理：<br>1. Dialector 默认 lowercase 强转 → 不需做任何事<br>2. Dialector 不强转但接受 lowercase → 加 GORM `gorm:"column:..."` 标签到测试 struct<br>3. Dialector 完全 case-sensitive 且不强转 → 本期 patch 库代码（getQuoteChar 之外的额外改动），更新 §3.1 改动清单 |
+| **`RETURNING "id"` 语法** | GORM 默认会调用，Oracle 12c+ 支持但语法可能略不同 | 实测，gorm-oracle Dialector 应已处理 |
+| **LikeRight 大小写敏感** | Oracle 默认大小写敏感（同 PG） | 测试用首字母大写匹配（同 PG 修复策略） |
+| **HAVING 别名** | Oracle 严格 SQL（同 PG）不允许 | 用聚合表达式（同 PG 修复策略） |
+| **占位符 `:N`** | gorm-oracle Dialector 应自动 rebase | 不应是问题，但测试要避免占位符断言 |
+
+### 4.2 本地 docker 起不来的回退
+
+如果作者本地 Oracle Free docker 起不来：
+
+- 回退方案：写代码 + 用户本地或 Oracle 测试环境跑 `go test -tags=oracle` → 反馈日志 → 作者远程修复
+- 风险：迭代慢（来回贴日志），但仍可推进
+- 预防：Commit 1 之前先验证本地 docker 起得来
+
+## 5. 测试策略
+
+### 5.1 测试层次
+
+复用 PG 那一轮的两层结构：
+
+**第一层：alias 体系 SQL 生成验证**（`alias_oracle_test.go`）
+- 不依赖真实数据，只验证 `q.ToSQL(db)` 生成的 SQL 在 Oracle 方言下正确
+- 验证点：双引号转义、JOIN 语法、EXISTS 子查询、字面量内联
+- 镜像 `alias_pg_test.go` 三个测试
+
+**第二层：CRUD 真实执行验证**（`oracle_integration_test.go`）
+- 跑真实 INSERT/UPDATE/DELETE/SELECT
+- 5 个测试镜像 `pg_integration_test.go`：
+  1. `TestOracle_BasicCRUD` — Save / GetById / List / Count / UpdateById / DeleteById
+  2. `TestOracle_WhereConditions` — Ne / LikeRight / In / NotIn / Between / IsNull / GetOne
+  3. `TestOracle_OrderGroupHaving` — Order / Page / GroupBy + RawScan / UpdateByCond / DeleteByCond
+  4. `TestOracle_JoinQuery` — LeftJoin 自连接（双引号转义验证）
+  5. `TestOracle_QuoteColumn` — `getQuoteChar` 直接验证 Oracle 双引号
+
+### 5.2 验收标准
+
+每个 commit：
+1. 默认 `go test ./...`（无 oracle tag）通过——保证默认编译/测试不破坏
+2. `go test -tags=oracle ./...` 在作者本地 docker 上 8 个 Oracle 测试全过
+3. `go vet ./...` 干净
+4. `go build ./...` 干净
+
+## 6. 落地计划
+
+按 brainstorming → writing-plans 流程，**spec 仅描述目标**，详细 step-by-step 由 writing-plans 阶段产出。本节仅给 commit 切分骨架：
+
+| Commit | 内容 | 验收 |
+|---|---|---|
+| 1 | 依赖 + `oracle_setup_test.go` 基础 helper | 默认 build/test 不破坏；oracle tag 编译过 |
+| 2 | `builder.go: getQuoteChar` 加 oracle 分支 + 既有方言测试加 oracle case | 默认 quote 测试加 oracle case 全过 |
+| 3 | `oracle_integration_test.go` 5 个 CRUD 测试 | 本地 docker 全过 |
+| 4 | `alias_oracle_test.go` 3 个 alias 测试 | 本地 docker 全过 |
+| 5 | README 方言矩阵 + Oracle 限制清单 + CHANGELOG v0.8.2 | 文档评审 |
+
+## 7. 风险
+
+| 风险 | 概率 | 影响 | 缓解 |
+|---|---|---|---|
+| godoes/gorm-oracle 与 GORM v1.31 兼容性 | 中 | 阻塞 | Commit 1 完成后立即 `go build` 验证 |
+| Oracle 默认 UPPERCASE 与 gplus snake_case 冲突 | 中 | 测试失败可能要修库 | 实测 Dialector 行为；不行的话本期 Patch，长期 v0.9 重构 |
+| 空字符串 = NULL 在 IsNull 测试 | 高 | 测试失败 | 测试中显式 NULL 种子 + 注释说明 |
+| 作者本地 docker 起不来 Oracle Free | 低 | 工作流回退 | Commit 1 之前先验证 docker；起不来切"用户本地验证"模式 |
+| Commit 2 库改动影响其他测试 | 低 | 不应影响 | `getQuoteChar` 加 case 不破坏现有逻辑（postgres/sqlite 已用同样的双引号） |
+| GORM 升级时 gorm-oracle 不兼容 | 中 | 长期债 | CHANGELOG 标注；下游需要时再适配 |
+| Oracle license 风险 | 低 | 下游使用限制 | Oracle Free 商用 OK，README 提示下游自查 license |
+
+## 8. 验收清单
+
+- [ ] 默认 `go test ./...`（无 oracle tag）通过——0 个 Oracle 测试参与
+- [ ] `go test -tags=oracle ./...` 在作者本地 docker 上 8 个 Oracle 测试全过
+- [ ] `go vet ./...` 干净
+- [ ] `go build ./...` 干净
+- [ ] CI 跑通（应该完全不受影响）
+- [ ] README 方言矩阵更新含 Oracle，标注"build tag 跑法"
+- [ ] CHANGELOG v0.8.2 段完整
+- [ ] 库代码改动局限于 `builder.go: getQuoteChar` 一处
+- [ ] `getQuoteChar` 既有 default 分支 fallback 行为不变（向下兼容）
+- [ ] v0.8.0 alias 体系在 Oracle 下生成正确 SQL（双引号 + 字面量内联 + EXISTS）
+
+## 9. 范围与债
+
+### 9.1 不在本期范围
+
+| 项 | 推到何时 |
+|---|---|
+| Oracle 11g 及更老（sequence + trigger 自增、ROWNUM 重写） | 用户后续要求时 |
+| Oracle CI service 集成 | 评估 CI 时间影响后决定 |
+| 达梦数据库 dm | 下一轮（v0.8.3 候选） |
+| 命名 case 库代码层强转（如果 Dialector 不处理） | 实测后定，必要时本期 patch |
+
+### 9.2 已知技术债
+
+| 债 | 说明 |
+|---|---|
+| TD-9：Oracle 测试无 CI 守护 | build tag 测试腐烂风险，依赖下游手动跑发现问题 |
+| TD-10：第三方 Dialector 维护风险 | gorm-oracle 由社区维护，GORM 升级时可能滞后 |
+| TD-11：Oracle 11g 不支持 | 老版本仍存在企业场景，本期不做 |
+
+---
+
+## 附录 A：参考资料
+
+- gorm-oracle: https://github.com/godoes/gorm-oracle
+- sijms/go-ora: https://github.com/sijms/go-ora
+- Oracle Database Free 23c: https://www.oracle.com/database/free/
+- v0.8.1 PG 三方言验证 spec：本仓 `docs/superpowers/specs/`（无独立 spec，工作流入口为 v0.8.0 alias 体系 spec 的延续）
