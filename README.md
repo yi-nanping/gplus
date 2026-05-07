@@ -660,6 +660,23 @@ gplus/
 - Go 1.24+
 - GORM v1.31.1+
 
+## 方言支持
+
+| 数据库 | 状态 | CI 验证 | 备注 |
+|---|---|---|---|
+| SQLite | ✅ 完整 | ✓ `:memory:` | 默认开发与单元测试方言；`getQuoteChar` 返回 `"` |
+| MySQL 8.0+ | ✅ 完整 | ✓ `mysql:8.0` service | `getQuoteChar` 返回 `` ` ``；ON CONFLICT 用 `VALUES(col)` 表达式 |
+| PostgreSQL 16+ | ✅ 完整 | ✓ `postgres:16` service | `getQuoteChar` 返回 `"`；ON CONFLICT 用 `excluded.col` 表达式 |
+| SQL Server | ⚠️ 部分 | ✗ | `getQuoteChar` 返回 `[ ]`；未在 CI 验证，alias 体系未实测 |
+| TiDB | ⚠️ 别名走 MySQL 分支 | ✗ | `getQuoteChar` 返回反引号同 MySQL；未在 CI 验证 |
+
+**已知方言差异**（详见"已知陷阱"章节）：
+- MySQL 1093：UPDATE 目标表不能与子查询 FROM 同表
+- PG `42702`：ON CONFLICT DO UPDATE 中裸列名 + EXCLUDED 同名时视为歧义，须用表名限定
+- PG 严格 SQL：HAVING 不可引用 SELECT 列别名，须重复聚合表达式
+- LIKE 大小写敏感性：MySQL 默认 `utf8mb4_general_ci` 不敏感、PG 默认敏感、SQLite 默认不敏感
+- 占位符：MySQL/SQLite 用 `?`，PG 用 `$N`（驱动统一处理，库代码方言无关）
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！

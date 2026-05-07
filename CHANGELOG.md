@@ -4,14 +4,38 @@
 
 ## [0.8.1] - 2026-05-07
 
+### 新增 (PG 三方言验证)
+
+- **CI 加 PostgreSQL 16 service container**：CI 现在跑 sqlite + MySQL 8.0 + PostgreSQL 16 三方言测试，新增 `TEST_PG_DSN` env，`go.mod` 加 `gorm.io/driver/postgres v1.6.0` 依赖（commit `d4ef749` + `acd27da`）
+- **alias 体系 PG 行为锁定**（`alias_pg_test.go`）：3 个核心 SQL 生成测试验证 v0.8.0 alias 在 PG 方言下正确（commit `1a88c07` + `d732a1e`）
+  - `TestPG_AliasSelfJoin_LeftJoinAs`：自连接 + `LEFT JOIN` + 双引号转义
+  - `TestPG_AliasField_InQEq`：`q.Eq(&o.Amount)` → `"o"."amount"`
+  - `TestPG_SubQuery_OuterRef_LiteralsRendered`：correlated EXISTS + 字面量内联
+- **PG 集成测试 CRUD 全覆盖**（`pg_integration_test.go`）：5 个 PG-specific 集成测试镜像 MySQL 测试，验证 CRUD / Where / Order / Group / Having / Join / quoteColumn 在 PG 方言下行为一致（commit `27c6d37`）
+- **结论**：v0.8.0 alias 体系 + Repository CRUD 在 PG 下**无库代码层面 bug**；`getQuoteChar` 已正确支持 PG 双引号；占位符 `$N` 由 GORM PG 驱动统一处理，库代码方言无关
+
 ### 修复 (测试基建)
 
-- **MySQL 集成测试连接池泄漏导致 `Error 1040: Too many connections`**：3 处 `gorm.Open(mysql.Open)`（`setupMySQLDB` / `TestMySQL_QuoteColumn` / `openDB`）测试结束后未关闭底层 `*sql.DB`，GORM 默认 `MaxOpenConns=0`（无限制），多个 MySQL 集成测试反复 Open 后连接未释放，CI 跑到中途即触发 MySQL 8.0 默认 `max_connections=151` 上限，后续测试全部 `Skipf` 跳过。修复：抽 `applyMySQLPoolLimits` helper 三处复用，限制 `MaxOpenConns=5` / `MaxIdleConns=2` / `ConnMaxLifetime=1m`，并通过 `t.Cleanup` 关闭 `*sql.DB`（commit `fbcea7d`）
+- **MySQL 集成测试连接池泄漏导致 `Error 1040: Too many connections`**：3 处 `gorm.Open(mysql.Open)`（`setupMySQLDB` / `TestMySQL_QuoteColumn` / `openDB`）测试结束后未关闭底层 `*sql.DB`，GORM 默认 `MaxOpenConns=0`（无限制），多个 MySQL 集成测试反复 Open 后连接未释放，CI 跑到中途即触发 MySQL 8.0 默认 `max_connections=151` 上限，后续测试全部 `Skipf` 跳过。修复：抽 `applyDBPoolLimits` helper 复用（同时支持 PG），限制 `MaxOpenConns=5` / `MaxIdleConns=2` / `ConnMaxLifetime=1m`，并通过 `t.Cleanup` 关闭 `*sql.DB`（commit `fbcea7d` + `d4ef749`）
 - **alias 测试断言写死 SQLite 引号风格**：`TestAliasField_InQEq_Works` 仅检查 `"o"."amount"` / `o.amount`，MySQL 反引号方言 `` `o`.`amount` `` 不匹配。改为方言无关：脱掉所有引号字符后判断含 `o.amount`（commit `0753ac3`）
+- **5 处 setup helper 测试间清理仅覆盖 MySQL，PG 主键冲突**（`advanced_test` / `advanced_complex_test` / `repo_test` / `repo_datarule_byid_test` / `repo_onconflict_test`）：truncate 分支条件 `if db.Name() == "mysql"` 改为 `mysql || postgres`，避免 PG 多测试共用持久化表导致 INSERT 主键冲突（commit `c5206e1`）
+- **4 处测试中潜伏的方言假设 bug**（PG 暴露）（commit `339d1b4`）：
+  - `TestGORMAliasBehaviorProbe/JoinsWithArgs`：`?` 占位符断言扩展为 `?` 或 `$N`（PG 驱动占位符差异）
+  - `TestComplex_QueryBuilder_MultiCondOr`：LIKE 大小写敏感差异，改用 `LikeRight("Al")` 前缀匹配（commit `35d961f` 进一步收紧到精准前缀）
+  - `TestRepository_RawScan_Having` / `JoinGroupBy`：HAVING 引用 SELECT 别名 → 改为重复聚合表达式（PG 严格 SQL，MySQL/SQLite 是非标准扩展）
+- **PG ON CONFLICT 裸列名歧义（SQLSTATE 42702）**：`TestInsertOnConflict_UpdateExprs` / `DoUpdatesAndExprs` 中 `score + excluded.score` 在 PG 下歧义。PG 严格语义要求裸列名 + EXCLUDED 同名时用表名限定，二元判断改三元 switch：MySQL `score + VALUES(score)` / PG `conflict_users.score + excluded.score` / SQLite `score + excluded.score`（commit `a907d0f`）
 
 ### 已知限制 (文档)
 
 - **MySQL 1093 — UPDATE 目标表不能与子查询 FROM 同表**：`InSub / NotInSub / GtSub / LtSub / EqSub` 等 16 个 Updater 子查询方法在 MySQL 下，若子查询源表与 UPDATE 目标表相同会报 `Error 1093 (HY000): You can't specify target table 'T' for update in FROM clause`。SQLite / PostgreSQL 无此限制。README "已知陷阱" 章节新增一节，含 derived table workaround 示例（`SELECT * FROM (subq) AS t`）。`TestUpdater_GtSub_RealUpdate` 在 `db.Name() == "mysql"` 时 `t.Skip`，sqlite 路径仍覆盖语义；`TestUpdater_AllSub_DryRun/GtSub` 仍覆盖 SQL 生成（commit `0753ac3`）
+- **PG ON CONFLICT 裸列名歧义**：用户在 `OnConflict.UpdateExprs` 中写自定义表达式时，PG 要求引用目标行用表名限定（如 `users.score + excluded.score`）。库代码与方言无关，约束属于用户表达式
+- **HAVING 引用 SELECT 别名**：PG 严格 SQL 不允许，MySQL/SQLite 是扩展。建议统一写聚合表达式
+- **LIKE 大小写敏感性**：MySQL 默认 `utf8mb4_general_ci` 不敏感、PG 默认敏感、SQLite 默认不敏感
+
+### 文档
+
+- README 新增"方言支持"章节，三方言支持矩阵 + 已知方言差异速查
+- README "已知陷阱" 章节扩展（MySQL 1093 + derived table workaround 示例）
 
 仅测试基建 + 文档变更，不涉及代码、API、行为；GORM 版本锁定保持 v1.31.x；`v0.8.0` tag 不受影响。
 
