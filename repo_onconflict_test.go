@@ -272,11 +272,18 @@ func TestInsertOnConflict_UpdateExprs(t *testing.T) {
 	repo, db := setupConflictDB(t)
 	ctx := context.Background()
 
-	// 用方言自适应表达式：SQLite 用 excluded.score，MySQL 用 VALUES(score)
+	// 用方言自适应表达式：
+	//   MySQL: score + VALUES(score)
+	//   PG:    conflict_users.score + excluded.score（裸列名 score 在 ON CONFLICT 中
+	//          PG 视为歧义错误 SQLSTATE 42702，必须用表名限定指向目标行）
+	//   SQLite: score + excluded.score
 	var expr any
-	if db.Name() == "mysql" {
+	switch db.Name() {
+	case "mysql":
 		expr = gorm.Expr("score + VALUES(score)")
-	} else {
+	case "postgres":
+		expr = gorm.Expr("conflict_users.score + excluded.score")
+	default:
 		expr = gorm.Expr("score + excluded.score")
 	}
 
@@ -311,10 +318,14 @@ func TestInsertOnConflict_DoUpdatesAndExprs(t *testing.T) {
 	repo, db := setupConflictDB(t)
 	ctx := context.Background()
 
+	// 三方言分流，原因同 TestInsertOnConflict_UpdateExprs（PG 裸列名歧义）
 	var incrExpr any
-	if db.Name() == "mysql" {
+	switch db.Name() {
+	case "mysql":
 		incrExpr = gorm.Expr("score + VALUES(score)")
-	} else {
+	case "postgres":
+		incrExpr = gorm.Expr("conflict_users.score + excluded.score")
+	default:
 		incrExpr = gorm.Expr("score + excluded.score")
 	}
 
