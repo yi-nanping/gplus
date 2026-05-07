@@ -24,6 +24,19 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     steps:
       - name: 检出代码
@@ -41,4 +54,5 @@ jobs:
       - name: 运行测试
         env:
           TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local
+          TEST_PG_DSN: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=test sslmode=disable
         run: go test -v -race ./...
