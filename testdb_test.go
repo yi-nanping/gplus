@@ -3,6 +3,7 @@ package gplus
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -12,6 +13,20 @@ import (
 
 // defaultMySQLDSN 本地开发默认 DSN，CI 通过 TEST_MYSQL_DSN 覆盖
 const defaultMySQLDSN = "root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
+
+// applyMySQLPoolLimits 限制 MySQL 连接池规模并在测试结束时关闭底层 *sql.DB。
+// 解决多测试 case 反复 gorm.Open 导致 MySQL 8.0 默认 max_connections=151 被打爆的问题。
+func applyMySQLPoolLimits(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("获取底层 *sql.DB 失败: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(5)
+	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetConnMaxLifetime(time.Minute)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+}
 
 // openDB 根据环境变量选择 SQLite（默认）或 MySQL（TEST_DB=mysql）
 func openDB(t *testing.T) *gorm.DB {
@@ -29,6 +44,7 @@ func openDB(t *testing.T) *gorm.DB {
 		if err != nil {
 			t.Skipf("MySQL 不可用，跳过: %v", err)
 		}
+		applyMySQLPoolLimits(t, db)
 		return db
 	}
 

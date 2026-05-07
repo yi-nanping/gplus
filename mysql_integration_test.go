@@ -33,6 +33,7 @@ func setupMySQLDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
 	if err != nil {
 		t.Skipf("MySQL 不可用，跳过集成测试: %v", err)
 	}
+	applyMySQLPoolLimits(t, db)
 
 	if err := db.AutoMigrate(&MySQLUser{}); err != nil {
 		t.Fatalf("迁移 MySQL 表失败: %v", err)
@@ -320,6 +321,7 @@ func TestMySQL_QuoteColumn(t *testing.T) {
 	if err != nil {
 		t.Skipf("MySQL 不可用，跳过集成测试: %v", err)
 	}
+	applyMySQLPoolLimits(t, db)
 
 	t.Run("getQuoteChar_返回反引号", func(t *testing.T) {
 		qL, qR := getQuoteChar(db)
