@@ -90,8 +90,15 @@ func TestUpdater_InSub_RealUpdate(t *testing.T) {
 }
 
 // TestUpdater_GtSub_RealUpdate 真实 UPDATE WHERE age > (SELECT AVG(age))。
+//
+// MySQL 限制：UPDATE 目标表不能与子查询 FROM 同表（错误 1093），
+// 使用方需自行用 derived table（SELECT * FROM (subq) AS t）包一层。
+// SQLite / PostgreSQL 无此限制。
 func TestUpdater_GtSub_RealUpdate(t *testing.T) {
 	repo, db := setupAdvancedDB(t)
+	if db.Name() == "mysql" {
+		t.Skip("MySQL 1093: UPDATE 目标表不能与子查询 FROM 同表，使用方需自行用 derived table 包一层")
+	}
 	ctx := context.Background()
 
 	users := []UserWithDelete{{Name: "Young", Age: 20}, {Name: "Avg", Age: 30}, {Name: "Old", Age: 40}}

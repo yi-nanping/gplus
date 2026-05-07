@@ -805,6 +805,26 @@ Raw SQL 路径 Schema=nil，下游 callback 在正确实现下应短路（`if Sc
 
 `Sum/Max/Min/Avg/Pluck` 接受字符串列名时，gplus 不做白名单校验（与 `DataRule.Column` 不同）。**禁止将用户输入直接传入 `col`**。
 
+### MySQL 限制：UPDATE 目标表不能与子查询 FROM 同表（错误 1093）
+
+MySQL 不允许 `UPDATE T ... WHERE col > (SELECT ... FROM T)` —— 报 `Error 1093 (HY000): You can't specify target table 'T' for update in FROM clause`。SQLite / PostgreSQL 无此限制。
+
+**适用场景**：`InSub / NotInSub / GtSub / LtSub / EqSub` 等 16 个 Updater 子查询方法在 MySQL 下，若子查询源表与 UPDATE 目标表相同会触发该错误。
+
+**workaround**：用 derived table 包一层让 MySQL 视为不同表
+
+```go
+// ❌ MySQL 1093
+avgQ, _ := gplus.NewQuery[User](ctx)
+avgQ.SelectRaw("AVG(age)")
+u, m := gplus.NewUpdater[User](ctx)
+u.Set(&m.Name, "Senior").GtSub(&m.Age, avgQ)
+
+// ✅ 用原生 SQL 包 derived table
+u.Set(&m.Name, "Senior").
+    WhereRaw("age > (SELECT avg_age FROM (SELECT AVG(age) AS avg_age FROM users) AS t)")
+```
+
 ## Alias 与跨表查询（v0.8.0）
 
 类型安全的跨表列引用、自连接、相关 EXISTS 子查询。

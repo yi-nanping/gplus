@@ -75,13 +75,10 @@ func TestAliasField_InQEq_Works(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToSQL: %v", err)
 	}
-	// SQL 应含 o.amount（alias 列引用），SQLite 方言会加引号为 "o"."amount"
-	if !strings.Contains(sql, "o") || !strings.Contains(sql, "amount") {
-		t.Errorf("expected alias 'o.amount' reference in SQL, got %s", sql)
-	}
-	// 确认 o.amount 以某种方式出现（裸列名或带引号均可）
-	if !strings.Contains(sql, `"o"."amount"`) && !strings.Contains(sql, "o.amount") {
-		t.Errorf("expected 'o.amount' or '\"o\".\"amount\"' in SQL, got %s", sql)
+	// 方言无关断言：脱掉双引号（SQLite/PG）和反引号（MySQL）后应含 o.amount
+	clean := strings.NewReplacer(`"`, "", "`", "").Replace(sql)
+	if !strings.Contains(clean, "o.amount") {
+		t.Errorf("expected 'o.amount' reference in SQL (dialect-agnostic), got %s", sql)
 	}
 }
 
