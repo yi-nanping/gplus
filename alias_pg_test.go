@@ -96,11 +96,16 @@ func TestPG_AliasField_InQEq(t *testing.T) {
 	}
 }
 
-// TestPG_SubQuery_OuterRef_PlaceholderRebase 验证跨层 SubQuery 在 PG 占位符 $1, $2
-// 序号正确。PG 驱动把 ? 占位符重写为 $N，嵌套子查询时序号必须按出现顺序连续递增。
+// TestPG_SubQuery_OuterRef_LiteralsRendered 验证 correlated SubQuery 在 PG 方言下
+// 字面量内联与子查询渲染均正确。
 //
-// MySQL/SQLite 用 ? 不存在序号问题；PG 是测试占位符 rebase 的关键方言。
-func TestPG_SubQuery_OuterRef_PlaceholderRebase(t *testing.T) {
+// 注：q.ToSQL(db) 内部调用 GORM 的 db.ToSQL → Dialector.Explain，会把 ? 占位符
+// 替换为字面量（参数内联），所以本测试不测占位符序号 rebase（拿不到原始 stmt.SQL），
+// 改测内联后字面量与子查询关键字均出现在结果 SQL 中。
+//
+// 占位符 $N 序号 rebase 由 GORM PG 驱动统一处理，alias_probe_test 中
+// JoinsWithArgs_ArgsParameterized_NotInlined 已用 DryRun + stmt.SQL.String 验证占位符存在。
+func TestPG_SubQuery_OuterRef_LiteralsRendered(t *testing.T) {
 	db := openPGOrSkip(t)
 	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
 		t.Fatalf("PG AutoMigrate 失败: %v", err)
@@ -109,11 +114,11 @@ func TestPG_SubQuery_OuterRef_PlaceholderRebase(t *testing.T) {
 		_ = db.Migrator().DropTable(&Order{}, &UserWithDelete{})
 	})
 
-	// 外层条件 + EXISTS 子查询 + 子查询条件 → 至少 3 个占位符（$1, $2, $3）
+	// 外层 Eq+Gt + correlated EXISTS（子查询用 &u.ID 做相关引用）
 	q, u := NewQuery[UserWithDelete](context.Background())
 	q.Eq(&u.Name, "alice").Gt(&u.Age, 18)
 	sub, o := SubQuery[Order](q)
-	sub.Eq(&o.UserID, u.ID).Gt(&o.Amount, 50)
+	sub.Eq(&o.UserID, &u.ID).Gt(&o.Amount, 50)
 	q.Exists(sub)
 
 	sql, err := q.ToSQL(db)
@@ -121,21 +126,23 @@ func TestPG_SubQuery_OuterRef_PlaceholderRebase(t *testing.T) {
 		t.Fatalf("PG SubQuery ToSQL 失败: %v", err)
 	}
 
-	// PG 占位符必须是 $N 形式（不是 ?）
-	if strings.Contains(sql, "?") {
-		t.Errorf("PG SQL 不应含 ? 占位符（应被驱动重写为 $N），实际: %s", sql)
-	}
-	if !strings.Contains(sql, "$1") {
-		t.Errorf("PG SQL 应含 $1 占位符，实际: %s", sql)
-	}
-	// 子查询 EXISTS 形态
+	// 子查询关键字必须出现
 	if !strings.Contains(strings.ToUpper(sql), "EXISTS") {
 		t.Errorf("PG SQL 应含 EXISTS，实际: %s", sql)
 	}
-	// 不应有占位符序号断裂（$1 到 $N 连续，至少 $1 $2 $3 都存在）
-	for _, ph := range []string{"$1", "$2", "$3"} {
-		if !strings.Contains(sql, ph) {
-			t.Errorf("PG SQL 应含 %s 占位符（占位符 rebase 序号检查），实际: %s", ph, sql)
-		}
+	// 外层字面量内联
+	if !strings.Contains(sql, "'alice'") {
+		t.Errorf("PG SQL 应含外层字面量 'alice'（参数内联），实际: %s", sql)
+	}
+	if !strings.Contains(sql, "18") {
+		t.Errorf("PG SQL 应含外层 age 值 18，实际: %s", sql)
+	}
+	// 内层字面量内联
+	if !strings.Contains(sql, "50") {
+		t.Errorf("PG SQL 应含子查询 amount 值 50，实际: %s", sql)
+	}
+	// 双引号转义生效
+	if !strings.Contains(sql, `"`) {
+		t.Errorf("PG SQL 应使用双引号转义标识符，实际: %s", sql)
 	}
 }
