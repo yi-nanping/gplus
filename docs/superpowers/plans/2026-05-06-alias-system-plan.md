@@ -2568,20 +2568,20 @@ git commit -m "bench(alias): 性能基线 4 benchmark（解析 ≤ 100ns / 链 3
 
 按 spec `docs/superpowers/specs/2026-05-06-alias-system-design.md` §10 验收清单逐项核对：
 
-- [ ] 所有新测试 GREEN，覆盖率 ≥ 96.0%（运行 `go test -coverprofile`）
-- [ ] `TestGORMAliasBehaviorProbe` 6 子测试 RED-lock 通过
-- [ ] MySQL + SQLite 双方言集成测试通过（`TestIntegration_SelfJoin_BothDialects`）
-- [ ] 性能基线达成（5 alias ≤ 100 ns/op，跨 3 层 outerQuery ≤ 300 ns/op）
-- [ ] CHANGELOG / README / godoc 三处文档更新（Task 22）
-- [ ] DataRule × alias 副表敞开 e2e 段 A + 段 B 双段都 PASS（Task 21 N1 验收）
-- [ ] deprecated 旧 Join API 仍可编译，下游升级零破坏（Task 13）
-- [ ] AnyQuery 接口的 phantom guard `gplusCore() *queryCore` 阻止外部冒名实现（Task 2）
-- [ ] NewQueryAs / As / SubQuery 所有错误路径测试覆盖（Task 4 + 8 + 14）
-- [ ] **C1 防御**：extraSQL 含 ? + extraArgs 参数化路径在 DryRun 测试中可见参数不入字面 SQL（Task 1 探针 + Task 10 测试）
-- [ ] **H6 防御（决策 1B）**：As 重名累积 + BuildQuery 短路双重防御均测试覆盖（Task 4 + 7）
-- [ ] **N4 防御**：Clear() 翻转 revoked，lookupAddr 命中 revoked 累积 ErrAliasRevoked（Task 7 + 20）
-- [ ] **N5 防御**：As(nil) panic ErrAliasQueryNil（Task 4）
-- [ ] **H5 防御**：跨链 alias 误用返回 ErrFieldAddrUnregistered，不回退全局 cache（Task 15）
+- [x] 所有新测试 GREEN，覆盖率 ≥ 96.0%（运行 `go test -coverprofile`）
+- [x] `TestGORMAliasBehaviorProbe` 6 子测试 RED-lock 通过
+- [x] MySQL + SQLite 双方言集成测试通过（`TestIntegration_SelfJoin_BothDialects`）
+- [x] 性能基线达成（5 alias ≤ 100 ns/op，跨 3 层 outerQuery ≤ 300 ns/op）
+- [x] CHANGELOG / README / godoc 三处文档更新（Task 22）
+- [x] DataRule × alias 副表敞开 e2e 段 A + 段 B 双段都 PASS（Task 21 N1 验收）
+- [x] deprecated 旧 Join API 仍可编译，下游升级零破坏（Task 13）
+- [x] AnyQuery 接口的 phantom guard `gplusCore() *queryCore` 阻止外部冒名实现（Task 2）
+- [x] NewQueryAs / As / SubQuery 所有错误路径测试覆盖（Task 4 + 8 + 14）
+- [x] **C1 防御**：extraSQL 含 ? + extraArgs 参数化路径在 DryRun 测试中可见参数不入字面 SQL（Task 1 探针 + Task 10 测试）
+- [x] **H6 防御（决策 1B）**：As 重名累积 + BuildQuery 短路双重防御均测试覆盖（Task 4 + 7）
+- [x] **N4 防御**：Clear() 翻转 revoked，lookupAddr 命中 revoked 累积 ErrAliasRevoked（Task 7 + 20）
+- [x] **N5 防御**：As(nil) panic ErrAliasQueryNil（Task 4）
+- [x] **H5 防御**（已修订，前提失效→放宽）：跨链 alias 误用返回 ErrFieldAddrUnregistered，不回退全局 cache（Task 15）— 详见 spec §11.2 TD-8
 
 ---
 
