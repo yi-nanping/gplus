@@ -13,7 +13,7 @@ func setupComplexDB(t *testing.T) (*Repository[int64, UserWithDelete], *gorm.DB)
 	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	if db.Name() == "mysql" {
+	if db.Name() == "mysql" || db.Name() == "postgres" {
 		truncateTables(t, db, &Order{}, &UserWithDelete{})
 		t.Cleanup(func() { truncateTables(t, db, &Order{}, &UserWithDelete{}) })
 	}

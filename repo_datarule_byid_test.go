@@ -24,7 +24,7 @@ func setupTenantDB(t *testing.T) (*Repository[int64, tenantUser], *gorm.DB) {
 	if err := db.AutoMigrate(&tenantUser{}); err != nil {
 		t.Fatalf("migrate failed: %v", err)
 	}
-	if db.Name() == "mysql" {
+	if db.Name() == "mysql" || db.Name() == "postgres" {
 		truncateTables(t, db, &tenantUser{})
 		t.Cleanup(func() { truncateTables(t, db, &tenantUser{}) })
 	}

@@ -16,7 +16,7 @@ func setupTestDB[T any](t *testing.T) (*Repository[int64, T], *gorm.DB) {
 		t.Fatalf("failed to migrate table: %v", err)
 	}
 
-	if db.Name() == "mysql" {
+	if db.Name() == "mysql" || db.Name() == "postgres" {
 		truncateTables(t, db, new(T))
 		t.Cleanup(func() { truncateTables(t, db, new(T)) })
 	}

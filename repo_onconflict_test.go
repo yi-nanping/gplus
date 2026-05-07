@@ -22,7 +22,7 @@ func setupConflictDB(t *testing.T) (*Repository[int64, conflictUser], *gorm.DB) 
 	if err := db.AutoMigrate(&conflictUser{}); err != nil {
 		t.Fatalf("migrate failed: %v", err)
 	}
-	if db.Name() == "mysql" {
+	if db.Name() == "mysql" || db.Name() == "postgres" {
 		truncateTables(t, db, &conflictUser{})
 		t.Cleanup(func() { truncateTables(t, db, &conflictUser{}) })
 	}
