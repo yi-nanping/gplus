@@ -17,19 +17,35 @@
 - vet：`go vet ./...`
 - build：`go build ./...`
 
+**Docker 运行环境（Windows，二选一）：**
+
+| 环境 | 命令前缀 | 说明 |
+|---|---|---|
+| Docker Desktop | 无（直接 `docker ...`） | 默认假设 |
+| WSL2 + Docker Engine | `wsl -d Ubuntu-24.04 -e docker ...` | 无 Docker Desktop 时，先在 WSL 装 docker.io，详见环境搭建笔记 |
+
+下文所有 `docker xxx` 命令按上表前置 wrapper。注：PowerShell 的多行续行符 `` ` `` 无法透传到 WSL，使用 WSL wrapper 时请把命令写成单行（去掉 `` ` `` 改用空格）。
+
 **Docker 启动命令（本地 Oracle Free 23c）：**
 
 ```powershell
+# Docker Desktop 写法（多行）
 docker run -d --name oracle-free `
   -p 1521:1521 `
-  -e ORACLE_PWD=oracle `
+  -e ORACLE_PASSWORD=oracle `
   -e ORACLE_CHARACTERSET=AL32UTF8 `
   gvenzl/oracle-free:23-slim
-# 等待 ~3 分钟启动
-docker logs -f oracle-free  # 看到 "DATABASE IS READY TO USE!" 即可
+
+# WSL 写法（等价单行）
+wsl -d Ubuntu-24.04 -e docker run -d --name oracle-free -p 1521:1521 -e ORACLE_PASSWORD=oracle -e ORACLE_CHARACTERSET=AL32UTF8 gvenzl/oracle-free:23-slim
+
+# 等待 ~3 分钟启动后看 ready 标志
+docker logs -f oracle-free  # WSL 改：wsl -d Ubuntu-24.04 -e docker logs -f oracle-free
 ```
 
 **Local DSN（默认本地用 docker 起的实例）：** `oracle://system:oracle@127.0.0.1:1521/FREEPDB1`
+
+> WSL 场景下因开启了 mirrored 网络模式，WSL 里 `1521:1521` 端口映射在 Windows 上 `localhost:1521` 直接可达，DSN 无需任何改动。
 
 ---
 
@@ -66,6 +82,8 @@ docker logs -f oracle-free  # 看到 "DATABASE IS READY TO USE!" 即可
 
 - [ ] **Step 1: 启动本地 Oracle Free docker 实例**
 
+> 命令按你的环境选 Docker Desktop 或 WSL wrapper（详见顶部「Docker 运行环境」表）。下面给 Docker Desktop 写法，WSL 用户在每条命令前加 `wsl -d Ubuntu-24.04 -e ` 并把多行 `` ` `` 续行改成单行。
+
 ```powershell
 # 拉取镜像（首次 ~3-4 GB）
 docker pull gvenzl/oracle-free:23-slim
@@ -73,7 +91,7 @@ docker pull gvenzl/oracle-free:23-slim
 # 启动容器
 docker run -d --name oracle-free `
   -p 1521:1521 `
-  -e ORACLE_PWD=oracle `
+  -e ORACLE_PASSWORD=oracle `
   -e ORACLE_CHARACTERSET=AL32UTF8 `
   gvenzl/oracle-free:23-slim
 
