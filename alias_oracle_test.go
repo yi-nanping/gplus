@@ -1,0 +1,133 @@
+//go:build oracle
+
+package gplus
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// TestOracle_AliasSelfJoin_LeftJoinAs 验证 v0.8.0 alias 体系自连接在 Oracle 方言下生成正确 SQL。
+//
+// 期望（Oracle 空 quoter 策略下，详见 builder.go: getQuoteChar oracle 分支注释）：
+//   - SQL 含 "boss" alias 标识符（不带双引号包裹，让 Oracle UPPERCASE 解析）
+//   - SQL 含 LEFT JOIN 关键字
+//   - 不含 MySQL 反引号
+//   - 不含 SQL Server 方括号 [
+func TestOracle_AliasSelfJoin_LeftJoinAs(t *testing.T) {
+	_, db := setupOracleDB(t)
+
+	q, u := NewQueryAs[MySQLUser](context.Background(), "u")
+	boss := As[MySQLUser](q, "boss")
+	q.LeftJoinAs(boss, &u.ID, &boss.ID, "")
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("Oracle 自连接 ToSQL 失败: %v", err)
+	}
+
+	if !strings.Contains(sql, "boss") {
+		t.Errorf("Oracle 自连接 SQL 应包含 boss alias，实际: %s", sql)
+	}
+	if !strings.Contains(strings.ToUpper(sql), "LEFT JOIN") {
+		t.Errorf("Oracle 自连接 SQL 应含 LEFT JOIN，实际: %s", sql)
+	}
+	if strings.Contains(sql, "`") {
+		t.Errorf("Oracle SQL 不应含反引号（MySQL 方言），实际: %s", sql)
+	}
+	// SQL Server 方括号方言互斥（[ 在 Oracle 是非法标识符字符）
+	if strings.Contains(sql, "[") {
+		t.Errorf("Oracle SQL 不应含方括号（SQL Server 方言），实际: %s", sql)
+	}
+}
+
+// TestOracle_AliasField_InQEq 验证 alias 字段在 q.Eq 等类型安全方法中可用，
+// 且生成的 SQL 在 Oracle 方言下解析为 alias 列引用 o.amount。
+//
+// Oracle 空 quoter 策略下不加双引号，所以 SQL 中是裸 o.amount（让 Oracle UPPERCASE 解析）。
+func TestOracle_AliasField_InQEq(t *testing.T) {
+	_, db := setupOracleDB(t)
+	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
+		t.Fatalf("Oracle AutoMigrate 失败: %v", err)
+	}
+	t.Cleanup(func() {
+		// 不带引号让 Oracle 自动 UPPERCASE 解析（migrator 实际存为 ORDERS/USER_WITH_DELETES）
+		_ = db.Exec("DROP TABLE orders PURGE").Error
+		_ = db.Exec("DROP TABLE user_with_deletes PURGE").Error
+	})
+
+	q, u := NewQuery[UserWithDelete](context.Background())
+	o := As[Order](q, "o")
+	q.LeftJoinAs(o, &o.UserID, &u.ID, "")
+	q.Eq(&o.Amount, 100)
+
+	if err := q.GetError(); err != nil {
+		t.Fatalf("q.Eq with alias field accumulated error: %v", err)
+	}
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("Oracle ToSQL 失败: %v", err)
+	}
+
+	// 方言无关断言：脱掉双引号 + 反引号后应含 o.amount
+	clean := strings.NewReplacer(`"`, "", "`", "").Replace(sql)
+	if !strings.Contains(clean, "o.amount") {
+		t.Errorf("Oracle SQL 应含 'o.amount' alias 列引用（脱引号后），实际: %s", sql)
+	}
+	// 不应含 MySQL 反引号
+	if strings.Contains(sql, "`") {
+		t.Errorf("Oracle SQL 不应含反引号（MySQL 方言），实际: %s", sql)
+	}
+}
+
+// TestOracle_SubQuery_OuterRef_LiteralsRendered 验证 correlated SubQuery 在 Oracle
+// 方言下字面量内联与子查询渲染均正确。
+//
+// 注：q.ToSQL(db) 内部调用 GORM 的 db.ToSQL → Dialector.Explain，会把 :N 占位符
+// 替换为字面量（参数内联），所以本测试不测占位符序号 rebase（拿不到原始 stmt.SQL），
+// 改测内联后字面量与子查询关键字均出现在结果 SQL 中。
+func TestOracle_SubQuery_OuterRef_LiteralsRendered(t *testing.T) {
+	_, db := setupOracleDB(t)
+	if err := db.AutoMigrate(&UserWithDelete{}, &Order{}); err != nil {
+		t.Fatalf("Oracle AutoMigrate 失败: %v", err)
+	}
+	t.Cleanup(func() {
+		// 不带引号让 Oracle 自动 UPPERCASE 解析（migrator 实际存为 ORDERS/USER_WITH_DELETES）
+		_ = db.Exec("DROP TABLE orders PURGE").Error
+		_ = db.Exec("DROP TABLE user_with_deletes PURGE").Error
+	})
+
+	// 外层 Eq+Gt + correlated EXISTS（子查询用 &u.ID 做相关引用）
+	q, u := NewQuery[UserWithDelete](context.Background())
+	q.Eq(&u.Name, "alice").Gt(&u.Age, 18)
+	sub, o := SubQuery[Order](q)
+	sub.Eq(&o.UserID, &u.ID).Gt(&o.Amount, 50)
+	q.Exists(sub)
+
+	sql, err := q.ToSQL(db)
+	if err != nil {
+		t.Fatalf("Oracle SubQuery ToSQL 失败: %v", err)
+	}
+
+	// 子查询关键字
+	if !strings.Contains(strings.ToUpper(sql), "EXISTS") {
+		t.Errorf("Oracle SQL 应含 EXISTS，实际: %s", sql)
+	}
+	// 外层字面量内联
+	if !strings.Contains(sql, "'alice'") {
+		t.Errorf("Oracle SQL 应含外层字面量 'alice'（参数内联），实际: %s", sql)
+	}
+	if !strings.Contains(sql, "18") {
+		t.Errorf("Oracle SQL 应含外层 age 值 18，实际: %s", sql)
+	}
+	// 内层字面量内联
+	if !strings.Contains(sql, "50") {
+		t.Errorf("Oracle SQL 应含子查询 amount 值 50，实际: %s", sql)
+	}
+	// 不应含 MySQL 反引号
+	if strings.Contains(sql, "`") {
+		t.Errorf("Oracle SQL 不应含反引号（MySQL 方言），实际: %s", sql)
+	}
+}
