@@ -596,7 +596,6 @@ func TestQuoteColumn_Dialects(t *testing.T) {
 		want string
 	}{
 		{"sqlite 双引号", `"`, `"`, "name", `"name"`},
-		{"oracle 双引号 table.col", `"`, `"`, "users.name", `"users"."name"`},
 		{"mysql 反引号", "`", "`", "name", "`name`"},
 		{"sqlserver 方括号", "[", "]", "name", "[name]"},
 		{"已转义不重复", `"`, `"`, `"name"`, `"name"`},
@@ -1247,12 +1246,14 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 		}
 	})
 
-	t.Run("oracle 方言返回双引号", func(t *testing.T) {
-		// 用 testMockDialector 模拟 Oracle，避免在默认 build 引入 gorm-oracle 依赖
+	t.Run("oracle 方言返回空 quoter 避免 case 冲突", func(t *testing.T) {
+		// 用 testMockDialector 模拟 Oracle，避免在默认 build 引入 gorm-oracle 依赖。
+		// godoes/gorm-oracle migrator 用 UPPERCASE 不带引号建表，加双引号转义会
+		// 触发 ORA-00904 invalid identifier，因此 oracle 分支返回空 quoter。
 		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"oracle"}}}
 		qL, qR := getQuoteChar(db)
-		if qL != "\"" || qR != "\"" {
-			t.Errorf("oracle 期望双引号，实际 (%q,%q)", qL, qR)
+		if qL != "" || qR != "" {
+			t.Errorf("oracle 期望空字符串，实际 (%q,%q)", qL, qR)
 		}
 	})
 

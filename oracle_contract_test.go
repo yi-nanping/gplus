@@ -8,7 +8,7 @@ import (
 
 // TestOracleDialectorContract 锁定 gorm-oracle Dialector 的关键契约：
 //   - db.Name() 必须返回 "oracle"（getQuoteChar 依赖此字符串匹配）
-//   - getQuoteChar(db) 必须返回双引号
+//   - getQuoteChar(db) 必须返回空 quoter（避免 ORA-00904，详见 builder.go oracle 分支注释）
 //
 // 上游 Dialector 升级改名时，本测试 fail 第一时间暴露问题。
 func TestOracleDialectorContract(t *testing.T) {
@@ -21,13 +21,13 @@ func TestOracleDialectorContract(t *testing.T) {
 		}
 	})
 
-	t.Run("getQuoteChar_返回双引号", func(t *testing.T) {
+	t.Run("getQuoteChar_返回空_quoter", func(t *testing.T) {
 		qL, qR := getQuoteChar(db)
-		if qL != "\"" {
-			t.Errorf("Oracle qL 应为双引号，实际 %q", qL)
+		if qL != "" {
+			t.Errorf("Oracle qL 应为空字符串（避免 ORA-00904 大小写冲突），实际 %q", qL)
 		}
-		if qR != "\"" {
-			t.Errorf("Oracle qR 应为双引号，实际 %q", qR)
+		if qR != "" {
+			t.Errorf("Oracle qR 应为空字符串，实际 %q", qR)
 		}
 	})
 }

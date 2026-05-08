@@ -230,12 +230,19 @@ func getQuoteChar(db *gorm.DB) (string, string) {
 		return "", "" // 无法探测方言，交由 GORM 自行处理
 	}
 	switch db.Name() {
-	case "postgres", "sqlite", "oracle":
+	case "postgres", "sqlite":
 		return "\"", "\""
 	case "sqlserver":
 		return "[", "]"
 	case "mysql", "tidb":
 		return "`", "`"
+	case "oracle":
+		// godoes/gorm-oracle migrator 用 UPPERCASE 不带引号 CREATE TABLE
+		// （列名实际存为 USERNAME 等大写），若 quoteColumn 加双引号转义会变 "username"
+		// 而 Oracle 双引号下大小写敏感 → ORA-00904 invalid identifier。
+		// 这里返回空 quoter，让 Oracle 自身 UPPERCASE 解析裸标识符。
+		// 已知陷阱：列名是 Oracle 保留字（order/size/level 等）时需用户手动加引号。
+		return "", ""
 	default: // 未知方言，不强制转义，交由 GORM 自行处理
 		return "", ""
 	}

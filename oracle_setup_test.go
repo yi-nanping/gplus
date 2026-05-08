@@ -39,10 +39,9 @@ func setupOracleDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
 	}
 	applyDBPoolLimits(t, db)
 
-	if err := db.AutoMigrate(&MySQLUser{}); err != nil {
-		t.Fatalf("迁移 Oracle 表失败: %v", err)
-	}
-
+	// 直接走 truncateOracleTables 的 DROP+AutoMigrate 路径建表
+	// 原因：godoes/gorm-oracle migrator 对已存在的表 ALTER ADD 时报 ORA-01430，
+	// 必须先 DROP 再 CREATE 才能保证从干净状态开始
 	repo := NewRepository[int64, MySQLUser](db)
 	truncateOracleTables(t, db, &MySQLUser{})
 	t.Cleanup(func() { truncateOracleTables(t, db, &MySQLUser{}) })
