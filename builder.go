@@ -230,18 +230,26 @@ func getQuoteChar(db *gorm.DB) (string, string) {
 		return "", "" // 无法探测方言，交由 GORM 自行处理
 	}
 	switch db.Name() {
-	case "postgres", "sqlite":
+	case "postgres", "sqlite", "dm":
+		// dm 走双引号 quoter（实测推翻 spec 早期假设）：
+		// godoes/gorm-dameng migrator 实际用 `CREATE TABLE "my_sql_users"
+		// ("id" BIGINT,"username" VARCHAR(64),...)` 带引号 lowercase 建表，
+		// 列名在 DM 中存为 case-sensitive 小写 username。DM CASE_SENSITIVE=Y
+		// + Oracle 兼容模式下，裸标识符 username 会被 UPPERCASE 解析为
+		// USERNAME，导致 Error -2111 无效的列名。必须用双引号 "username"
+		// 锁定小写匹配数据库中的真实列名。与 postgres/sqlite 行为一致。
 		return "\"", "\""
 	case "sqlserver":
 		return "[", "]"
 	case "mysql", "tidb":
 		return "`", "`"
-	case "oracle", "dm":
-		// godoes/gorm-{oracle,dameng} migrator 用 UPPERCASE 不带引号 CREATE TABLE
+	case "oracle":
+		// godoes/gorm-oracle migrator 用 UPPERCASE 不带引号 CREATE TABLE
 		// （列名实际存为 USERNAME 等大写），若 quoteColumn 加双引号转义会变 "username"
-		// 而 Oracle/DM 双引号下大小写敏感 → ORA-00904 invalid identifier。
-		// 这里返回空 quoter，让 Oracle/DM 自身 UPPERCASE 解析裸标识符。
-		// 已知陷阱：列名是保留字（order/size/level/number/date 等）时需用户手动加引号。
+		// 而 Oracle 双引号下大小写敏感 → ORA-00904 invalid identifier。
+		// 这里返回空 quoter，让 Oracle 自身 UPPERCASE 解析裸标识符。
+		// 已知陷阱：列名是 Oracle 保留字（order/size/level 等）时需用户手动加引号。
+		// 注意：dm 不与 oracle 共用此 case——dameng migrator 行为不同（见上面 dm case）。
 		return "", ""
 	default: // 未知方言，不强制转义，交由 GORM 自行处理
 		return "", ""

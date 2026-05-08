@@ -8,13 +8,14 @@ import (
 
 // TestDMDialectorContract 锁定 gorm-dameng Dialector 的关键契约：
 //   - db.Name() 必须返回 "dm"（getQuoteChar 依赖此字符串匹配）
-//   - getQuoteChar(db) 必须返回空 quoter（避免 ORA-00904 等价错误，详见 builder.go dm 分支注释）
+//   - getQuoteChar(db) 必须返回双引号 quoter（实测决策：dameng migrator 用引号
+//     lowercase 建表，需双引号锁定小写匹配；详见 builder.go dm 分支注释）
 //
 // 守卫入口：必须保持 setupDMDB(t) 调用作为 TEST_DM_REQUIRED 守卫覆盖入口
 // （spec §3.5）。后续重构若把契约测试改成不调 setup 的 mock dialector 形式，
 // 守卫会失效——届时需在 README 显式说明并加补偿守卫。
 //
-// 上游 Dialector 升级改名时，本测试 fail 第一时间暴露问题。
+// 上游 Dialector 升级改名 / 改 migrator 输出大小写策略时，本测试 fail 第一时间暴露问题。
 func TestDMDialectorContract(t *testing.T) {
 	_, db := setupDMDB(t) // 守卫入口
 
@@ -25,13 +26,13 @@ func TestDMDialectorContract(t *testing.T) {
 		}
 	})
 
-	t.Run("getQuoteChar_返回空_quoter", func(t *testing.T) {
+	t.Run("getQuoteChar_返回双引号", func(t *testing.T) {
 		qL, qR := getQuoteChar(db)
-		if qL != "" {
-			t.Errorf("DM qL 应为空字符串（避免 ORA-00904 大小写冲突），实际 %q", qL)
+		if qL != "\"" {
+			t.Errorf("DM qL 应为双引号（锁定小写匹配 dameng migrator 引号 lowercase 建表），实际 %q", qL)
 		}
-		if qR != "" {
-			t.Errorf("DM qR 应为空字符串，实际 %q", qR)
+		if qR != "\"" {
+			t.Errorf("DM qR 应为双引号，实际 %q", qR)
 		}
 	})
 }

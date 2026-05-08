@@ -1257,14 +1257,17 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 		}
 	})
 
-	t.Run("dm 方言返回空 quoter 与 oracle 共用", func(t *testing.T) {
+	t.Run("dm 方言返回双引号", func(t *testing.T) {
 		// 用 testMockDialector 模拟 DM，避免在默认 build 引入 gorm-dameng 依赖。
-		// godoes/gorm-dameng migrator 也走 Oracle 兼容模式 UPPERCASE 不带引号建表，
-		// 加双引号转义会触发 ORA-00904 等价错误，因此 dm 与 oracle 共用空 quoter case。
+		// 实测决策（推翻 spec 早期假设）：godoes/gorm-dameng migrator 用带引号
+		// lowercase 建表，列名存为 case-sensitive 小写。DM CASE_SENSITIVE=Y +
+		// Oracle 兼容模式下裸标识符会被 UPPERCASE 解析导致无效列名错误，必须
+		// 用双引号锁定小写。dm 与 postgres/sqlite 共用双引号 quoter，不与
+		// oracle 共用空 quoter（详见 builder.go 注释）。
 		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"dm"}}}
 		qL, qR := getQuoteChar(db)
-		if qL != "" || qR != "" {
-			t.Errorf("dm 期望空字符串，实际 (%q,%q)", qL, qR)
+		if qL != "\"" || qR != "\"" {
+			t.Errorf("dm 期望双引号，实际 (%q,%q)", qL, qR)
 		}
 	})
 
