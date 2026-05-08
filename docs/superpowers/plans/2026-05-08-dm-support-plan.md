@@ -51,8 +51,8 @@
 
 **Commit 序列（5 commit，避免 build 中断）**：
 
-1. `Task 1` deps：`go.mod` + `go.sum`
-2. `Task 2` builder + setup + contract：`builder.go` + `missing_coverage_test.go` + `dm_setup_test.go` + `dm_contract_test.go`（同 commit 避免 contract 单独 commit 编译失败）
+1. `Task 1` deps + setup：`go.mod` + `go.sum` + `dm_setup_test.go`（实施期发现 `go mod tidy` 会清理无 import 的 require，故把 setup 文件并入 deps commit 让 tidy 保留 require）
+2. `Task 2` builder + contract：`builder.go` + `missing_coverage_test.go` + `dm_contract_test.go`（contract 测试调 setup helper 已在 commit 1 提供，编译过）
 3. `Task 3` integration：`dm_integration_test.go`
 4. `Task 4` alias：`alias_dm_test.go`
 5. `Task 5` docs：`README.md` + `CHANGELOG.md`
