@@ -4,23 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 命令
 
-> 本机 Go 二进制完整路径：`D:/Environment/golang/go1.21.11/bin/go.exe`（会自动下载 go1.24 toolchain）
+> 本机 `go` 在 PATH 中，go1.24.11（go toolchain 自动管理，由 `go.mod` 的 `go 1.24` 触发下载）。
+> 直接用裸 `go` 命令即可，无需指定路径。
 
 ```bash
 # 运行所有测试
-D:/Environment/golang/go1.21.11/bin/go.exe test ./...
+go test ./...
 
 # 运行指定测试函数
-D:/Environment/golang/go1.21.11/bin/go.exe test -run TestRepository_CRUD_And_Errors ./...
+go test -run TestRepository_CRUD_And_Errors ./...
 
 # 运行指定子测试
-D:/Environment/golang/go1.21.11/bin/go.exe test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
+go test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
 
 # 以详细模式运行（通过 GORM logger 显示 SQL 日志）
-D:/Environment/golang/go1.21.11/bin/go.exe test -v ./...
+go test -v ./...
 
 # 查看测试覆盖率
-D:/Environment/golang/go1.21.11/bin/go.exe test -coverprofile=coverage.out ./... && D:/Environment/golang/go1.21.11/bin/go.exe tool cover -func=coverage.out
+go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 ```
 
 **已知的预存在测试失败**：无（所有测试均通过，覆盖率 94.0%）
