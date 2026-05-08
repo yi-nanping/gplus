@@ -1257,6 +1257,17 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 		}
 	})
 
+	t.Run("dm 方言返回空 quoter 与 oracle 共用", func(t *testing.T) {
+		// 用 testMockDialector 模拟 DM，避免在默认 build 引入 gorm-dameng 依赖。
+		// godoes/gorm-dameng migrator 也走 Oracle 兼容模式 UPPERCASE 不带引号建表，
+		// 加双引号转义会触发 ORA-00904 等价错误，因此 dm 与 oracle 共用空 quoter case。
+		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"dm"}}}
+		qL, qR := getQuoteChar(db)
+		if qL != "" || qR != "" {
+			t.Errorf("dm 期望空字符串，实际 (%q,%q)", qL, qR)
+		}
+	})
+
 	t.Run("未知方言返回空字符串", func(t *testing.T) {
 		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"unknown_db"}}}
 		qL, qR := getQuoteChar(db)
