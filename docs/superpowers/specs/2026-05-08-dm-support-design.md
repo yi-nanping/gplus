@@ -1,9 +1,10 @@
 # v0.8.3 达梦数据库（DM 8）支持设计
 
-> **版本**：v0.8.3（草案）
+> **版本**：v0.8.3（草案，整合 3 专家审计 10 必修 + 关键建议）
 > **日期**：2026-05-08
 > **作者**：通过 brainstorming skill 协作产出
 > **状态**：待用户复核 → 进入 writing-plans
+> **审计轮次**：1 轮（DM 数据库领域 / gplus 架构一致性 / Go build/依赖 三专家并行）
 > **前置版本**：v0.8.2（Oracle 12c+ 支持）
 > **后续候选**：DM MySQL 兼容模式 / 人大金仓 KingbaseES 支持
 
@@ -25,7 +26,7 @@ v0.8.2 已交付 Oracle 12c+ 支持（commit `138ad8f`），下游金融/政务/
 | 维度 | Oracle 12c+ | DM 8 Oracle 兼容模式 | 影响 |
 |---|---|---|---|
 | **GORM 官方驱动** | ❌ 无 | ❌ 无 | 同需第三方 Dialector |
-| **Docker 镜像** | `oracle/database-free:23c-slim` | `dameng/dm8`（dameng 技术社区获取） | DM 镜像源不在 Docker Hub，需手动拉取或 `docker load` tar |
+| **Docker 镜像** | `oracle/database-free:23c-slim` | dameng 技术社区 tar 包（主路径） | 官方分发为 tar + `docker load`；Docker Hub 上同名 `dameng/dm8` 是第三方上传，版本不保证、不作为主路径 |
 | **占位符** | `:1, :2`（命名） | `?`（与 MySQL 一致，由 dameng 驱动统一） | gplus 库代码方言无关，零影响 |
 | **AUTO_INCREMENT** | 12c+ `IDENTITY` 列 | DM 8 `IDENTITY` 列（同语法） | 由 Dialector migrator 处理 |
 | **LIMIT/OFFSET** | 12c+ `FETCH FIRST N ROWS ONLY` | 同 Oracle 12c+ | 由 Dialector 统一 |
@@ -53,7 +54,7 @@ v0.8.2 已交付 Oracle 12c+ 支持（commit `138ad8f`），下游金融/政务/
 | Go 驱动 | **`gitee.com/chunanyong/dm`**（transitive） | DM 官方驱动，由 gorm-dameng 自动引入 |
 | 测试隔离 | **`//go:build dm` build tag** | 默认 build/test 不触及，CI 不变；与 oracle tag 同模式 |
 | CI 集成 | **不做** | DM 镜像大、license 复杂；build tag 留给下游与作者本地验证入口 |
-| 本地验证 | **WSL2 + docker 起 `dameng/dm8`** | 沿用 v0.8.2 Oracle plan 的 WSL wrapper 写法 |
+| 本地验证 | **WSL2 + docker 起 dameng 官方 DM 8 镜像（tar load 主路径）** | 沿用 v0.8.2 Oracle plan 的 WSL wrapper 写法 |
 | 兼容模式 | **仅 Oracle 兼容（DM 默认 COMPATIBLE_MODE=2）** | MySQL/PG/TD 兼容模式留给以后；Oracle 兼容与 v0.8.2 经验复用率最大化 |
 | 发版 | **v0.8.3 tag** | 沿用 v0.8.0 → v0.8.1 → v0.8.2 节奏 |
 
@@ -86,7 +87,7 @@ v0.8.2 已交付 Oracle 12c+ 支持（commit `138ad8f`），下游金融/政务/
 |---|---|---|
 | `go.mod` | `require github.com/godoes/gorm-dameng vX.Y.Z`（最新稳定版） | 默认 |
 | `go.sum` | 加 transitive deps（gitee.com/chunanyong/dm 等） | 默认 |
-| `builder.go` | `getQuoteChar` 把 `case "oracle":` 改成 `case "oracle", "dm":` + 注释泛化（**唯一库代码改动**） | 默认 |
+| `builder.go` | `getQuoteChar` 把 `case "oracle":` 改成 `case "oracle", "dm":` + 注释泛化（**唯一库代码（非测试）改动**） | 默认 |
 | `missing_coverage_test.go` | `TestQuoteColumn_Dialects` / `TestGetQuoteChar_Dialects` 加 dm case 覆盖 | 默认 |
 
 **不动**：
@@ -118,9 +119,12 @@ DM 验证（手动）：
   → DM 测试本地拿 DSN 连，无 DSN 时 t.Skip
 
 并行 Oracle + DM：
-  go test -tags="oracle dm" ./...
+  go test -tags="oracle dm" ./...    # bash / WSL
+  go test '-tags=oracle dm' ./...    # PowerShell（双引号会被吞，须单引号）
   → 验证空 quoter case 合并不冲突
 ```
+
+**`t.Skip` 误报防护**：当 `TEST_DM_DSN` 不通时，`setupDMDB` 默认 `t.Skipf` 跳过——`go test -tags=dm` 退出码仍为 0，无法区分"全过"和"全 skip"。作者本地与 future CI 验证时设置 `TEST_DM_REQUIRED=1` 让 setup 改走 `t.Fatalf`，避免误报（与 Oracle 后续也应同步加该 helper）。
 
 ### 3.3 setupDMDB 与 truncateDMTables
 
@@ -129,16 +133,28 @@ DM 验证（手动）：
 ```go
 //go:build dm
 
-// 警告：仅限本地 Docker 开发。SYSDBA 是 DM 默认 DBA 超级账户，
-// 密码 SYSDBA001 是 dameng/dm8 Docker 镜像的默认密码——绝不能用于生产。
-// CI/生产请用 TEST_DM_DSN 提供独立测试账户，且仅授予最小测试权限。
-const defaultDMDSN = "dm://SYSDBA:SYSDBA001@127.0.0.1:5236"
+// 警告：仅限本地 Docker 开发。SYSDBA 是 DM 默认 DBA 超级账户，绝不能用于生产。
+// 默认密码版本差异较大：dameng 镜像历史上 `SYSDBA` / `SYSDBA001` 都见过，且
+// 部分版本首登强制改密——以你拉到的镜像 README 为准。CI/生产请用 TEST_DM_DSN
+// 提供独立测试账户，且仅授予最小测试权限。
+//
+// plan 阶段先 docker exec 进入容器跑 disql 验证默认密码，再写死 defaultDMDSN。
+const defaultDMDSN = "dm://SYSDBA:SYSDBA001@127.0.0.1:5236"  // 占位，plan 阶段定型
 
 // setupDMDB 与 setupOracleDB 同模式：非泛型，绑定 MySQLUser 复用既有测试 struct。
 //
 // 标识符长度自检：MySQLUser → my_sql_users (12 chars)；id/username/age/email
 // 字段全部 ≤8 chars——沿用 Oracle 12c R1 的 30 字符上限规范（DM 8 实际 128，
 // 但保留与既有 Oracle 测试 struct 一致便于跨方言通用）。
+//
+// 保留字回避：MySQLUser 字段 name/age/email 不与 DM 8 Oracle 兼容模式保留字
+// 冲突。新增测试字段需主动避开 comment / type / group / role / order / size /
+// level / number / date 等 DM/Oracle 共用保留字（空 quoter 策略下不会自动加引号）。
+//
+// 不前置 AutoMigrate：直接走 truncateDMTables 的 DROP+AutoMigrate 路径建表。
+// 沿用 Oracle commit `7627ea6` 的修订决策——godoes/gorm-dameng migrator 也假定
+// 走 Oracle 兼容路径，已存在表 ALTER ADD 极可能报 ORA-01430 column already exists
+// 等价错误，必须先 DROP 再 CREATE 才能保证从干净状态开始。
 func setupDMDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
     t.Helper()
     dsn := os.Getenv("TEST_DM_DSN")
@@ -146,25 +162,30 @@ func setupDMDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
     db, err := gorm.Open(dameng.Open(dsn), &gorm.Config{
         Logger: logger.Default.LogMode(logger.Info),
     })
-    if err != nil { t.Skipf("DM 不可用，跳过: %v", err) }
+    if err != nil {
+        if os.Getenv("TEST_DM_REQUIRED") == "1" {
+            t.Fatalf("DM 强制要求但不可用: %v", err)  // 防 Skip 误报
+        }
+        t.Skipf("DM 不可用，跳过: %v", err)
+    }
     applyDBPoolLimits(t, db)  // 复用既有 helper
     repo := NewRepository[int64, MySQLUser](db)
-    truncateDMTables(t, db, &MySQLUser{})
+    truncateDMTables(t, db, &MySQLUser{})  // 直接 DROP+AutoMigrate，不前置
     t.Cleanup(func() { truncateDMTables(t, db, &MySQLUser{}) })
     return repo, db
 }
 
-// truncateDMTables：DROP TABLE + AutoMigrate 策略
+// truncateDMTables：DROP TABLE PURGE + AutoMigrate 策略
 //
 // 决策原因（沿用 Oracle 路径）：
 //   - DM Oracle 兼容模式 TRUNCATE 不重置 IDENTITY 序列
 //   - ALTER TABLE MODIFY IDENTITY 流程复杂
 //   - DROP + AutoMigrate 是最可靠的 IDENTITY 重置方式
 //
-// PURGE 子句：Oracle 必需，DM 是否支持待实测。若 DM 不支持 PURGE，
-// 降级为不带 PURGE 的 DROP（可能触发回收站积压，需测试期决定是否绕开）。
+// PURGE 子句：DM 8 已确认支持 `DROP TABLE X PURGE` 语法（与 Oracle 兼容），
+// 且有回收站机制（SF_RECYCLE_BIN_* 系列函数）。直接沿用 Oracle 路径无需修改。
 func truncateDMTables(t *testing.T, db *gorm.DB, models ...any) {
-    // ... 实施期实测后定型
+    // 与 truncateOracleTables 实现一致：DROP TABLE "X" PURGE + AutoMigrate
 }
 ```
 
@@ -175,36 +196,53 @@ func truncateDMTables(t *testing.T, db *gorm.DB, models ...any) {
 | Docker Desktop | 无 | 用户本机未装，跳过 |
 | WSL2 + Docker Engine | `wsl -d Ubuntu-24.04 -e docker ...` | 默认环境 |
 
-```bash
-# 拉取镜像（首次 ~1-2 GB，dameng 官方镜像源）
-wsl -d Ubuntu-24.04 -e docker pull dameng/dm8
+**镜像获取（主路径）**：dameng 官方分发为 tar 包，需从 [dameng 技术社区](https://eco.dameng.com/) 或 dameng 官网下载（具体 URL 在 plan 阶段实操确认）：
 
+```bash
+# 主路径：tar 包 + docker load（dameng 官方分发）
+wsl -d Ubuntu-24.04 -e docker load -i /path/to/dm8.tar
+
+# Fallback：Docker Hub 第三方镜像（版本不保证、不作为主路径）
+# wsl -d Ubuntu-24.04 -e docker pull dameng/dm8
+```
+
+**启动命令**（环境变量列表 *以镜像 README 为准*——下方仅为常见可识别变量样例，DM 镜像不同版本可能识别不同 env，plan 阶段需先 `docker run --rm <image> env` 或读 README 确认）：
+
+```bash
 # 启动 DM 8 实例（单行，避免 PowerShell 续行符不透传）
 wsl -d Ubuntu-24.04 -e docker run -d --name dm8 -p 5236:5236 \
-  -e UNICODE_FLAG=1 -e LENGTH_IN_CHAR=1 -e PAGE_SIZE=16 \
-  -e EXTENT_SIZE=32 -e LOG_SIZE=2048 -e INSTANCE_NAME=DM8TEST \
-  dameng/dm8
+  -e INSTANCE_NAME=DM8TEST \
+  -e PAGE_SIZE=16 \
+  -e UNICODE_FLAG=1 \
+  -e CASE_SENSITIVE=Y \
+  -e COMPATIBLE_MODE=2 \
+  <dm8_image_tag>
 
 # 等待 ~30s-1min 启动（DM 比 Oracle 起得快）
 wsl -d Ubuntu-24.04 -e docker logs -f dm8
 ```
 
-**字符集说明**：
-- `UNICODE_FLAG=1`：开启 UTF-8（默认 GB18030 会让中文测试数据损坏）
-- `LENGTH_IN_CHAR=1`：VARCHAR 长度按字符算（默认按字节）
+**关键 env 变量含义**（plan 阶段对照镜像 README 验证后定型）：
+- `COMPATIBLE_MODE=2`：**显式开启 Oracle 兼容模式**，不假设镜像默认（DM 镜像随版本 default 不同）
+- `PAGE_SIZE=16`：页大小（默认 8 太小不够长 VARCHAR），影响最大记录尺寸
+- `UNICODE_FLAG=1`：UTF-8 字符集（默认 GB18030 会让中文测试数据损坏）
+- `CASE_SENSITIVE=Y`：保持大小写敏感（Oracle 兼容模式默认行为）
+- `INSTANCE_NAME=DM8TEST`：实例名
+
+可能未被识别（plan 阶段验证）：
+- `LENGTH_IN_CHAR`：spec 初稿假设的"长度按字符算"，部分 DM 镜像版本不支持此 env
+- `EXTENT_SIZE`、`LOG_SIZE`：dminit 阶段参数，部分镜像不通过 env 透传
 
 **WSL2 mirrored 网络**：`5236:5236` 在 Windows `localhost:5236` 直接可达，DSN 无需改动。
-
-**镜像源 fallback**：如 `dameng/dm8` 在 Docker Hub 不可获取，从 dameng 技术社区下载 tar 包后 `wsl -d Ubuntu-24.04 -e docker load -i dm8.tar`。具体获取路径在 plan 阶段实操确认。
 
 ### 3.5 测试覆盖明细
 
 | 测试函数 | 镜像源 | 覆盖项 |
 |---|---|---|
-| `TestDMDialectorContract` | TestOracleDialectorContract | `db.Name() == "dm"` + `getQuoteChar` 返回 `"", ""` |
+| `TestDMDialectorContract` | TestOracleDialectorContract | 含 2 个子测试：`DialectorName_是_dm`（核实 `db.Name() == "dm"`）+ `getQuoteChar_返回空_quoter`（核实返回 `"", ""`） |
 | `TestDM_BasicCRUD` | TestOracle_BasicCRUD | Save / GetById / List / Count / UpdateById / DeleteById |
-| `TestDM_WhereConditions` | TestOracle_WhereConditions | Ne / LikeRight 前缀 / In / NotIn / Between / GetOne |
-| `TestDM_OrderGroupHaving` | TestOracle_OrderGroupHaving | OrderBy DESC / Limit-Offset / GroupBy+Having RawScan / UpdateByCond / DeleteByCond |
+| `TestDM_WhereConditions` | TestOracle_WhereConditions | Ne / LikeRight 前缀 / In / NotIn / Between / GetOne（不含 IsNull——沿用 Oracle 实测决策：Oracle/DM `''=NULL` 语义下 IsNull 测试不可靠，已剔除） |
+| `TestDM_OrderGroupHaving` | TestOracle_OrderGroupHaving | OrderBy DESC / Limit-Offset / GroupBy+Having RawScan（用 `AS "col"` 锁定 lowercase）/ UpdateByCond / DeleteByCond |
 | `TestDM_JoinQuery` | TestOracle_JoinQuery | LEFT JOIN 自连接 + ON 条件 |
 | `TestDM_QuoteColumn` | TestOracle_QuoteColumn | quoteColumn 输出原样（空 quoter 行为） |
 | `TestDM_AliasSelfJoin_LeftJoinAs` | TestOracle_AliasSelfJoin_LeftJoinAs | alias 自连接 SQL 生成 |
@@ -243,17 +281,21 @@ case "oracle", "dm":
 
 ### 4.2 单元测试更新
 
-`missing_coverage_test.go` 的两个表驱动测试加 dm case：
+`missing_coverage_test.go` 仅在 `TestGetQuoteChar_Dialects` 加一个 dm 子测试（沿用 Oracle 同套写法）：
 
 ```go
-// TestGetQuoteChar_Dialects 加 case
-{name: "DM", dbName: "dm", wantL: "", wantR: ""},
-
-// TestQuoteColumn_Dialects 加 case
-{dialect: "dm", in: "users.name", want: "users.name"},
+t.Run("dm 方言返回空 quoter 与 oracle 共用", func(t *testing.T) {
+    db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"dm"}}}
+    qL, qR := getQuoteChar(db)
+    if qL != "" || qR != "" {
+        t.Errorf("dm 期望空字符串，实际 (%q,%q)", qL, qR)
+    }
+})
 ```
 
-用 testMockDialector 模拟 dm 方言，避免默认 build 引入 dameng driver。
+`testMockDialector` 已存在于 `missing_coverage_test.go:1219`（v0.8.2 已用于 oracle 测试），无需新增；用其模拟 dm 方言名，避免默认 build 引入 dameng driver。
+
+`TestQuoteColumn_Dialects` **不需要新增 dm case**——该表驱动测试输入直接是 quoter 字符（`qL`/`qR`），不经过 dialect 分支判断；空 quoter 透传行为已被 oracle 实测通过 v0.8.2 commit `7627ea6` 验证（Oracle 同样未在该表中加 case）。
 
 ## 5. 依赖与构建
 
@@ -261,28 +303,50 @@ case "oracle", "dm":
 
 ```
 require (
-    github.com/godoes/gorm-dameng vX.Y.Z  // 待 plan 阶段定型最新版本
+    github.com/godoes/gorm-dameng vX.Y.Z  // plan 阶段用 `go list -m -versions` 锁定具体版本
 )
 ```
 
 会引入 transitive：
-- `gitee.com/chunanyong/dm`（DM 官方 Go 驱动）
+- `gitee.com/chunanyong/dm`（DM 官方 Go 驱动，**纯 Go 实现，无 cgo**）
 - 其它 dameng/dm 关联包
+
+**项目 go 版本**：`go.mod` 声明 `go 1.24`，build tag 仅用新式 `//go:build dm` 语法（Go 1.17+），不写老式 `// +build dm`。
 
 ### 5.2 默认 build 影响
 
 - `go test ./...`：DM 测试文件 build tag 隔离，不参与编译，不需要 dameng driver 加载
 - `go build`：dameng driver 因 build tag 不被引用，但 `go.sum` 锁定其哈希
+- **跨平台无副作用**：dameng/dm 驱动为纯 Go 无 cgo，`CGO_ENABLED=0` 也可编译；下游 `go build` 默认不会触达驱动 init
 - 下游 `go mod tidy`：写入 dameng transitive 到 go.sum（**TD-12 重申**：单模块带可选 driver 副作用）
+
+### 5.3 GOPROXY 与 gitee.com 拉取
+
+`gitee.com/chunanyong/dm` 在 `proxy.golang.org`（Go 默认 GOPROXY）历史上多次缓存失败/超时，下游用户需配置 fallback：
+
+```bash
+# 国内开发者推荐（goproxy.cn 已镜像 gitee 包）
+go env -w GOPROXY=https://goproxy.cn,direct
+
+# 国外 / proxy.golang.org 拉取失败时（让 gitee 走 direct 模式）
+go env -w GOPRIVATE=gitee.com/*
+go env -w GOPROXY=https://proxy.golang.org,direct
+```
+
+README 的"DM 支持"章节需明确给出此提示，避免下游用户首次 `go mod download` 卡死。
 
 ## 6. 实施风险（按概率排序）
 
 | 风险 | 概率 | 影响 | 应对 |
 |---|---|---|---|
 | `db.Name()` 不返回 `"dm"`（可能是 `"dameng"`/`"DM"`） | 中 | 中 | 契约测试第一时间暴露，改 builder.go case 字符串 |
-| dameng/dm8 docker 镜像源不通 / 需付费 | 中 | 高 | 启动期先 docker pull 测试，失败时改用 dameng 技术社区 tar 包 + `docker load` |
+| **DM migrator 重复 ALTER ADD column 报错（ORA-01430 等价）** | 中 | 中 | 沿用 Oracle commit `7627ea6` 修订路径：setup 不前置 AutoMigrate，直接走 truncate 的 DROP+CREATE 路径 |
+| dameng 镜像 SYSDBA 默认密码版本差异 | 中 | 中 | plan 阶段 docker exec 进入容器跑 disql 验证，再写死 defaultDMDSN |
+| dameng 镜像 docker run env 变量不被识别 | 中 | 中 | plan 阶段读镜像 README 后定型；不识别的 env 改走 `dminit` CLI 或 dm.ini |
+| Docker Hub `dameng/dm8` 第三方镜像版本不准 | 高 | 高 | 主路径用 dameng 技术社区 tar + `docker load`；Docker Hub 仅 fallback |
+| **`t.Skip` 误报**（DSN 不通时 exit 0，验收清单"全过"无法区分"全 skip"） | 中 | 中 | `TEST_DM_REQUIRED=1` 时 setup 改 `t.Fatalf`；作者本地实测必带此 flag |
 | DM Oracle 兼容模式默认未开启 | 低 | 高 | 启动 docker 时加 `COMPATIBLE_MODE=2` 显式指定 |
-| DM migrator 行为与 Oracle 不同（例如不支持 PURGE） | 中 | 中 | 实测期降级为无 PURGE 路径（在 plan 阶段标识为可能修订点） |
+| `gitee.com/chunanyong/dm` 在 GOPROXY 拉取失败 | 中 | 中 | README 给出 `GOPROXY=https://goproxy.cn,direct` 与 `GOPRIVATE=gitee.com/*` fallback 提示 |
 | DM CLOB/字符集映射差异 | 低 | 中 | 测试 fail 时通过 `gorm:"size:N"` 显式约束修复 |
 | DM 占位符不兼容（不是 `?`） | 低 | 中 | godoes/gorm-dameng Dialector 应已统一处理 |
 
@@ -311,7 +375,7 @@ DM 8 Oracle 兼容模式继承 Oracle 全部限制：
 复用既有 TD：
 - **TD-12**（单模块带可选 driver）：gorm-dameng 拉到 transitive
 - **TD-13**（批量 RETURNING 适配）：DM 也不解决，推到 v0.9+
-- **TD-14**（保留字列名自动加引号）：DM 同样不自动处理
+- **TD-14**（保留字列名自动加引号）：在 DM 下行为完全一致——DM 8 Oracle 兼容模式下 `order/size/level/number/date/comment/type/group/role` 等保留字列名同样不会自动加引号，需用户手动 RawSQL 加引号或修改 struct 字段名避开
 
 ## 9. 文档变更
 
@@ -319,20 +383,30 @@ DM 8 Oracle 兼容模式继承 Oracle 全部限制：
 |---|---|
 | `README.md` 方言矩阵 | 加 DM 行：`dm \| ✅ \| build tag: -tags=dm \| 同 Oracle 限制` |
 | `README.md` 已知方言差异速查 | DM 章节直接引用 Oracle 章节 + 一句 "DM 8 Oracle 兼容模式继承全部 Oracle 限制" |
-| `CHANGELOG.md` v0.8.3 段 | 新增段：DM 数据库支持，记录 builder.go case 合并 + 4 个 build-tag 测试文件 |
+| `README.md` GOPROXY 配置提示 | 给出 `GOPROXY=https://goproxy.cn,direct` 与 `GOPRIVATE=gitee.com/*` fallback 写法 |
+| `CHANGELOG.md` v0.8.3 段 | 沿用 v0.8.2 模板深度，详见下方必含子节 |
 | `CLAUDE.md` | 不动（架构未变） |
+
+**`CHANGELOG.md` v0.8.3 段必含子节**（沿用 v0.8.2 6 大类模板深度）：
+
+1. **新增（DM 8 Oracle 兼容模式支持）**：GORM Dialector / Go 驱动 / 测试隔离 build tag / 跑测命令
+2. **库代码改动**：`builder.go: getQuoteChar` 把 `case "oracle":` 合并为 `case "oracle", "dm":` + 注释泛化（**唯一库代码（非测试）改动**）
+3. **已知限制（DM）**：沿用 Oracle 8 条（空 quoter / `''=NULL` / UPPERCASE / CLOB / NULLS LAST / RETURNING 单行 / 标识符长度 / ON CONFLICT）+ DM 特有（`COMPATIBLE_MODE` 须显式开启 / 镜像默认密码版本差异 / Docker Hub 第三方镜像）
+4. **技术债**：TD-15（CI 守护）/ TD-16（Dialector 维护）/ TD-17（DM 7 不支持）/ TD-18（仅 Oracle 兼容模式）+ 复用 TD-12/13/14
+5. **文档**：README 矩阵 + GOPROXY 提示 + spec/plan 链接
+6. **收尾说明**：仅测试基建 + 1 行库代码 case 合并；GORM 版本锁定保持；既有 tag 不受影响；下一步候选（v0.8.4 DM MySQL 兼容 / v0.9 KingbaseES）
 
 ## 10. 验收清单
 
 - [ ] `builder.go: getQuoteChar` 改一行 `case "oracle", "dm":` + 注释更新
-- [ ] `go.mod` 加 `godoes/gorm-dameng` 依赖（最新稳定版）
+- [ ] `go.mod` 加 `godoes/gorm-dameng` 依赖（plan 阶段用 `go list -m -versions` 锁定最新稳定版具体版本号）
 - [ ] 默认测试 `go test ./...` 不变（不触及 DM）
-- [ ] `go test -tags=dm ./...` 跑 DM 8 Oracle 兼容模式 9 个测试全过
-- [ ] `go test -tags="oracle dm" ./...` 双方言并行跑全过（验证空 quoter case 合并不冲突）
+- [ ] `TEST_DM_REQUIRED=1 go test -tags=dm ./...` 跑 DM 8 Oracle 兼容模式 9 个测试全过（不允许 t.Skip 误报）
+- [ ] PowerShell 验证：`go test '-tags=dm' ./...` 与 `go test '-tags=oracle dm' ./...` 双方言并行跑通（引号兼容性）
 - [ ] `dm_setup_test.go` / `dm_contract_test.go` / `dm_integration_test.go` / `alias_dm_test.go` 完成
-- [ ] `missing_coverage_test.go` 加 dm case 覆盖
-- [ ] README 方言矩阵 + 已知差异速查加 DM
-- [ ] CHANGELOG v0.8.3 段写完
+- [ ] `missing_coverage_test.go` 仅在 `TestGetQuoteChar_Dialects` 加 dm 子测试（不动 `TestQuoteColumn_Dialects`）
+- [ ] README 方言矩阵 + 已知差异速查 + GOPROXY 提示加 DM
+- [ ] CHANGELOG v0.8.3 段写完（沿用 v0.8.2 6 大类深度）
 - [ ] commit 序列：deps → builder fix + contract test → setup → integration → alias → docs（沿用 v0.8.2 节奏）
 - [ ] 推 v0.8.3 tag 到 GitHub
 
