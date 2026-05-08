@@ -2,6 +2,86 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.8.3] - 2026-05-08
+
+### 支持版本与兼容性
+
+- **DM 8 Oracle 兼容模式**：v0.8.0 alias 体系 + Repository CRUD 在 DM 8 下行为锁定
+  - **`COMPATIBLE_MODE=2` 必须显式开启**：docker run 加 `-e COMPATIBLE_MODE=2`，`SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE'` 验证应返回 2
+  - **DM 7 及更老版本不支持**：sequence + trigger 自增、ROWNUM 重写未实现（参见 TD-17）
+  - **未验证场景**：国密加密 / Kerberos / DSC 集群 / DM MySQL/PG/TD 兼容模式（v0.8.4+ 候选）
+
+### 已知限制（DM）
+
+DM 8 Oracle 兼容模式继承 v0.8.2 Oracle 大部分限制：
+- `''` = NULL（影响 IsNull / Empty 判断）
+- 输出列名 UPPERCASE（RawScan 需 SQL 显式 `AS "col"` 锁定 lowercase）
+- CLOB/TEXT WHERE 限制（string 字段须 `gorm:"size:N"` 约束）
+- NULLS LAST 默认（升序 NULL 排末尾）
+- RETURNING 仅支持单行（SaveBatch/UpsertBatch 走 RETURNING 路径需 t.Skip）
+- 标识符长度上限（DM 8 实际 128，保留 ≤30 字符规范以兼容 Oracle 12c R1）
+- ON CONFLICT 不支持（DM 用 `MERGE INTO`）
+
+**与 Oracle 不同的关键差异（v0.8.3 实施期实测推翻 spec 早期假设）**：
+
+- **`getQuoteChar` 返回双引号（不与 Oracle 共用空 quoter）**：godoes/gorm-dameng v0.7.2 migrator 实测用 `CREATE TABLE "my_sql_users" ("username" VARCHAR(64),...)` 引号 lowercase 建表，列名在 DM 中存为 case-sensitive 小写。DM CASE_SENSITIVE=Y + Oracle 兼容下裸标识符会被 UPPERCASE 解析为 `USERNAME`，触发 `Error -2111 无效的列名`，必须用双引号锁定小写匹配。dm 方言归入 `case "postgres", "sqlite", "dm"` 共用双引号 quoter。
+
+DM 特有：
+- **镜像默认密码版本差异**：dameng 镜像历史上 SYSDBA / SYSDBA001 / 自定义都见过，部分版本首登强制改密——以拉到的镜像 README 为准
+- **Docker Hub 第三方镜像版本不保证**：主路径用 dameng 技术社区 tar + `docker load`（v0.8.3 实施期因社区下载受阻改走自构建 install.xml；下游可任选）
+
+### 新增（DM 8 支持）
+
+- **DM 数据库支持**：v0.8.0 alias 体系 + Repository CRUD 在 DM 8 Oracle 兼容模式下行为锁定
+  - GORM Dialector：`github.com/godoes/gorm-dameng v0.7.2`（2025-08-22 release，与 v0.8.2 godoes/gorm-oracle 同作者）
+  - Go 驱动：godoes/gorm-dameng **内置**（子包 `dm8/i18n` / `parser` / `security` / `util`，纯 Go 无 cgo，**不依赖 gitee.com/chunanyong/dm**——推翻 spec 早期假设）
+  - **测试隔离**：`//go:build dm` build tag，**不进 CI**（DM 镜像同样大、license 复杂）
+  - 跑测命令：`go test -tags=dm ./...`，需启动本地 docker DM 8 实例
+  - **强制不漏跑**：`TEST_DM_REQUIRED=1 go test -tags=dm ./...`（DSN 不通时 t.Fatalf 而非 t.Skip）
+- 新建 4 个 dm build-tag 测试文件：
+  - `dm_setup_test.go`：`setupDMDB` helper + `truncateDMTables`（DROP TABLE PURGE + AutoMigrate 沿用 Oracle 决策）
+  - `dm_contract_test.go`：Dialector 契约（`db.Name() == "dm"` + `getQuoteChar` 返回双引号）
+  - `dm_integration_test.go`：5 个 CRUD 测试（BasicCRUD / Where / OrderGroupHaving / JoinQuery / QuoteColumn）
+  - `alias_dm_test.go`：3 个 alias 体系测试（自连接 / alias 字段 q.Eq / correlated EXISTS）
+
+### 文档
+
+- README 方言矩阵加 DM
+- README 已知方言差异速查加 DM 限制（双引号 quoter / 继承 Oracle / 镜像密码差异）
+- README 新增 "DM 数据库支持" 章节（Quickstart / TEST_DM_DSN BNF / 下游生产侧集成 / quoter 策略与列名匹配 / 保留字对照表 / 错误码导航 / COMPATIBLE_MODE 诊断 SQL / 未验证场景兜底）
+- README GOPROXY 配置提示（一般性建议，非 DM 特定——driver 自带不依赖 gitee）
+- spec：`docs/superpowers/specs/2026-05-08-dm-support-design.md`（经过 brainstorming + 2 轮 6 专家审计 + 14 必修修订 + 13 待定项 + 7 README 缺口）
+- plan：`docs/superpowers/plans/2026-05-08-dm-support-plan.md`（5 task / 5 commit + Task 0 待定项探测 + 实测值写回）
+
+### 库代码改动
+
+- **`builder.go: getQuoteChar`** 加 `dm` 到 `case "postgres", "sqlite", "dm":` 共用双引号 quoter——**唯一库代码（非测试）改动**
+  - 实施期决策路径：commit `01cbddc` 按 spec §4.1 把 dm 与 oracle 合并 case "oracle", "dm" 共用空 quoter；实测发现 dameng migrator 用引号 lowercase 建表导致裸列名 case-sensitive 不匹配，commit `92108eb` 修正——dm 单独归入双引号 quoter 与 postgres/sqlite 共用，oracle 仍保留独立空 quoter case
+  - 既有 `TestGetQuoteChar_Dialects` 加 dm 子测试覆盖（用 testMockDialector 模拟，避免默认 build 引入 driver）
+- `TestQuoteColumn_Dialects` 不动（与既有方言一致——表驱动直接喂 quoter 字符不走 dialect 分支）
+
+### 技术债
+
+- **TD-15**：DM 测试无 CI 守护，依赖下游手动跑发现问题
+- **TD-16**：第三方 Dialector 维护风险（gorm-dameng 由社区维护，GORM 升级时可能滞后）
+- **TD-17**：DM 7 不支持（sequence + trigger 自增、ROWNUM 重写未实现）
+- **TD-18**：DM MySQL/PG/TD 兼容模式不支持（v0.8.3 仅验证 Oracle 兼容；切到 MySQL 兼容需重测 quoter 策略——dameng migrator 在不同兼容模式下大小写策略可能不同）
+- **TD-19**：dameng migrator 大小写策略与 Oracle migrator 不同（引号 lowercase vs UPPERCASE 不带引号）属第三方 driver 内部实现，未来 driver 升级可能改变策略——dm_contract_test.go 锁定 `getQuoteChar` 返回双引号契约作为变更预警
+
+复用既有 TD：
+- **TD-12**（单模块带可选 driver）：gorm-dameng 拉到 transitive
+- **TD-13**（批量 RETURNING 适配）：DM 也不解决，推到 v0.9+
+- **TD-14**（保留字列名自动加引号）：在 DM 下行为完全一致
+
+### 收尾说明
+
+仅测试基建 + 文档变更（除 `getQuoteChar` 一处分支扩展外），不涉及核心 API、Repository CRUD、alias 体系；GORM 版本锁定保持 v1.31.x；`v0.8.0` / `v0.8.1` / `v0.8.2` tag 不受影响。
+
+下一步候选（v0.8.4）：DM MySQL 兼容模式（与 gplus 已有 mysql 路径冲突需重测 quoter）。
+更远（v0.9+）：人大金仓 KingbaseES（信创第二大户，PG 兼容模式）/ 批量 RETURNING 适配（解 TD-13）/ 保留字列名自动加引号（解 TD-14）。
+
+---
+
 ## [0.8.2] - 2026-05-08
 
 ### 新增 (Oracle 12c+ 支持)

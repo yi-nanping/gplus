@@ -668,6 +668,7 @@ gplus/
 | MySQL 8.0+ | ✅ 完整 | ✓ `mysql:8.0` service | `getQuoteChar` 返回 `` ` ``；ON CONFLICT 用 `VALUES(col)` 表达式 |
 | PostgreSQL 16+ | ✅ 完整 | ✓ `postgres:16` service | `getQuoteChar` 返回 `"`；ON CONFLICT 用 `excluded.col` 表达式 |
 | Oracle 12c+ | ⚠️ build tag | ✗ 不在 CI（启动慢） | 用 `go test -tags=oracle` 跑；`getQuoteChar` 返回空 quoter（避免 ORA-00904，详见已知陷阱） |
+| DM 8 (Oracle 兼容) | ⚠️ build tag | ✗ 不在 CI（镜像大） | 用 `go test -tags=dm` 跑；`getQuoteChar` 返回双引号（与 postgres 一致，dameng migrator 引号 lowercase 建表） |
 | SQL Server | ⚠️ 部分 | ✗ | `getQuoteChar` 返回 `[ ]`；未在 CI 验证，alias 体系未实测 |
 | TiDB | ⚠️ 别名走 MySQL 分支 | ✗ | `getQuoteChar` 返回反引号同 MySQL；未在 CI 验证 |
 
@@ -686,6 +687,133 @@ gplus/
   - RETURNING 仅支持单行（影响 SaveBatch/UpsertBatch，本期 t.Skip）
   - 标识符长度 30/128 字符上限
   - 不支持 ON CONFLICT（用 MERGE INTO）
+- DM 8 限制（Oracle 兼容模式，详见 spec `docs/superpowers/specs/2026-05-08-dm-support-design.md` 与下方"DM 数据库支持"章节）：
+  - `gplus.getQuoteChar` 返回双引号——**与 Oracle 不共用空 quoter**：godoes/gorm-dameng migrator 实测用引号 lowercase 建表（`CREATE TABLE "username" ...`），列存为 case-sensitive 小写，DM CASE_SENSITIVE=Y 下裸标识符会被 UPPERCASE 解析触发 `Error -2111 无效的列名`，必须用双引号锁定小写
+  - 继承 Oracle 兼容模式全部限制：`''=NULL` / 输出 UPPERCASE / CLOB WHERE / NULLS LAST / RETURNING 单行 / 标识符长度 / 无 ON CONFLICT
+  - DM 特有：`COMPATIBLE_MODE=2` 必须显式开启（docker run 加 `-e COMPATIBLE_MODE=2`，`SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE'` 应返回 2）
+  - 镜像默认密码版本差异：dameng 历史镜像有 `SYSDBA` / `SYSDBA001` / 首登强制改密——以拉到的镜像 README 为准
+
+## DM 数据库支持（v0.8.3+）
+
+> 仅本地/CI 验证场景。生产侧使用见下方"下游生产侧集成"。
+
+### 1. Quickstart 5 步
+
+1. **拉 gplus**：`go get github.com/yi-nanping/gplus@v0.8.3`
+2. **拉 DM 8 镜像**：从 [dameng 技术社区](https://eco.dameng.com/) 下载 DM 8 docker tar 包，`docker load` 后 `docker run` 启动（参见下方"启动 DM 8 容器"）
+3. **设 DSN 环境变量**：`export TEST_DM_DSN="dm://SYSDBA:<密码>@127.0.0.1:5236"`（密码以镜像 README 为准）
+4. **跑测试**：`go test -tags=dm -v ./...`（强制不漏跑：`TEST_DM_REQUIRED=1 go test -tags=dm ./...` —— DSN 不通时 `t.Fatalf` 而非 `t.Skip`）
+5. **遇错查表**：见下方"错误码导航"
+
+### 2. TEST_DM_DSN 格式
+
+BNF：
+
+```
+TEST_DM_DSN := "dm://" <user> ":" <password> "@" <host> ":" <port> [ "/" <schema> ] [ "?" <params> ]
+```
+
+样例：
+
+```bash
+# 本地 docker 默认实例（密码以镜像 README 为准，常见 SYSDBA / SYSDBA001 / 自定义）
+export TEST_DM_DSN="dm://SYSDBA:<密码>@127.0.0.1:5236"
+
+# 指定 schema 切换
+export TEST_DM_DSN="dm://SYSDBA:<密码>@127.0.0.1:5236/MYSCHEMA"
+
+# 字符集参数（dameng 驱动支持的连接参数见 godoes/gorm-dameng README）
+export TEST_DM_DSN="dm://SYSDBA:<密码>@127.0.0.1:5236?charset=utf8"
+```
+
+### 3. 下游生产侧集成
+
+```go
+import (
+    dameng "github.com/godoes/gorm-dameng"
+    "gorm.io/gorm"
+    "github.com/yi-nanping/gplus"
+)
+
+func main() {
+    db, _ := gorm.Open(dameng.Open("dm://SYSDBA:..."), &gorm.Config{})
+    repo := gplus.NewRepository[int64, User](db)
+    // ... 与 sqlite/mysql/pg 完全一样
+}
+```
+
+gplus 自身**不预先注册** Dialector，下游需自己 `import _ "github.com/godoes/gorm-dameng"`（或显式 `gorm.Open(dameng.Open(...))`）。
+
+### 4. quoter 策略与列名匹配（重要）
+
+DM 8 走**双引号 quoter**（与 PostgreSQL/SQLite 一致），**不与 Oracle 共用空 quoter**——这是 v0.8.3 实施期实测推翻 spec 早期假设后的最终决策：
+
+- godoes/gorm-dameng v0.7.2 migrator 用 `CREATE TABLE "my_sql_users" ("username" VARCHAR(64),...)` 引号 lowercase 建表，列名在 DM 中存为 case-sensitive 小写
+- DM CASE_SENSITIVE=Y + Oracle 兼容模式下，裸标识符 `username` 会被 UPPERCASE 解析为 `USERNAME`，与 DB 内的小写实际列名不匹配，触发 `Error -2111 无效的列名`
+- gplus 在 dm 方言下用 `"`/`"` 自动给列名加引号（gorm-dameng Dialector.QuoteTo 也会自动加引号），SELECT/UPDATE/DELETE 路径下匹配 case-sensitive 小写
+
+下游手写 RawSQL/WhereRaw 时也需注意：列名必须用双引号包裹保持小写（`WHERE "username" = ?`），否则 DM 仍会 UPPERCASE 解析失败。
+
+### 5. 保留字 → 措施对照表
+
+DM 8 Oracle 兼容模式继承 Oracle 全部保留字（`order` / `size` / `level` / `comment` /
+`type` / `group` / `role` / `number` / `date` 等）。即使走双引号 quoter，下游遇到保留字
+列名时仍按优先级处理：
+
+| 优先级 | 措施 | 示例 |
+|---|---|---|
+| 1（推荐） | 改 struct tag `column:` 避开 | `Order int gorm:"column:ord_no"` |
+| 2 | 用 RawSQL/WhereRaw 加双引号 | `q.WhereRaw(\`"order" = ?\`, 100)` |
+| 3 | 等 v1.0+ 保留字自动检测能力（参见 TD-14） | — |
+
+### 6. 错误码导航
+
+| 错误码 | 触发场景 | 措施 |
+|---|---|---|
+| `Error -2111 无效的列名` | 裸标识符大小写不匹配（如 `username` 被 UPPERCASE 解析为 `USERNAME`） | 用双引号锁定小写，或检查 `getQuoteChar` 返回的 quoter 是否是双引号（v0.8.3+） |
+| `ORA-00932` 等价（数据类型不一致） | string 长字段映射 CLOB 后 LIKE/IN | struct 字段加 `gorm:"size:N"` 显式约束 |
+| `ORA-01430` 等价（列已存在） | migrator 重复 ALTER ADD | setup 走 DROP+AutoMigrate 路径，参考 `dm_setup_test.go` 的 `truncateDMTables` |
+| 网络通信异常 / connect failed | DSN 密码不对 / 端口不通 | 镜像默认密码以 README 为准；首登强制改密版本需先 `ALTER USER SYSDBA IDENTIFIED BY ...` |
+
+### 7. 验证 COMPATIBLE_MODE=2 生效
+
+```sql
+-- 容器内 disql 执行
+SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE';
+-- 应返回 2（Oracle 兼容）；若不是 2，docker run 加 -e COMPATIBLE_MODE=2 重建
+```
+
+### 8. 未验证场景兜底声明
+
+v0.8.3 仅验证：DM 8 Oracle 兼容模式（COMPATIBLE_MODE=2）+ 单实例 + UTF-8 + 开发环境。**未验证**（下游需自行验证或避开）：
+
+- 国密 SM3/SM4 加密列
+- Kerberos 认证
+- DSC 集群 / 读写分离 / 容灾双活
+- DM 7 及更老版本（spec §1.2 排除）
+- DM MySQL/PG/TD 兼容模式（v0.8.4+ 候选；切换后 quoter 策略需重测）
+
+### 启动 DM 8 容器（WSL2 + Docker Engine）
+
+```bash
+# 加载 dameng 技术社区 tar 包（或自构建镜像）
+wsl -d Ubuntu-24.04 -e docker load -i /mnt/d/downloads/dm8.tar
+
+# 启动（单行，避免续行符不透传）
+wsl -d Ubuntu-24.04 -e docker run -d --name dm8 -p 5236:5236 \
+  -e INSTANCE_NAME=DM8TEST -e PAGE_SIZE=16 -e UNICODE_FLAG=1 \
+  -e CASE_SENSITIVE=Y -e COMPATIBLE_MODE=2 <image_tag>
+```
+
+### GOPROXY 配置（一般性建议）
+
+国内开发者拉取依赖推荐 GOPROXY 镜像加速（与 DM 支持无特定关系，gplus 通用）：
+
+```bash
+go env -w GOPROXY=https://goproxy.cn,direct
+```
+
+> **注**：spec 早期版本曾假设 godoes/gorm-dameng 通过 transitive 引入 `gitee.com/chunanyong/dm`，故强调 GOPRIVATE fallback。**plan 阶段 Task 0 实测推翻此假设**——godoes/gorm-dameng v0.7.2 driver 实现自带在子包 `dm8/i18n/parser/security/util`，所有依赖在 github.com 与 golang.org 上，标准 GOPROXY 即可。
 
 ## 贡献
 
