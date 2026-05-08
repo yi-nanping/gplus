@@ -596,6 +596,7 @@ func TestQuoteColumn_Dialects(t *testing.T) {
 		want string
 	}{
 		{"sqlite 双引号", `"`, `"`, "name", `"name"`},
+		{"oracle 双引号 table.col", `"`, `"`, "users.name", `"users"."name"`},
 		{"mysql 反引号", "`", "`", "name", "`name`"},
 		{"sqlserver 方括号", "[", "]", "name", "[name]"},
 		{"已转义不重复", `"`, `"`, `"name"`, `"name"`},
@@ -1243,6 +1244,15 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 		qL, qR := getQuoteChar(db)
 		if qL != "`" || qR != "`" {
 			t.Errorf("mysql 期望反引号，实际 (%q,%q)", qL, qR)
+		}
+	})
+
+	t.Run("oracle 方言返回双引号", func(t *testing.T) {
+		// 用 testMockDialector 模拟 Oracle，避免在默认 build 引入 gorm-oracle 依赖
+		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"oracle"}}}
+		qL, qR := getQuoteChar(db)
+		if qL != "\"" || qR != "\"" {
+			t.Errorf("oracle 期望双引号，实际 (%q,%q)", qL, qR)
 		}
 	})
 

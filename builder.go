@@ -230,7 +230,7 @@ func getQuoteChar(db *gorm.DB) (string, string) {
 		return "", "" // 无法探测方言，交由 GORM 自行处理
 	}
 	switch db.Name() {
-	case "postgres", "sqlite":
+	case "postgres", "sqlite", "oracle":
 		return "\"", "\""
 	case "sqlserver":
 		return "[", "]"
