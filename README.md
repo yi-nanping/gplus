@@ -667,6 +667,7 @@ gplus/
 | SQLite | ✅ 完整 | ✓ `:memory:` | 默认开发与单元测试方言；`getQuoteChar` 返回 `"` |
 | MySQL 8.0+ | ✅ 完整 | ✓ `mysql:8.0` service | `getQuoteChar` 返回 `` ` ``；ON CONFLICT 用 `VALUES(col)` 表达式 |
 | PostgreSQL 16+ | ✅ 完整 | ✓ `postgres:16` service | `getQuoteChar` 返回 `"`；ON CONFLICT 用 `excluded.col` 表达式 |
+| Oracle 12c+ | ⚠️ build tag | ✗ 不在 CI（启动慢） | 用 `go test -tags=oracle` 跑；`getQuoteChar` 返回空 quoter（避免 ORA-00904，详见已知陷阱） |
 | SQL Server | ⚠️ 部分 | ✗ | `getQuoteChar` 返回 `[ ]`；未在 CI 验证，alias 体系未实测 |
 | TiDB | ⚠️ 别名走 MySQL 分支 | ✗ | `getQuoteChar` 返回反引号同 MySQL；未在 CI 验证 |
 
@@ -676,6 +677,15 @@ gplus/
 - PG 严格 SQL：HAVING 不可引用 SELECT 列别名，须重复聚合表达式
 - LIKE 大小写敏感性：MySQL 默认 `utf8mb4_general_ci` 不敏感、PG 默认敏感、SQLite 默认不敏感
 - 占位符：MySQL/SQLite 用 `?`，PG 用 `$N`（驱动统一处理，库代码方言无关）
+- Oracle 限制（详见 spec `docs/superpowers/specs/2026-05-07-oracle-support-design.md`）：
+  - `gplus.getQuoteChar` 返回空 quoter——godoes/gorm-oracle migrator 用 UPPERCASE 不带引号建表，加双引号会触发 ORA-00904；列名是 Oracle 保留字（order/size/level）时需用户手动加引号
+  - `''` 自动转 NULL（致命差异，影响 IsNull / Empty 判断）
+  - 输出列名默认 UPPERCASE：RawScan 映射小写 struct tag 时需 SQL 显式 `AS "col"` 锁定 lowercase
+  - CLOB/TEXT 字段不能直接 WHERE，所有 string 字段须显式 `gorm:"size:N"` 约束
+  - NULLS LAST 排序默认（与 PG 升序相反）
+  - RETURNING 仅支持单行（影响 SaveBatch/UpsertBatch，本期 t.Skip）
+  - 标识符长度 30/128 字符上限
+  - 不支持 ON CONFLICT（用 MERGE INTO）
 
 ## 贡献
 

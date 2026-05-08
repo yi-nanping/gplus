@@ -2,6 +2,62 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.8.2] - 2026-05-08
+
+### 新增 (Oracle 12c+ 支持)
+
+- **Oracle 数据库支持**：v0.8.0 alias 体系 + Repository CRUD 在 Oracle 12c+ 下行为锁定
+  - GORM Dialector：`github.com/godoes/gorm-oracle v1.6.18`（社区维护，活跃 2024+）
+  - Go 驱动：`github.com/sijms/go-ora/v2 v2.9.0`（纯 Go，无 Oracle Client C 库依赖）
+  - **测试隔离**：`//go:build oracle` build tag，**不进 CI**（Oracle 启动慢，docker 镜像 ~3GB）
+  - 跑测命令：`go test -tags=oracle ./...`，需启动本地 docker `gvenzl/oracle-free:23-slim`
+- 新建 4 个 oracle build-tag 测试文件（commit `c2729e9` / `58722c1` / `9914402` / `7ddc452`）：
+  - `oracle_setup_test.go`：`setupOracleDB` helper + `truncateOracleTables`（DROP TABLE PURGE + AutoMigrate 策略，避免 Oracle 回收站积压）
+  - `oracle_contract_test.go`：Dialector 契约断言（`db.Name() == "oracle"` + `getQuoteChar` 返回空 quoter）
+  - `oracle_integration_test.go`：5 个 CRUD 测试（BasicCRUD / Where / OrderGroupHaving / JoinQuery / QuoteColumn）
+  - `alias_oracle_test.go`：3 个 alias 体系测试（自连接 / alias 字段 q.Eq / correlated EXISTS）
+
+### 库代码改动
+
+- **`builder.go: getQuoteChar`** 加 `case "oracle":` 分支返回**空 quoter**（commit `58722c1` + 实测修订 `7627ea6`）——**唯一库代码改动**
+  - 实测修订原因：godoes/gorm-oracle migrator 用 UPPERCASE 不带引号 CREATE TABLE（列名实际存为 `USERNAME`），若 quoteColumn 加双引号转义会变 `"username"` 触发 ORA-00904 invalid identifier（双引号下大小写敏感）
+  - 解决策略：oracle 分支独立返回 `"", ""`，让 Oracle 自身 UPPERCASE 解析裸标识符
+  - 已知 trade-off：列名是 Oracle 保留字（`order` / `size` / `level` 等）时需用户手动用 RawSQL 加引号
+- 既有 `TestGetQuoteChar_Dialects` / `TestQuoteColumn_Dialects` 加 oracle case 覆盖（用 testMockDialector 模拟，避免默认 build 引入 driver）
+
+### 已知限制 (Oracle)
+
+- **`getQuoteChar` 返回空 quoter**：与 PG/SQLite 双引号策略不同，避免 ORA-00904；列名是保留字时需手动加引号
+- **`''` = NULL**：Oracle 自动把空字符串转 NULL，影响 IsNull / Empty 判断
+- **输出列名默认 UPPERCASE**：RawScan 映射小写 struct tag 时需 SQL 显式 `AS "col"` 锁定 lowercase（参见 `TestOracle_OrderGroupHaving/GroupBy_Having_RawScan`）
+- **CLOB/TEXT WHERE 限制**：Go `string` 长字段映射成 CLOB 时 `LikeRight`/`In` 报 `ORA-00932`，所有 string 字段须显式 `gorm:"size:N"` 约束
+- **NULLS LAST 默认**：升序排序 NULL 排末尾，与 PG/SQLite 相反——含 NULL 列 ORDER BY 结果集顺序不一致
+- **RETURNING 仅支持单行**：`SaveBatch`/`UpsertBatch` 走 RETURNING 路径在 Oracle 失败，本期相关测试 `t.Skip`
+- **标识符长度上限**：12c R1 30 字符，12c R2+ 128 字符；测试 struct 须满足 ≤30 字符以兼容老版本
+- **ON CONFLICT 不支持**：Oracle 用 `MERGE INTO`，gplus `OnConflict` 在 Oracle 下需用户手动改写
+
+### 技术债
+
+- **TD-9**：Oracle 测试无 CI 守护，依赖下游手动跑发现问题
+- **TD-10**：第三方 Dialector 维护风险（gorm-oracle 由社区维护，GORM 升级时可能滞后）
+- **TD-11**：Oracle 11g 不支持（sequence + trigger 自增、ROWNUM 重写未实现）
+- **TD-12**：单模块带可选 driver——下游 `go mod tidy` 写入 sijms/go-ora 等 transitive 到 go.sum（build tag 仅隔离测试编译，不影响 `go mod tidy` 拉取）
+- **TD-13**：批量 RETURNING 适配未做（推到 v0.9+）
+- **TD-14**：Oracle 保留字列名（order/size/level 等）gplus 不会自动加引号——需用户手动用 RawSQL；空 quoter 策略的副作用
+
+### 文档
+
+- README 方言矩阵加 Oracle（标注 build tag 跑法）
+- README 已知方言差异速查加 Oracle 限制（quoter 策略 / `''` / UPPERCASE / CLOB / NULLS LAST / RETURNING / 长度 / ON CONFLICT）
+- spec：`docs/superpowers/specs/2026-05-07-oracle-support-design.md`（经过 brainstorming + 2 轮 4 专家审计）
+- plan：`docs/superpowers/plans/2026-05-07-oracle-support-plan.md`（5 task / 27 step）
+
+仅测试基建 + 文档变更（除 `getQuoteChar` 一处分支扩展外），不涉及核心 API、Repository CRUD、alias 体系；GORM 版本锁定保持 v1.31.x；`v0.8.0` / `v0.8.1` tag 不受影响。
+
+下一步候选（v0.8.3）：达梦数据库 dm 支持（兼容 Oracle 模式，框架 80% 复用）
+
+---
+
 ## [0.8.1] - 2026-05-07
 
 ### 新增 (PG 三方言验证)
