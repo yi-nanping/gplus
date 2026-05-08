@@ -1529,13 +1529,19 @@ git push origin v0.8.3
 
 ## Plan 阶段实测值（Task 0 Step 12 写入）
 
-> 实施期填入；此处仅占位提醒。
+实测于 2026-05-08，基于 Windows 11 + WSL2 Ubuntu-24.04 + Docker Engine（mirrored 网络模式）。
 
-- 锁定 godoes/gorm-dameng 版本：`__`
-- 锁定 DM 8 image tag：`__`
-- 锁定 SYSDBA 密码：`__`
-- 探测 db.Name() 实测值：`__`
-- 探测 docker run env 白名单：`__`
-- 探测 MySQLUser 字段保留字命中：`__`
-- godoes/gorm-dameng cgo 验证结果：`__`
+- **锁定 godoes/gorm-dameng 版本**：`v0.7.2`（2025-08-22 release）
+- **锁定 DM 8 image tag**：`gplus/dm8:8.1.4.200`（本地 Dockerfile + DM8 install.xml 自构建，9.81 GB；非 dameng 技术社区 tar 包路径——上一会话因社区下载受阻改走自构建）
+- **锁定 SYSDBA 密码**：`Test_DM_2026`（容器启动时通过 install.xml 设置）
+- **探测 db.Name() 实测值**：`"dm"`（spec 假设值 ✅，**不触发连锁修改清单**）
+- **探测 docker run env 白名单**：自构建镜像在容器构建时通过 install.xml 一次性烧入 `INSTANCE_NAME=DM8TEST` / `PAGE_SIZE=16` / `UNICODE_FLAG=1` / `CASE_SENSITIVE=Y` / `COMPATIBLE_MODE=2`；docker run 不需要再传 env（与 plan 早期假设的 dameng 官方 tar 路径不同——README/CHANGELOG 文档保留 docker run env 说明给走官方 tar 路径的下游用户）
+- **探测 MySQLUser 字段保留字命中**：**0 命中**（disql `SELECT KEYWORD FROM V$RESERVED_WORDS WHERE KEYWORD IN ('NAME','AGE','EMAIL','ID','USERNAME')` 返回 `no rows`，**直接复用 MySQLUser 不需新建 dmUser**）
+- **godoes/gorm-dameng cgo 验证结果**：**纯 Go 无 cgo + 5 个 transitive 全部 github.com/golang.org**（github.com/golang/snappy v1.0.0 / jinzhu/inflection v1.0.0 / jinzhu/now v1.1.5 / golang.org/x/text v0.22.0 / gorm.io/gorm v1.30.1，**无 gitee transitive**）
+- **COMPATIBLE_MODE=2 双路径确认**：disql 直连 `SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE'` 返回 `2` ✅；Go gorm 路径（dameng.Open + db.Raw）返回 `"2"` ✅
+- **DSN 实测可用**：`dm://SYSDBA:Test_DM_2026@127.0.0.1:5236`（Windows 主机 TCP 127.0.0.1:5236 直接可达，WSL2 mirrored 模式生效）
+
+**镜像副作用记录**：disql 容器内执行带 `EXIT;` 的 SQL 文件后容器会触发 `DM Database Server shutdown successfully` 自动停止——疑似 install.xml 入口脚本在 disql session 结束时联动关库。**不影响 setup helper**：`setupDMDB` 用 dameng driver 直连不走 disql + 不发 EXIT，不会触发此路径。但若实施期需要 disql 临时排查，每次跑后需 `docker start dm8-test` 重启。
+
+**Task 0 验收**：13 项待定项全部有具体值或处理路径，容器健康且 DSN 通畅，未产生 commit。
 - DM 容器启动 ready 标志：`__`
