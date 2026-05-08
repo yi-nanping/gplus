@@ -1,12 +1,13 @@
 # v0.8.3 达梦数据库（DM 8）支持设计
 
-> **版本**：v0.8.3（草案，2 轮 6 专家审计修订）
+> **版本**：v0.8.3（草案，2 轮 6 专家审计修订 + plan Task 0 实测推翻 gitee 假设）
 > **日期**：2026-05-08
 > **作者**：通过 brainstorming skill 协作产出
-> **状态**：待用户复核 → 进入 writing-plans
+> **状态**：plan 实施中（Task 0 自动部分完成，等用户手动获取 DM 8 tar 镜像）
 > **审计轮次**：
 >   - 1 轮（10 必修 + 12 建议）：DM 数据库领域 / gplus 架构一致性 / Go build/依赖
 >   - 2 轮（4 必修 + 13 plan 待定项 + 7 README 缺口）：对抗性新风险 / 实施工程师可执行性 / 下游用户友好
+>   - **plan Task 0 实测**（2026-05-08）：godoes/gorm-dameng v0.7.2 锁定；driver 内置无 gitee 依赖（推翻 §1.2/§5.1/§5.3 早期假设）；无 cgo 验证通过
 > **前置版本**：v0.8.2（Oracle 12c+ 支持）
 > **后续候选**：DM MySQL 兼容模式 / 人大金仓 KingbaseES 支持
 
@@ -53,7 +54,7 @@ v0.8.2 已交付 Oracle 12c+ 支持（commit `138ad8f`），下游金融/政务/
 |---|---|---|
 | DM 版本目标 | **DM 8（Oracle 兼容模式）** | 现役主流，DM 7 已老；godoes/gorm-dameng 也按 DM 8 验证 |
 | GORM Dialector | **`github.com/godoes/gorm-dameng`** | 与 v0.8.2 godoes/gorm-oracle 同作者，API 风格一致；社区主流选择 |
-| Go 驱动 | **`gitee.com/chunanyong/dm`**（transitive） | DM 官方驱动，由 gorm-dameng 自动引入 |
+| Go 驱动 | **godoes/gorm-dameng 内置**（子包 `dm8/i18n`/`parser`/`security`/`util`） | 实测 v0.7.2 driver 代码已内嵌，**不依赖 gitee.com/chunanyong/dm** |
 | 测试隔离 | **`//go:build dm` build tag** | 默认 build/test 不触及，CI 不变；与 oracle tag 同模式 |
 | CI 集成 | **不做** | DM 镜像大、license 复杂；build tag 留给下游与作者本地验证入口 |
 | 本地验证 | **WSL2 + docker 起 dameng 官方 DM 8 镜像（tar load 主路径）** | 沿用 v0.8.2 Oracle plan 的 WSL wrapper 写法 |
@@ -87,8 +88,8 @@ v0.8.2 已交付 Oracle 12c+ 支持（commit `138ad8f`），下游金融/政务/
 
 | 文件 | 改动 | build tag |
 |---|---|---|
-| `go.mod` | `require github.com/godoes/gorm-dameng vX.Y.Z`（最新稳定版） | 默认 |
-| `go.sum` | 加 transitive deps（gitee.com/chunanyong/dm 等） | 默认 |
+| `go.mod` | `require github.com/godoes/gorm-dameng v0.7.2`（plan Task 0 #1 实测锁定，2025-08-22 release） | 默认 |
+| `go.sum` | 加 transitive deps（gorm-dameng 自身 + golang/snappy / jinzhu/inflection / jinzhu/now / x/text；**无 gitee 依赖**） | 默认 |
 | `builder.go` | `getQuoteChar` 把 `case "oracle":` 改成 `case "oracle", "dm":` + 注释泛化（**唯一库代码（非测试）改动**） | 默认 |
 | `missing_coverage_test.go` | `TestQuoteColumn_Dialects` / `TestGetQuoteChar_Dialects` 加 dm case 覆盖 | 默认 |
 
@@ -317,13 +318,19 @@ t.Run("dm 方言返回空 quoter 与 oracle 共用", func(t *testing.T) {
 
 ```
 require (
-    github.com/godoes/gorm-dameng vX.Y.Z  // plan 阶段用 `go list -m -versions` 锁定具体版本
+    github.com/godoes/gorm-dameng v0.7.2  // plan Task 0 实测锁定（2025-08-22 release）
 )
 ```
 
-会引入 transitive：
-- `gitee.com/chunanyong/dm`（DM 官方 Go 驱动，**纯 Go 实现，无 cgo**）
-- 其它 dameng/dm 关联包
+实测引入的 transitive deps（**全部纯 Go，无 cgo，无 gitee 依赖**）：
+- `github.com/golang/snappy v1.0.0`
+- `github.com/jinzhu/inflection v1.0.0`
+- `github.com/jinzhu/now v1.1.5`
+- `golang.org/x/text v0.22.0`
+
+**重要**：godoes/gorm-dameng v0.7.2 自带 DM driver 实现（子包 `dm8/i18n` / `dm8/parser` / `dm8/security` / `dm8/util`），**不依赖 `gitee.com/chunanyong/dm`**。这是 plan 阶段实测推翻的 spec 早期假设——历史上 dameng 官方维护 `gitee.com/chunanyong/dm`，但 godoes 包把 driver 代码 vendor 进了自己仓库。
+
+**gorm 版本兼容性**：godoes/gorm-dameng v0.7.2 require `gorm.io/gorm v1.30.1`，gplus 当前用 `v1.31.1`——go module MVS 取最大兼容版保持 `v1.31.1` 不降级。
 
 **项目 go 版本**：`go.mod` 声明 `go 1.24`，build tag 仅用新式 `//go:build dm` 语法（Go 1.17+），不写老式 `// +build dm`。
 
@@ -331,23 +338,20 @@ require (
 
 - `go test ./...`：DM 测试文件 build tag 隔离，不参与编译，不需要 dameng driver 加载
 - `go build`：dameng driver 因 build tag 不被引用，但 `go.sum` 锁定其哈希
-- **跨平台无副作用**：dameng/dm 驱动为纯 Go 无 cgo，`CGO_ENABLED=0` 也可编译；下游 `go build` 默认不会触达驱动 init
-- 下游 `go mod tidy`：写入 dameng transitive 到 go.sum（**TD-12 重申**：单模块带可选 driver 副作用）
+- **跨平台无副作用**：godoes/gorm-dameng v0.7.2 已实测无 cgo（plan Task 0 #9 验证：`go list -deps` 整个依赖树无 C 包），`CGO_ENABLED=0` 也可编译；下游 `go build` 默认不会触达驱动 init
+- 下游 `go mod tidy`：写入 dameng + 4 个纯 Go transitive 包到 go.sum（**TD-12 重申**：单模块带可选 driver 副作用）
 
-### 5.3 GOPROXY 与 gitee.com 拉取
+### 5.3 GOPROXY 配置（一般性建议，非 DM 特定）
 
-`gitee.com/chunanyong/dm` 在 `proxy.golang.org`（Go 默认 GOPROXY）历史上多次缓存失败/超时，下游用户需配置 fallback：
+> **修订说明**：spec 早期版本假设 godoes/gorm-dameng 通过 transitive 引入 `gitee.com/chunanyong/dm`，故强调 GOPROXY/GOPRIVATE 配置 fallback。**plan Task 0 实测推翻此假设**：godoes/gorm-dameng v0.7.2 自带 driver 实现，全部依赖在 github.com 与 golang.org，无 gitee transitive。本节降级为一般性建议。
+
+国内开发者拉取 gplus 及其 transitive deps 推荐配置 GOPROXY 镜像加速：
 
 ```bash
-# 国内开发者推荐（goproxy.cn 已镜像 gitee 包）
 go env -w GOPROXY=https://goproxy.cn,direct
-
-# 国外 / proxy.golang.org 拉取失败时（让 gitee 走 direct 模式）
-go env -w GOPRIVATE=gitee.com/*
-go env -w GOPROXY=https://proxy.golang.org,direct
 ```
 
-README 的"DM 支持"章节需明确给出此提示，避免下游用户首次 `go mod download` 卡死。
+这是通用 Go 工程实践，与 DM 支持无特定关系。README 不强制提示。
 
 ## 6. 实施风险（按概率排序）
 
@@ -360,7 +364,6 @@ README 的"DM 支持"章节需明确给出此提示，避免下游用户首次 `
 | Docker Hub `dameng/dm8` 第三方镜像版本不准 | 高 | 高 | 主路径用 dameng 技术社区 tar + `docker load`；Docker Hub 仅 fallback |
 | **`t.Skip` 误报**（DSN 不通时 exit 0，验收清单"全过"无法区分"全 skip"） | 中 | 中 | `TEST_DM_REQUIRED=1` 时 setup 改 `t.Fatalf`；作者本地实测必带此 flag |
 | DM Oracle 兼容模式默认未开启 | 低 | 高 | 启动 docker 时加 `COMPATIBLE_MODE=2` 显式指定 |
-| `gitee.com/chunanyong/dm` 在 GOPROXY 拉取失败 | 中 | 中 | README 给出 `GOPROXY=https://goproxy.cn,direct` 与 `GOPRIVATE=gitee.com/*` fallback 提示 |
 | DM CLOB/字符集映射差异 | 低 | 中 | 测试 fail 时通过 `gorm:"size:N"` 显式约束修复 |
 | DM 占位符不兼容（不是 `?`） | 低 | 中 | godoes/gorm-dameng Dialector 应已统一处理 |
 
@@ -403,7 +406,7 @@ DM 8 Oracle 兼容模式继承 Oracle 全部限制：
 
 ### 9.1 README "DM 数据库支持" 章节必含 7 项
 
-下游用户视角缺口（一轮 spec 仅覆盖测试侧 + GOPROXY，生产侧零字）。本章节必含：
+下游用户视角缺口（一轮 spec 仅覆盖测试侧，生产侧零字）。本章节必含：
 
 1. **Quickstart 5 步**：① `go get github.com/yi-nanping/gplus@v0.8.3` ② 起 docker（dameng 技术社区 tar 路径）③ 设 `TEST_DM_DSN` 环境变量 ④ `go test -tags=dm ./...` ⑤ 错误码对照表导航
 2. **`TEST_DM_DSN` 格式 BNF + 样例**：
@@ -426,31 +429,22 @@ DM 8 Oracle 兼容模式继承 Oracle 全部限制：
 
 1. **支持版本与兼容性**（用户首先看）：DM 8 Oracle 兼容模式，`COMPATIBLE_MODE=2` 显式开启，DM 7 不支持
 2. **已知限制（DM）**：沿用 Oracle 8 条 + DM 特有（COMPATIBLE_MODE 须显式 / 镜像默认密码版本差异 / Docker Hub 第三方镜像）
-3. **新增（DM 8 支持）**：GORM Dialector / Go 驱动 / 测试隔离 build tag / 跑测命令
-4. **文档**：README 新增 "DM 数据库支持" 章节 7 项 + GOPROXY 提示 + spec/plan 链接
+3. **新增（DM 8 支持）**：GORM Dialector godoes/gorm-dameng v0.7.2（**driver 内置无 gitee 依赖**）/ 测试隔离 build tag / 跑测命令
+4. **文档**：README 新增 "DM 数据库支持" 章节 7 项 + spec/plan 链接
 5. **库代码改动**：`builder.go: getQuoteChar` 把 `case "oracle":` 合并为 `case "oracle", "dm":` + 注释泛化（**唯一库代码（非测试）改动**）
 6. **技术债**：TD-15（CI 守护）/ TD-16（Dialector 维护）/ TD-17（DM 7 不支持）/ TD-18（仅 Oracle 兼容模式）+ 复用 TD-12/13/14
 7. **收尾说明**：仅测试基建 + 1 行库代码 case 合并；GORM 版本锁定保持；既有 tag 不受影响；下一步候选（v0.8.4 DM MySQL 兼容 / v0.9 KingbaseES）
 
-**`CHANGELOG.md` v0.8.3 段必含子节**（沿用 v0.8.2 6 大类模板深度）：
-
-1. **新增（DM 8 Oracle 兼容模式支持）**：GORM Dialector / Go 驱动 / 测试隔离 build tag / 跑测命令
-2. **库代码改动**：`builder.go: getQuoteChar` 把 `case "oracle":` 合并为 `case "oracle", "dm":` + 注释泛化（**唯一库代码（非测试）改动**）
-3. **已知限制（DM）**：沿用 Oracle 8 条（空 quoter / `''=NULL` / UPPERCASE / CLOB / NULLS LAST / RETURNING 单行 / 标识符长度 / ON CONFLICT）+ DM 特有（`COMPATIBLE_MODE` 须显式开启 / 镜像默认密码版本差异 / Docker Hub 第三方镜像）
-4. **技术债**：TD-15（CI 守护）/ TD-16（Dialector 维护）/ TD-17（DM 7 不支持）/ TD-18（仅 Oracle 兼容模式）+ 复用 TD-12/13/14
-5. **文档**：README 矩阵 + GOPROXY 提示 + spec/plan 链接
-6. **收尾说明**：仅测试基建 + 1 行库代码 case 合并；GORM 版本锁定保持；既有 tag 不受影响；下一步候选（v0.8.4 DM MySQL 兼容 / v0.9 KingbaseES）
-
 ## 10. 验收清单
 
 - [ ] `builder.go: getQuoteChar` 改一行 `case "oracle", "dm":` + 注释更新
-- [ ] `go.mod` 加 `godoes/gorm-dameng` 依赖（plan 阶段用 `go list -m -versions` 锁定最新稳定版具体版本号）
+- [ ] `go.mod` 加 `godoes/gorm-dameng v0.7.2` 依赖（plan Task 0 #1 实测锁定）
 - [ ] 默认测试 `go test ./...` 不变（不触及 DM）
 - [ ] `TEST_DM_REQUIRED=1 go test -tags=dm ./...` 跑 DM 8 Oracle 兼容模式 9 个测试全过（不允许 t.Skip 误报）
 - [ ] PowerShell 实测：`go test -tags=dm ./...` 与 `go test -tags="oracle dm" ./...` 双方言并行跑通（PS 5.1/7 单双引号均可，无须特殊处理）
 - [ ] `dm_setup_test.go` / `dm_contract_test.go` / `dm_integration_test.go` / `alias_dm_test.go` 完成
 - [ ] `missing_coverage_test.go` 仅在 `TestGetQuoteChar_Dialects` 加 dm 子测试（不动 `TestQuoteColumn_Dialects`）
-- [ ] README 方言矩阵 + 已知差异速查 + GOPROXY 提示加 DM
+- [ ] README 方言矩阵 + 已知差异速查 + DM 数据库支持章节 7 项
 - [ ] CHANGELOG v0.8.3 段写完（沿用 v0.8.2 6 大类深度）
 - [ ] commit 序列（5 commit，沿用 v0.8.2 节奏并修订避免 build 中断）：
   1. `deps`：加 godoes/gorm-dameng 依赖 + go.sum
@@ -464,23 +458,23 @@ DM 8 Oracle 兼容模式继承 Oracle 全部限制：
 
 spec 多处写"plan 阶段定型 / 实操确认"——本节集中索引，避免实施时遗漏。**writing-plans 必须把每项变成具体的 step**。
 
-| # | 待定项 | plan 阶段动作 | 影响 spec 哪里 |
-|---|---|---|---|
-| 1 | gorm-dameng 当前实际版本号 | `go list -m -versions github.com/godoes/gorm-dameng` + 看 GitHub release 频率 | §5.1 替换 vX.Y.Z |
-| 2 | DM 8 tar 镜像 URL + 文件名 + load 后 image tag | 登录 [eco.dameng.com](https://eco.dameng.com/) 找分发页，记录确切 URL + 跑 `docker images` 记 tag | §3.4 替换 `<dm8_image_tag>` 占位 |
-| 3 | SYSDBA 默认密码（容器实际值） | `docker exec -it dm8 disql SYSDBA/<尝试>@localhost:5236` 试 SYSDBA / SYSDBA001 / 强制改密 | README §9.1 第 2 项 DSN 样例 |
-| 4 | docker run env 白名单 | `docker run --rm <image> env` + 容器内 README + `docker logs` | §3.4 env 列表定型 |
-| 5 | `db.Name()` 实际返回字符串 | throwaway main.go：`gorm.Open(dameng.Open(dsn)) + fmt.Println(db.Name())` 探测 | §4.1 builder.go case 字符串、§3.5 contract 测试断言 |
-| 6 | `MySQLUser` 字段是否撞 DM 保留字 | disql 跑 `SELECT KEYWORD FROM V$RESERVED_WORDS WHERE KEYWORD IN ('NAME','AGE','EMAIL')` | 若撞保留字，§3.3 改测试 struct |
-| 7 | docker engine + WSL2 + 网络可达性 | `wsl -d Ubuntu-24.04 -e docker run hello-world` + `curl https://eco.dameng.com` | 0 号前置检查 step |
-| 8 | tar 拉取失败的 abort 阈值 | plan 写定时间盒（建议 24h；超过则推迟到 v0.8.4） | §6 风险表"Docker Hub 第三方"行 |
-| 9 | godoes/gorm-dameng 是否真无 cgo | `go list -deps -test github.com/godoes/gorm-dameng \| grep -i cgo` | §5.2"纯 Go 无 cgo"断言依据 |
-| 10 | `db.Name()` fail 时连锁修改清单 | spec 加 fail 时同步改 4 处的 checklist：builder.go L242 / missing_coverage_test.go dm 子测试 / 4 个 dm 测试文件 build tag 注释 | §6 风险表第 1 行扩展 |
-| 11 | `TEST_DM_DSN` 格式 BNF + 真实样例 | plan 实测后写入 README §9.1 第 2 项 | README §9.1 第 2 项 |
-| 12 | 下游生产侧 `import _ "github.com/godoes/gorm-dameng"` 姿势 | 写 README §9.1 第 3 项 + 一个最小可运行示例 | README §9.1 第 3 项 |
-| 13 | `COMPATIBLE_MODE=2` 诊断 SQL 与镜像默认值实测 | 启动后 `SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE'` 验证 | §3.4 + README §9.1 第 6 项 |
+| # | 待定项 | plan 阶段动作 | 影响 spec 哪里 | 状态 |
+|---|---|---|---|---|
+| 1 | gorm-dameng 当前实际版本号 | `go list -m -versions github.com/godoes/gorm-dameng` + 看 GitHub release 频率 | §5.1 替换 vX.Y.Z | ✅ **v0.7.2**（2025-08-22） |
+| 2 | DM 8 tar 镜像 URL + 文件名 + load 后 image tag | 登录 [eco.dameng.com](https://eco.dameng.com/) 找分发页，记录确切 URL + 跑 `docker images` 记 tag | §3.4 替换 `<dm8_image_tag>` 占位 | ⏸ 等用户手动 |
+| 3 | SYSDBA 默认密码（容器实际值） | 镜像 README 看默认密码；或拿到容器后 `docker exec -it dm8 disql SYSDBA/<尝试>@localhost:5236` 试 SYSDBA / SYSDBA001 / 强制改密 | README §9.1 第 2 项 DSN 样例 | ⏸ 等用户手动 |
+| 4 | docker run env 白名单 | `docker run --rm <image> env` + 容器内 README + `docker logs` | §3.4 env 列表定型 | ⏸ 容器启动后 |
+| 5 | `db.Name()` 实际返回字符串 | throwaway main.go：`gorm.Open(dameng.Open(dsn)) + fmt.Println(db.Name())` 探测 | §4.1 builder.go case 字符串、§3.5 contract 测试断言 | ⏸ 容器启动后 |
+| 6 | `MySQLUser` 字段是否撞 DM 保留字 | disql 跑 `SELECT KEYWORD FROM V$RESERVED_WORDS WHERE KEYWORD IN ('NAME','AGE','EMAIL')` | 若撞保留字，§3.3 改测试 struct | ⏸ 容器启动后 |
+| 7 | docker engine + WSL2 + 网络可达性 | `wsl -d Ubuntu-24.04 -e docker run hello-world` | 0 号前置检查 step | ✅ docker 29.1.3，WSL Ubuntu-24.04，hello-world 通 |
+| 8 | tar 拉取失败的 abort 阈值 | plan 写定时间盒（建议 24h；超过则推迟到 v0.8.4） | §6 风险表"Docker Hub 第三方"行 | ⏸ 等用户决定 |
+| 9 | godoes/gorm-dameng 是否真无 cgo | `go list -deps -test github.com/godoes/gorm-dameng \| grep -i cgo` | §5.2"纯 Go 无 cgo"断言依据 | ✅ **无 cgo**，无 gitee transitive |
+| 10 | `db.Name()` fail 时连锁修改清单 | spec 加 fail 时同步改 4 处的 checklist：builder.go L242 / missing_coverage_test.go dm 子测试 / 4 个 dm 测试文件 build tag 注释 | §6 风险表第 1 行扩展 | ✅ spec §6 已写 |
+| 11 | `TEST_DM_DSN` 格式 BNF + 真实样例 | plan 实测后写入 README §9.1 第 2 项 | README §9.1 第 2 项 | ⏸ 等 #3 完成 |
+| 12 | 下游生产侧 `import _ "github.com/godoes/gorm-dameng"` 姿势 | 写 README §9.1 第 3 项 + 一个最小可运行示例 | README §9.1 第 3 项 | ⏸ Task 5 实施 |
+| 13 | `COMPATIBLE_MODE=2` 诊断 SQL 与镜像默认值实测 | 启动后 `SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE'` 验证 | §3.4 + README §9.1 第 6 项 | ⏸ 容器启动后 |
 
-**作者本地实施前置**：在 plan 第 1 步前，作者本地需先 `go env -w GOPROXY=https://goproxy.cn,direct`，否则 plan 第 1 步 `go list -m -versions` 卡 proxy.golang.org 超时。
+**作者本地实施前置**：实测推翻早期假设——**不再需要特殊 GOPROXY 配置**。godoes/gorm-dameng v0.7.2 自带 driver 实现，所有 transitive 都在 github.com 与 golang.org 上，标准 Go module 拉取即可（国内开发者用 `GOPROXY=https://goproxy.cn,direct` 加速一般性可选）。
 
 ## 12. 后续候选（不在本期）
 
