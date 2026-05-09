@@ -1,15 +1,17 @@
 # v0.8.4 候选 KingbaseES（人大金仓 V9R1C10）PG 兼容模式支持设计
 
-> **版本**：v0.8.4 候选（草案 + 5 专家审计修订：数据库领域 / Go 工具链 / 架构一致性 / 实施可执行性 / 下游用户友好）
+> **版本**：v0.8.4 候选（草案 + 11 专家两轮审计修订：5 专家初轮 + 6 专家二轮）
 > **日期**：2026-05-09
 > **作者**：通过 brainstorming skill 协作产出
-> **状态**：spec 已定（5 专家审计后修订），待 plan 实施
-> **审计修订要点**：
->   - **A3 实测确定**：`postgres.Dialector.Name()` 硬编码 `"postgres"`（gorm.io/driver/postgres v1.5+ 源码确认），与 Conn 来源无关 → 库代码必为 0 行行为差异；为契约一致性仍加 `"kingbase"` case 字符串（C1）
+> **状态**：spec 已定（11 专家审计后修订），待 plan 实施
+> **审计修订要点（核心决策）**：
+>   - **A3 实测确定**：`postgres.Dialector.Name()` 硬编码 `"postgres"`（gorm.io/driver/postgres v1.6.0 `postgres.go:49-51` 验证），与 Conn 来源无关 → 库代码必为 0 行行为差异；为契约一致性仍加 `"kingbase"` case 字符串（C1）
 >   - **A1 license 风险**：plan Task 0 第 0 步必查 Gokb LICENSE，若禁止 redistribute 则整个 vendor 进 git 方案废，切 README 引导路径
->   - **A2 Gokb 注册名**：plan Task 0 grep 实测，spec 不预设双注册
->   - **B2 下游 clone 限制**：浅 clone / sparse checkout 排除 `third_party/` 会破坏 build（Go modules graph 解析仍要求 replace target 存在）
->   - **D1 plan 待定项分类**：用户人工前置（Gokb 下载 / docker tar / license）vs 工程师自驱
+>   - **A2 Gokb 注册名**：plan Task 0 grep 实测，spec 不预设双注册；driver 名抽常量 `kingbaseDriverName`
+>   - **B2 下游 clone 限制**：sparse checkout 排除 `third_party/` 会破坏 build（Go modules graph 解析仍要求 replace target 存在）
+>   - **2C2 下游 CI 必须配置**：`GOFLAGS=-mod=mod` + `GOPROXY=off`（kingbase.com 不在 module proxy）
+>   - **2C4 license abort 阈值 = 2 周**（不在 48h 时间盒内，金仓销售 SLA 不可控）
+>   - **2A2 setup fail-fast 不降级**：`database_mode` 校验必 `t.Fatalf`，T11 实测确定唯一 SQL，setup 不留 t.Logf 静默路径
 > **前置版本**：v0.8.3（DM 8 Oracle 兼容模式支持）
 > **后续候选**：v1.0 driver 解耦重构（把所有 driver 推到下游 self-integrate，KingbaseES Gokb 从 git 释放）
 
@@ -46,9 +48,9 @@ v0.8.3 已交付 DM 8 Oracle 兼容模式支持（commit `8f77a01`），覆盖�
 | **标识符长度** | 63 字符 | 同 PG（63；信创定制版可能 64/128，无影响） | 测试 struct 远低于上限 |
 | **license** | 不需要 | **需要 license.dat**（试用 max_connect=10） | 启动容器挂载 |
 | **多模启动** | 单模式 | **需 `DB_MODE=pg` 显式开启 PG-compat**（默认可能 Oracle/MySQL/SQLServer） | env 变量必设（plan Task 0 实测变量名） |
-| **底层 PG 版本** | 16.x | **基础 ≥ PG 12，部分 PG 13/14 特性回填**（procedure/generated columns/icu collation） | plan Task 0 `SELECT version()` + `SHOW server_version` 实测；不假设 PG 13+ 特性可用 |
-| **sys_\* schema 双套** | 仅 `pg_*` | **`pg_catalog` / `pg_*` 与 `sys_catalog` / `sys_*` 并存** | plan Task 0 #8 用 `pg_get_keywords()` 可能空表，应改 `sys_get_keywords()` |
-| **search_path 默认** | `"$user", public` | `"$user", public, sys_catalog` | 影响保留字解析路径 |
+| **底层 PG 版本** | 16.x | **基础 ≥ PG 12，部分高版本特性回填**（具体清单 plan Task 0 实测后填） | plan Task 0 `SELECT version()` + `SHOW server_version` 实测；不假设 PG 13+ 特性可用。**避免具体清单**——procedure 实际 PG 11 引入、generated columns PG 12、ICU collation PG 10 |
+| **sys_\* schema 双套** | 仅 `pg_*` | **`pg_catalog` / `pg_*` 与 `sys_catalog` / `sys_*` 并存**（pg_* 是 PG 兼容层） | postgres dialect migrator 大量查 `pg_class` / `pg_attribute` / `information_schema` 等系统表（`gorm.io/driver/postgres@v1.6.0/migrator.go:29,119,191,298-301`），KB PG-compat 双套并存**直接可用**——这是 §2.2 复用 PG dialect 决策的关键证据 ✓ |
+| **search_path 默认** | `"$user", public` | `"$user", public, sys_catalog` | 影响保留字解析路径；`pg_get_keywords()` 是 PG **核心函数**（非 contrib，PG 8.3+ 默认装），KB PG-compat 模式大概率直接可用，不必盲目改 `sys_get_keywords()` |
 
 **结论**：KingbaseES V9R1C10 PG-compat 模式行为继承 PG 全部特性。`postgres.Dialector.Name()` 硬编码 `"postgres"`（与 Conn 来源无关），**库代码行为差异 0 行**；为与 dm/oracle 一致性 + 契约测试入口考虑，仍在 `getQuoteChar` 加 `"kingbase"` case 字符串（行为等价，1 行 case 字符串新增）。
 
@@ -97,11 +99,11 @@ v0.8.3 已交付 DM 8 Oracle 兼容模式支持（commit `8f77a01`），覆盖�
 
 > **路径选择理由**：用 `third_party/kingbase-gokb/`（不用 `vendor/`），避免与 Go modules 的 `vendor/` 目录语义冲突（后者由 `go mod vendor` 命令管理）；保持 import path `kingbase.com/gokb` 通过 go.mod `replace` 指令重定向。
 
-**修改（5 项，4 个必需 + 0 个待定）：**
+**修改（5 项必需）：**
 
 | 文件 | 改动 | 必需性 |
 |---|---|---|
-| `go.mod` | 加 `require kingbase.com/gokb v0.0.0-local` + `replace kingbase.com/gokb => ./third_party/kingbase-gokb`（正斜杠跨平台） | 必需 |
+| `go.mod` | 加 `require kingbase.com/gokb v0.0.0-00010101000000-000000000000` + `replace kingbase.com/gokb => ./third_party/kingbase-gokb`（正斜杠跨平台；用 Go 标准 zero pseudo-version 占位） | 必需 |
 | `go.sum` | 加 transitive deps（**plan Task 0 实测**：预期纯 Go 无 cgo） | 必需 |
 | `.gitignore` | 加 `!/third_party/kingbase-gokb/**` 精确 allowlist（避免与既有 `*.so/*.dll/*.test` deny 冲突） | 必需 |
 | `builder.go` | `getQuoteChar` 现有 `case "postgres", "sqlite", "dm":` 改为 `case "postgres", "sqlite", "dm", "kingbase":` + 注释泛化（C1：与 dm/oracle 一致性，无论 A3 实测必加） | 必需（1 行） |
@@ -110,7 +112,7 @@ v0.8.3 已交付 DM 8 Oracle 兼容模式支持（commit `8f77a01`），覆盖�
 **不动**：
 
 - `testdb_test.go`（不引入 KingbaseES 默认 driver）
-- 其他库代码（query.go / update.go / repository.go / alias.go / subquery.go / schema.go / debug.go / builder.go 视实测决定）
+- 其他库代码（query.go / update.go / repository.go / alias.go / subquery.go / schema.go / debug.go）
 - CI 配置（保持 sqlite + mysql + pg）
 - 现有所有测试（包括 v0.8.2 Oracle / v0.8.3 DM 测试）
 
@@ -139,9 +141,10 @@ KingbaseES 验证（手动）：
   → 默认测试 + KingbaseES 测试都跑
   → 无 DSN 时 t.Skip（默认）/ TEST_KINGBASE_REQUIRED=1 时 t.Fatal（作者本地实测必带）
 
-并行多方言：
+并行多方言（**警告：仅作者本机 5 容器环境用；CI / 下游不应执行 / 2S8**）：
   go test -tags="oracle dm kingbase" ./...
   → 验证多方言 case 合并不冲突（C1 决策必加 case 字符串后此命令有意义）
+  → 跑通需本机同时有 Oracle Free + DM 8 + KB V9R1C10 三套容器
 ```
 
 **`t.Skip` 误报防护**（沿用 v0.8.3 DM 模式）：
@@ -177,6 +180,10 @@ import (
 // 防自相矛盾策略：defaultKingbaseDSN 故意留空，强制下游必须显式设置 TEST_KINGBASE_DSN。
 const defaultKingbaseDSN = ""
 
+// kingbaseDriverName 是 Gokb 驱动注册名，2S1：抽常量便于 plan T3 实测后单点修改
+// （若实测注册名不是 "kingbase" → 改本常量即可，无需多文件同步改）
+const kingbaseDriverName = "kingbase"
+
 // setupKingbaseDB 与 setupDMDB 同模式：非泛型，绑定 MySQLUser 复用既有测试 struct。
 //
 // 复用既有 helper（无 build tag，全包可见）：
@@ -209,9 +216,8 @@ func setupKingbaseDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
         t.Skip("TEST_KINGBASE_DSN 未设置，跳过 KingbaseES 测试（参见 README 章节）")
     }
 
-    // sql.Open driver 名 plan Task 0 实测确定（grep sql.Register 看注册名清单）
-    // 默认假设 "kingbase"（Gokb 官方文档示例用法）；spec 不预设双注册
-    sqlDB, err := sql.Open("kingbase", dsn)
+    // 用 kingbaseDriverName 常量（2S1：plan T3 实测后单点修改）
+    sqlDB, err := sql.Open(kingbaseDriverName, dsn)
     if err != nil {
         if os.Getenv("TEST_KINGBASE_REQUIRED") == "1" {
             t.Fatalf("KingbaseES 强制要求但不可用: %v", err)
@@ -226,15 +232,20 @@ func setupKingbaseDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
         t.Skipf("KingbaseES 不可用（ping 失败）: %v", err)
     }
 
-    // E1：校验 PG-compat 模式生效，避免连了 Oracle/MySQL/SQLServer-compat 实例后
-    //      所有 CREATE TABLE / IsNull 测试逐个失败
-    // 诊断 SQL 由 plan Task 0 #10 实测确定（current_setting / sys_setting / show 三选一）
+    // 2S9 诊断：打印已注册 driver 列表，便于发现 lib/pq + Gokb 共存时
+    //          的 "postgres" 名占用冲突
+    t.Logf("已注册 sql.Drivers(): %v", sql.Drivers())
+
+    // E1 + 2A2：校验 PG-compat 模式生效（fail-fast，不降级 t.Logf）
+    // 诊断 SQL plan T11 实测后定型为唯一 SQL（不在运行时三选一）
+    // 数据库专家 M2：database_mode 接受 4 值 pg/oracle/0/1（pg 与 0 等价）
+    // 若 plan T11 实测发现 current_setting 不可用 → spec 必须改换 SQL，setup 不留 fallback
     var dbMode string
     if err := sqlDB.QueryRow(`SELECT current_setting('database_mode')`).Scan(&dbMode); err != nil {
-        // 若 current_setting 不可用，可能 KB 用别的接口（plan Task 0 #10 实测后定）
-        t.Logf("database_mode 校验跳过（current_setting 不可用）: %v", err)
-    } else if dbMode != "pg" {
-        t.Fatalf("KingbaseES 不在 PG-compat 模式（database_mode=%q），重起容器加 -e DB_MODE=pg", dbMode)
+        t.Fatalf("database_mode 校验失败（plan T11 应实测确定唯一 SQL，setup 不应到此分支）: %v", err)
+    }
+    if dbMode != "pg" && dbMode != "0" {
+        t.Fatalf("KingbaseES 不在 PG-compat 模式（database_mode=%q，期望 'pg' 或 '0'），重起容器加 -e DB_MODE=pg", dbMode)
     }
 
     // 用 postgres dialect + Gokb conn —— 复用 PG 全部行为
@@ -278,7 +289,7 @@ func truncateKingbaseTables(t *testing.T, db *gorm.DB, models ...any) {
 
 ### 3.4 与 v0.8.3 DM setup 的关键差异
 
-| 维度 | v0.8.3 DM | v0.9 KingbaseES |
+| 维度 | v0.8.3 DM | v0.8.4 KingbaseES |
 |---|---|---|
 | Driver import | `_ "github.com/godoes/gorm-dameng"` | `_ "kingbase.com/gokb"`（vendor + replace） |
 | Dialect 来源 | `dameng.Open(dsn)` | `postgres.New(postgres.Config{Conn: sqlDB})` |
@@ -350,7 +361,7 @@ wsl -d Ubuntu-24.04 -e docker logs -f kingbase
 |---|---|---|---|
 | `TestKingbaseDialectorContract` | TestDMDialectorContract | 2 子测试：`DialectorName` 断言 `"postgres"`（A3 实测确定）+ `getQuoteChar` 在 `"kingbase"` mock 方言下返回 `"`/`"` 双引号 | DM 是空 quoter，KB 是双引号 |
 | `TestKingbase_BasicCRUD` | TestDM_BasicCRUD | Save / GetById / List / Count / UpdateById / DeleteById | 同 |
-| `TestKingbase_WhereConditions` | TestDM_WhereConditions | Ne / LikeRight / In / NotIn / Between / GetOne / **IsNull / Empty 区分**（PG 严格区分 `''`/NULL）/ **ON CONFLICT DO UPDATE WHERE**（PG 支持 partial update WHERE 子句） | **新增 IsNull/Empty 区分 + ON CONFLICT WHERE**（DM 不支持） |
+| `TestKingbase_WhereConditions` | TestDM_WhereConditions（基础部分）+ **mysql_integration_test.go IsNull 测试 / pg_integration_test.go ON CONFLICT 测试**（2B2 新增三测试点参考镜像源） | Ne / LikeRight / In / NotIn / Between / GetOne / **IsNull / Empty 区分**（PG 严格区分 `''`/NULL）/ **ON CONFLICT DO UPDATE WHERE**（PG 支持 partial update WHERE 子句） | **新增 IsNull/Empty 区分 + ON CONFLICT WHERE**（DM 不支持） |
 | `TestKingbase_OrderGroupHaving` | TestDM_OrderGroupHaving | OrderBy DESC / Limit-Offset / GroupBy+Having RawScan / UpdateByCond / DeleteByCond | 同 |
 | `TestKingbase_JoinQuery` | TestDM_JoinQuery | LEFT JOIN 自连接 + ON 条件 | 同 |
 | `TestKingbase_QuoteColumn` | TestDM_QuoteColumn | quoteColumn 输出双引号转义 | DM 是原样透传；**E3：与 DM 一致，独立 setup（不调 setupKingbaseDB），仅验 dialect 而非 DB 行为**——README 说明 `TEST_KINGBASE_REQUIRED=1` 不覆盖此测试 |
@@ -440,7 +451,8 @@ t.Run("kingbase 方言返回 PG 双引号 quoter", func(t *testing.T) {
 ### 5.1 go.mod 改动
 
 ```
-require kingbase.com/gokb v0.0.0-local
+// 用 Go 标准 zero pseudo-version 占位（v0.0.0-local 不合法，go mod tidy 会拒）
+require kingbase.com/gokb v0.0.0-00010101000000-000000000000
 
 replace kingbase.com/gokb => ./third_party/kingbase-gokb
 ```
@@ -501,17 +513,22 @@ replace kingbase.com/gokb => ./third_party/kingbase-gokb
 | 风险 | 概率 | 影响 | 应对 |
 |---|---|---|---|
 | **Gokb LICENSE 禁止 redistribute（A1）** | 中 | **致命** | **plan Task 0 第 0 步必查**：解压后第一时间读 `LICENSE` / `LICENSE.txt`；若 EULA 禁止 → 整个 vendor 进 git 方案废，切 README 引导下游自行下载（推翻 §3.1） |
-| **license.dat 申请被拒 / 销售响应慢**（D3） | 中 | **致命** | **不在 48h 时间盒内**——金仓销售响应不可控；plan 阶段必须先走 license 流程，拿不到 → **abort v0.8.4**（推到 v1.0 后再启动） |
-| `DB_MODE=pg` env 变量名不被官方镜像识别 | 中 | 高 | plan Task 0 #4 读镜像 README 实测；不识别走 `-m pg` CLI 参数 |
-| KingbaseES `system` PG-compat 模式权限不足建表 | 中 | 中 | DSN 用独立 schema 或 test_user；plan Task 0 #5 验证 |
+| **license.dat 申请被拒 / 销售响应慢**（D3 / 2C4） | 中 | **致命** | **abort 阈值 = 2 周**（不在 48h 时间盒内，金仓销售 SLA 不可控）；plan 阶段必须先走 license 流程，2 周拿不到 → **abort v0.8.4**（推到 v1.0 后再启动） |
+| **license.dat 含敏感信息进 git 泄露（2C1）** | 中 | 高 | README §9.1 step ⓪ 强制 `echo license.dat >> .gitignore`；误 commit 用 `git rm --cached` 应急 |
+| **WSL idle stop 致 license hardware-bound 损坏（2C3）** | 中 | 中 | KB license 绑容器 MAC + 启动指纹；distro idle 60s 拖死容器 SIGKILL → license 文件锁损坏 → 触发 `KB-* license invalid`。应对：`docker stop -t 30 kingbase` graceful；参考 `docs/dev-setup/wsl2-keep-alive.md` |
+| **下游 CI `go mod tidy` 必崩（2C2）** | 高 | 高 | `kingbase.com` 非 module proxy 域名，下游 CI 默认 `GOPROXY=https://proxy.golang.org` 会爆 `unrecognized import path`。应对：CI 必须配 `GOFLAGS=-mod=mod` + `third_party/` 在 checkout 中存在 |
+| **下游 lib/pq + Gokb 共存场景（2S9）** | 低 | 高 | 若 Gokb 也注册 `"postgres"` 名，下游 import lib/pq + Gokb 时 `sql.Drivers()` 会有名字冲突 → `sql.Open("postgres", ...)` 行为不确定。setup 已加 `t.Logf("已注册 sql.Drivers(): %v", sql.Drivers())` 诊断；下游避免同时引两者 |
+| **vendor 树供应链信任（2S6/2S7）** | 低 | 高 | Gokb 闭源金仓厂商驱动，gplus tag v0.8.4 给所有下游隐式背书安全性。plan Task 0 第 0.5 步：`gosec ./third_party/kingbase-gokb/...`（卡 HIGH 级 SQL 注入/cmd exec/网络回连）+ SHA256 校验官网 zip + README 给预期 hash 防 fork 投毒 |
+| `DB_MODE=pg` env 变量名不被官方镜像识别 | 中 | 高 | plan Task 0 T6 读镜像 README 实测；不识别走 `-m pg` CLI 参数 |
+| KingbaseES `system` PG-compat 模式权限不足建表 | 中 | 中 | DSN 用独立 schema 或 test_user；plan Task 0 T7 验证 |
 | Gokb v9.x 协议层与 postgres dialect SQL 兼容存在边界 case | 中 | 中 | 9 个测试覆盖；遇到 t.Skip + 记 TD |
-| **第一次连接到 Oracle/MySQL/SQLServer-compat 模式实例**（用户 docker env 配错） | 中 | 中 | setup 在 Ping 后加 `database_mode` 校验（E1），模式不对 t.Fatalf 而非逐个测试失败 |
-| Gokb 引入 cgo（与官网描述不符） | 低 | 高 | plan Task 0 #2 `go list -deps` 验证；中招则推迟到自定义 Dialector 路径 |
+| **第一次连接到 Oracle/MySQL/SQLServer-compat 模式实例**（用户 docker env 配错） | 中 | 中 | setup 在 Ping 后加 `database_mode` 校验（E1 / 2A2 fail-fast），模式不对 t.Fatalf 而非逐个测试失败 |
+| Gokb 引入 cgo（与官网描述不符） | 低 | 高 | plan Task 0 T2 `go list -deps` 验证；中招则推迟到自定义 Dialector 路径 |
 | `go.mod replace` 本地路径跨平台 | 低 | 高 | 用正斜杠 `./third_party/kingbase-gokb`，Go 工具链跨平台规范化 |
 | Gokb migrator AutoMigrate 行为与 postgres dialect 不一致 | 低 | 中 | 用 postgres dialect 的 migrator（Conn 喂 dialect 的设计就是为了避开 Gokb migrator） |
-| KingbaseES license.dat max_connect=10 限制并发测试 | 低 | 低 | go test 默认串行；并行测试时调小 SetMaxOpenConns |
-| 官网下载流程被反爬 / 验证码升级 | 低 | 高 | plan 写定时间盒（48h）；超过推迟到 v1.0 |
-| ~~`db.Name()` 返回值不是 `"postgres"`~~ | ~~中~~ | ~~中~~ | **A3 实测推翻**：postgres.Dialector.Name() 硬编码 "postgres"；contract 测试断言 `"postgres"` |
+| KingbaseES license.dat max_connect=10 限制并发测试 | 低 | 低 | go test 默认串行；并行测试时 `db.SetMaxOpenConns(8)` |
+| 官网下载流程被反爬 / 验证码升级 | 低 | 高 | docker tar 拉取 48h 时间盒；超过推迟到 v1.0（**仅适用 docker tar，license 阈值见上**） |
+| ~~`db.Name()` 返回值不是 `"postgres"`~~ | ~~中~~ | ~~中~~ | **A3 实测推翻**：postgres.Dialector.Name() 硬编码 "postgres"（postgres.go:49-51）；contract 测试断言 `"postgres"` |
 
 ## 7. 已知限制
 
@@ -527,16 +544,17 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 
 - **license.dat 必需**：试用版 max_connect=10，生产版需购买
 - **PG-compat 模式必须显式开启**：默认可能是 Oracle/MySQL/SQLServer 模式（V9R1C10 四模兼容启动时选）；setup 应加 `current_setting('database_mode')` 校验
-- **Gokb v9.x 协议层未充分验证 + 已知协议层缺失**：
+- **Gokb v9.x 协议层未充分验证 + 已知协议层缺失**（基于 gitea.com/kingbase/gokb v0.0.0-20201021 老版陈述，**官方 2025-08 版可能已补，plan T13/T14/T15 实测确认**）：
   - 不实现 `Conn.CheckNamedValue` → `sql.Named` 命名参数 fallback 到位置参数
   - 不支持 `LISTEN/NOTIFY`（PG 异步通知）
   - 不支持 `COPY FROM STDIN`（pgx 的 CopyFrom）→ 大批量写入回退到 multi-VALUES INSERT
-  - prepared statement 缓存默认 `prefer_simple_protocol=false`，高并发场景比 lib/pq 慢约 15-20%
+  - `prefer_simple_protocol` 默认行为与 lib/pq 略有差异，高并发场景建议 plan 阶段 benchmark 验证
   - 无公开 issue tracker，bug 反馈走金仓售后工单
+- **postgres dialect 与 KB 兼容信心**（数据库专家 F1 / 2S5）：postgres dialect migrator 大量直接查 `pg_class` / `pg_attribute` / `pg_indexes` / `information_schema`（gorm.io/driver/postgres@v1.6.0 `migrator.go:29,119,191,298-301,585,723`）；KB PG-compat 模式 `pg_*` 与 `sys_*` 双套并存 → migrator 查询直接可用——这是 §2.2 复用 PG dialect 决策能成立的关键证据
 - **官方分发限制**：docker tar / Gokb / license 都需走官网验证码弹窗，无 CI 友好的 docker pull / `go get` 路径
 - **PG 版本对应**：KingbaseES V9R1 基础 ≥ PG 12，部分 PG 13/14 特性回填（procedure/generated columns/icu collation）；plan Task 0 实测 `SELECT version()` + `SHOW server_version` 后在 README 写 PG 特性可用范围
 - **下游 clone 限制**（B2）：浅 clone（`--depth=1` 只剥 git 历史不影响 vendor）OK；但 **sparse checkout 排除 `third_party/` 会破坏 build**——Go modules graph 解析仍要求 replace target 存在
-- **`pg_*` vs `sys_*` schema 双套**：KB 把 PG 的 `pg_catalog` / `pg_*` 系统表/函数全部克隆为 `sys_catalog` / `sys_*` 双套并存，影响诊断 SQL（`pg_get_keywords` 在 KB 下应改 `sys_get_keywords`）
+- **`pg_*` vs `sys_*` schema 双套**：KB 把 PG 的 `pg_catalog` / `pg_*` 系统表/函数全部克隆为 `sys_catalog` / `sys_*` 双套并存（`pg_*` 是 PG 兼容层）。**`pg_get_keywords()` 是 PG 核心函数**（PG 8.3+ 默认装，非 contrib），KB PG-compat 模式大概率直接可用——plan T9 实测优先 `pg_get_keywords()`，返回空再尝试 `sys_get_keywords()`
 
 ## 8. 技术债
 
@@ -544,7 +562,7 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 |---|---|
 | **TD-19** | KingbaseES 测试无 CI 守护（同 TD-15 DM、TD-9 Oracle，依赖下游手动跑发现问题） |
 | **TD-20** | Gokb driver 维护风险（官网每年小更新，但相对 lib/pq/pgx 仍较小众） |
-| **TD-21** | KingbaseES Oracle/MySQL/SQLServer 兼容模式不支持（v0.9 仅验证 PG-compat） |
+| **TD-21** | KingbaseES Oracle/MySQL/SQLServer 兼容模式不支持（v0.8.4 仅验证 PG-compat） |
 | **TD-22** | KingbaseES V8R6 老版本不支持（仅 V9R1C10）—— 与 DM 不支持 DM 7、Oracle 不支持 11g 一致 |
 | **TD-23** | `third_party/kingbase-gokb/` 进 git → 仓库体积增重约 5MB（首次 clone 慢 ~2s） |
 | **TD-24** | **v1.0 driver 解耦重构待做**：vendor 进 git 是临时方案；v1.0 重构时把所有 driver（DM/Oracle/MySQL/PG/Gokb）推到下游 self-integrate |
@@ -560,7 +578,7 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 | `README.md` 方言矩阵 | 加 `kingbase` 行：`✅ \| build tag: -tags=kingbase \| 同 PG 行为` |
 | `README.md` 已知方言差异速查 | KingbaseES 章节直接引用 PG 章节 + 一句 "KingbaseES V9R1C10 PG-compat 模式继承 PG 全部行为" |
 | `README.md` 新增 "KingbaseES 数据库支持" 章节 | 详见 §9.1 必含 9 项（含错误诊断对照表 + 生产部署） |
-| `CHANGELOG.md` v0.8.4 段 | 详见 §9.2 必含 7 子节（沿用 v0.8.3 6 大类深度） |
+| `CHANGELOG.md` v0.8.4 段 | 详见 §9.2 必含 7 子节（沿用 v0.8.3 6 大类 + 收尾说明） |
 | `CLAUDE.md` | 不动（架构未变） |
 | `docs/dev-setup/local/wsl-environment.md` | 加 KingbaseES 容器条目（5 容器：dm8/mysql8/pg16/oracle-free/kingbase）—— **本机笔记，不进 git** |
 
@@ -569,16 +587,24 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 > **章节顶部预期声明**：相比 DM 用户的 4 步集成（`go get gplus + go get gorm-dameng + 起 docker + 跑测试`），KingbaseES 用户多了 vendor + replace + 验证码下载 + license 申请，预计首次配置耗时 1-2 小时。
 
 1. **完整安装路径（step-by-step）**：
-   - ① **下载 Gokb**（官网验证码弹窗）：https://www.kingbase.com.cn/download.html → 接口驱动 → GOLANG 一栏 → 点击下载按钮 → 弹窗填验证码（图形 4 位混合，识别失败可点图刷新；手机/邮箱选填）→ 下载 zip → 解压到自己项目的 `third_party/kingbase-gokb/`
+   - ⓪ **`.gitignore` 安全前置**（2C1：license.dat 含公司信息 / DSN 密码进 .env）：
+     ```bash
+     echo "license.dat" >> .gitignore
+     echo ".env" >> .gitignore
+     # 若已误 commit license.dat：
+     git rm --cached license.dat && git commit -m "chore: remove license.dat from git"
+     ```
+   - ① **下载 Gokb**（官网验证码弹窗）：https://www.kingbase.com.cn/download.html → 接口驱动 → GOLANG 一栏 → 点击下载按钮 → 弹窗按页面提示填验证码 → 下载 zip → 解压到自己项目的 `third_party/kingbase-gokb/`
    - ② **下载 Docker tar**（同验证码流程）：数据库 → V9R1C10 → X64_Linux → 下载 730MB tar
    - ③ **申请 license.dat**：官网"授权文件"按钮 → 填申请表（公司/邮箱）→ 销售邮件回复（**SLA 不可控，开发者评估期可能等数天**）
    - ④ **加载并启动容器**：
      ```bash
      wsl -d Ubuntu-24.04 -e docker load -i /path/to/kingbase-V9R1C10.tar
      wsl -d Ubuntu-24.04 -e docker run -d --name kingbase -p 54321:54321 \
-       -e DB_MODE=pg -e SYSTEM_PWD='YourPwd123!@#' \
+       -e DB_MODE=pg -e SYSTEM_PWD='<your-strong-password-min-12chars>' \
        -v /path/to/license.dat:/home/kingbase/license.dat \
        <image_tag>  # plan Task 0 实测后 README 写实
+     # 注：URL/image_tag 时效性，最新参见 https://www.kingbase.com.cn
      ```
    - ⑤ **配置 go.mod**（详见第 3 项完整 go.mod 片段）
    - ⑥ **设 DSN 环境变量**：`export TEST_KINGBASE_DSN="host=127.0.0.1 port=54321 ..."`
@@ -592,7 +618,7 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 
 3. **下游集成完整 go.mod 片段**：
 
-   > **重要**：gplus 仓库内 `third_party/kingbase-gokb/` 不会通过 `go get` 传递给下游。下游 require gplus 后**仍需自己解压 Gokb + 配 replace 指令**。
+   > **重要**：gplus 仓库内 `third_party/kingbase-gokb/` **不会通过 `go get` 传递给下游**。下游 require gplus 后**仍需自己解压 Gokb + 配 replace 指令**——`replace` 指令仅在主 module 生效（不会传递依赖），即使 gplus 自己有 replace，下游也必须自己写。
 
    下游 go.mod 完整片段：
    ```
@@ -600,15 +626,25 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
    go 1.24
 
    require (
-       github.com/yi-nanping/gplus vX.Y.Z
+       github.com/yi-nanping/gplus v0.8.4
 
-       // 必须也 require KingbaseES driver（gplus 测试代码 import 但不强制下游）
-       kingbase.com/gokb v0.0.0-local
+       // 必须也 require KingbaseES driver + 配 replace
+       // 用 Go 标准 zero pseudo-version（v0.0.0-local 不是合法格式，go mod tidy 会拒）
+       kingbase.com/gokb v0.0.0-00010101000000-000000000000
        gorm.io/driver/postgres v1.6.0  // 复用既有 PG dialect
    )
 
    replace kingbase.com/gokb => ./third_party/kingbase-gokb  // 下游自行 vendor
    ```
+
+   **下游 CI 配置（2C2）**：
+   ```yaml
+   # GitHub Actions / GitLab CI 必须设置
+   env:
+     GOFLAGS: "-mod=mod"
+     # kingbase.com 不在 module proxy 上，避免 GOPROXY 拦截
+   ```
+   下游不要用 sparse checkout 排除 `third_party/`，否则 Go modules graph 解析失败。
 
    下游集成代码：
    ```go
@@ -649,32 +685,39 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
    SHOW server_version;      -- '12.x' 或更高
    ```
 
-7. **错误诊断对照表**（≥6 条最常见）：
+7. **错误诊断对照表**（7 条最常见，每条标注来源 / 2S2）：
 
-   | 错误信号 | 含义 | 修复 |
-   |---|---|---|
-   | `kingbase.com/gokb: cannot find module providing package` | go.mod replace 路径错（反斜杠 / 相对路径错） | 改正斜杠 `./third_party/kingbase-gokb`；确认目录存在 |
-   | `replacement directory does not exist` | replace target 不在仓库 | 重新解压 Gokb 到指定路径 |
-   | `password authentication failed for user "system"` | DSN 密码与 `SYSTEM_PWD` 不一致 | 重起容器或核对 DSN |
-   | `KB-* license expired` / `connection limit exceeded` | license 过期 / `max_connect=10` 超限 | 续 license / `db.SetMaxOpenConns(< 10)` |
-   | `database_mode != 'pg'` 测试 t.Fatalf | 容器启动模式不对 | 重起容器加 `-e DB_MODE=pg` |
-   | `connect: connection refused / port 54321 not reachable` | WSL2 mirrored 网络问题 | 验证 baseline：`wsl -d Ubuntu-24.04 -e docker ps`，参考 `docs/dev-setup/wsl2-keep-alive.md` |
-   | `sys_get_keywords() does not exist` | 误用 PG 系统表（KB 是 sys_*） | 改 `sys_get_keywords()` |
+   | 错误信号 | 来源 | 含义 | 修复 |
+   |---|---|---|---|
+   | `kingbase.com/gokb: cannot find module providing package` | Go toolchain | go.mod replace 路径错 | 改正斜杠 `./third_party/kingbase-gokb`；确认目录存在 |
+   | `replacement directory does not exist` | Go toolchain | replace target 不在仓库 | 重新解压 Gokb 到指定路径 |
+   | `unrecognized import path "kingbase.com/gokb"` | Go toolchain | CI / 下游 module proxy 模式触达非 git 路径 | 配 `GOFLAGS=-mod=mod` + `GOPROXY=off`，确保 third_party/ 在 checkout 中 |
+   | `password authentication failed for user "system"` | Gokb / lib/pq | DSN 密码与 `SYSTEM_PWD` 不一致 | 重起容器或核对 DSN |
+   | `license expired` / `connection limit exceeded` 或 SQLSTATE `28000` / `08006` | KingbaseES | license 过期 / `max_connect=10` 超限（**实际错误码格式 plan T11 实测确认**） | 续 license / `db.SetMaxOpenConns(8)` |
+   | `database_mode != 'pg'` 测试 t.Fatalf | gplus setup 守卫 | 容器启动模式不对 | 重起容器加 `-e DB_MODE=pg` |
+   | `connect: connection refused / port 54321 not reachable` | TCP 层 / WSL2 | WSL2 mirrored 网络问题 | 验证 baseline：`wsl -d Ubuntu-24.04 -e docker ps`，参考 `docs/dev-setup/wsl2-keep-alive.md` |
 
 8. **生产部署要点**：
-   - **license 挂载**：生产 license.dat 路径建议 `/etc/kingbase/license.dat`，容器挂载到 `/home/kingbase/license.dat` 只读
+   - **license 挂载**：
+     - **容器内路径硬编码**：`/home/kingbase/license.dat`（金仓启动脚本固定，**不可改**）
+     - **主机侧路径任意**：建议 `/etc/kingbase/license.dat`（chmod 600，owner=root）
+     - **container 内权限**：挂载后 `chmod 600 /home/kingbase/license.dat` + chown 为容器内 kingbase 用户（2S10）
+   - **license.dat 防泄漏（2C1）**：license.dat 含**公司名 / 邮箱 / 客户编号 / 硬件指纹 / 有效期签名**——必须在你项目的 `.gitignore` 显式加 `license.dat`；误 commit 后用 `git rm --cached license.dat` + `git filter-repo` 清历史
    - **独立 schema**：DSN 加 `search_path=app_schema`，避免污染默认 `public`
    - **非 system 账户**：生产用 `CREATE USER app_user PASSWORD '...'; GRANT ALL ON SCHEMA app_schema TO app_user;`
-   - **连接池**：`db.SetMaxOpenConns(15)` / `SetMaxIdleConns(5)`（试用 license max_connect=10 时调小）
-   - **DSN 防泄漏**：明文密码进环境变量；建议 `.env` 加入 `.gitignore`，CI/CD 用 secrets
-   - **协议层限制**：Gokb 不支持 `LISTEN/NOTIFY` / `COPY FROM STDIN`，大批量写入回退到 multi-VALUES INSERT；高并发需评估 prefer_simple_protocol 配置
+   - **连接池**（试用 license max_connect=10 / 生产 license 按购买额度）：
+     - 试用：`db.SetMaxOpenConns(8)` / `SetMaxIdleConns(2)`（留 2 连接给 ksql 等管理工具）
+     - 生产：调上限到 license 限额的 80%，留余量给应急运维
+   - **DSN 防泄漏**：明文密码进环境变量；**你项目的 `.gitignore` 必须包含 `.env`**（gplus 自己的 allowlist 模式不会传递给下游）；CI/CD 用 secrets
+   - **WSL 环境额外注意（2C3）**：本地 WSL2 + Docker 引擎需配 graceful stop（`docker stop -t 30 kingbase` 而非 `docker kill`），避免 SIGKILL 致 license 文件锁损坏（金仓 license hardware-bound + 启动指纹）；参考 `docs/dev-setup/wsl2-keep-alive.md` 防 distro idle stop
+   - **协议层限制**：详见 §7 已知限制
 
 9. **未验证场景兜底声明**：
    - v0.8.4 仅验证 V9R1C10 PG-compat 模式 + 单实例 + UTF8
    - 未验证：Oracle/MySQL/SQLServer 兼容模式、DSC 集群、读写分离、V8R6 及更老版本、国密 SM3/SM4 加密、Kerberos 认证、ARM 平台
    - 下游需自行验证
 
-### 9.2 CHANGELOG v0.8.4 段必含子节（沿用 v0.8.3 6 大类深度）
+### 9.2 CHANGELOG v0.8.4 段必含 7 子节（沿用 v0.8.3 6 大类 + 收尾说明）
 
 1. **支持版本与兼容性**（用户首先看）：KingbaseES V9R1C10 PG-compat 模式，`DB_MODE=pg` 显式开启，V8R6 不支持
 2. **已知限制（KingbaseES）**：license.dat 必需 / 兼容模式必须显式开启 / Gokb 协议层未充分验证（不实现 CheckNamedValue / 不支持 LISTEN/NOTIFY / 不支持 COPY FROM STDIN）/ 官方分发无 docker pull 路径 / 下游 sparse checkout 排除 third_party 会破坏 build
@@ -693,15 +736,17 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 ### 10.1 plan 阶段前置（人工 / 强制）
 
 - [ ] **A1 license 合规验证**：解压 Gokb 后查 `LICENSE` / `LICENSE.txt`；若禁止 redistribute → abort vendor 进 git 方案
-- [ ] **license.dat 已申请到位**（max_connect=10 试用版可接受）
-- [ ] **A2 Gokb 注册名实测**：`grep -r "sql.Register" third_party/kingbase-gokb/`，记录注册名清单
+- [ ] **🔴 阻塞前置（2 周阈值，2C4）**：license.dat 已申请到位（试用 max_connect=10）
+- [ ] **A2 Gokb 注册名实测**：`grep -r "sql.Register" third_party/kingbase-gokb/`，记录注册名清单 + 修改 `kingbaseDriverName` 常量
 - [ ] **B1 vendor 含 go.mod**：解压后 `ls third_party/kingbase-gokb/go.mod`，缺则手工补
 - [ ] **B4 vendor 子树 vet 验证**：`go vet ./third_party/kingbase-gokb/...` 通过
+- [ ] **2S6 安全扫描**：`gosec ./third_party/kingbase-gokb/...`（HIGH 级清零）+ `staticcheck ./third_party/...`
+- [ ] **2S7 SHA256 校验**：记录官网 zip hash 到 README + plan task0-results.md
 
 ### 10.2 实施验收
 
 - [ ] `third_party/kingbase-gokb/` 解压 Gokb 完整到位 + 含 go.mod
-- [ ] `go.mod` 加 `require kingbase.com/gokb v0.0.0-local` + `replace` 指令（正斜杠跨平台）
+- [ ] `go.mod` 加 `require kingbase.com/gokb v0.0.0-00010101000000-000000000000` + `replace` 指令（正斜杠跨平台 / Go 标准 zero pseudo-version 占位）
 - [ ] `.gitignore` 加 `!/third_party/kingbase-gokb/**`（精确路径）
 - [ ] `git ls-files third_party/kingbase-gokb/` 与解压目录文件数对账
 - [ ] `kingbase_setup_test.go` / `kingbase_contract_test.go` / `kingbase_integration_test.go` / `alias_kingbase_test.go` 完成
@@ -710,18 +755,35 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 - [ ] 默认 `go test ./...` 不变（不触及 KingbaseES 测试）
 - [ ] 默认 `go vet ./...` 通过（vendor 子树不报错）
 - [ ] `TEST_KINGBASE_REQUIRED=1 go test -tags=kingbase -v ./...` 跑 9 个测试全过（不允许 t.Skip 误报）
-- [ ] PowerShell 实测：`go test -tags=kingbase ./...` 与 `go test -tags="oracle dm kingbase" ./...` 多方言并行跑通
-- [ ] README 方言矩阵 + 已知差异速查 + KingbaseES 数据库支持章节（7→9 项含错误诊断 + 生产部署）
+- [ ] PowerShell 实测：`go test -tags=kingbase ./...` 与 `go test -tags="oracle dm kingbase" ./...` 多方言并行跑通（**注：仅本地 5 容器环境可跑，CI 不跑**）
+- [ ] **CI 兼容性验证（2C2）**：gplus 仓库自身 GitHub Actions 默认 build 通过；`kingbase.com/gokb` 不在 module proxy 上，CI 必须设 `GOFLAGS="-mod=mod"`，并依赖仓库内 `third_party/` 存在（不允许 sparse checkout 排除）
+- [ ] README 方言矩阵 + 已知差异速查 + KingbaseES 数据库支持章节 9 项（含错误诊断 + 生产部署）
 - [ ] CHANGELOG v0.8.4 段写完（沿用 v0.8.3 6 大类深度）
 
 ### 10.3 commit 序列（4 commit，C2 合并 vendor + deps + setup + contract）
 
-> v0.8.3 DM 是 5 commit，但 KingbaseES 因 Commit 1（vendor 单独）后 `go vet` 可能踩 third_party 子树（B4），故合并 vendor + go.mod replace + setup + builder.go + contract 一起。
+> v0.8.3 DM 是 5 commit（历史参考），但 KingbaseES 因 Commit 1（vendor 单独）后 `go vet` 可能踩 third_party 子树（B4），故合并 vendor + go.mod replace + setup + builder.go + contract 一起。
 
-1. **`vendor + deps + builder + setup + contract`**：解压 Gokb 到 `third_party/kingbase-gokb/` + .gitignore + go.mod replace + builder.go 加 case + missing_coverage_test.go + setup helper + contract 测试（一次性 commit 保证从 commit 到 commit 都 build 通过）
-2. **`integration`**：5 integration 测试（含 IsNull / Empty 区分）
+**🚦 commit 1 起点硬条件（2B1）**：
+
+> **§11.2 工程师自驱 T1-T11 必须全部 ✓ 才能开 commit 1**——尤其 T8（db.Name() 实测）、T11（database_mode 诊断 SQL 实测）必须先于 commit 1，否则 contract 测试断言写不出 / setup 守卫无 SQL 可用。验收方式：plan 阶段产出 `task0-results.md` 记录 14 项实测结果，commit 1 PR 描述引用此文件。
+
+1. **`vendor + deps + builder + setup + contract`**：解压 Gokb 到 `third_party/kingbase-gokb/` + .gitignore + go.mod replace + builder.go 加 case + missing_coverage_test.go + setup helper（用 plan T11 实测后的 SQL）+ contract 测试（断言 plan T8 实测后的 db.Name()）—— 一次性 commit 保证从 commit 到 commit 都 build 通过
+2. **`integration`**：5 integration 测试（含 IsNull / Empty 区分 / ON CONFLICT WHERE，参考镜像源见 §3.6）
 3. **`alias`**：3 alias 测试
 4. **`docs`**：README + CHANGELOG v0.8.4 段
+
+**Commit 1 fail-recovery 流程（2B1）**：
+
+- 跑 `TEST_KINGBASE_REQUIRED=1 go test -tags=kingbase ./...` 失败 → `git reset --soft HEAD~1` 退回到 staged 状态
+- 改 setup / contract 后**重新 commit**（禁止 `git commit --amend`，保留 reflog 可读性）
+- 若失败根因是 plan Task 0 实测错（如 db.Name() 实际不是 postgres、database_mode 实际不是 pg/0），**回滚 spec / 修订 plan，不要硬改 commit 1**
+- 若决定回滚 vendor 方案（A1 license 禁止 redistribute）→ commit 1 整体 revert，切 README 引导路径（不在 v0.8.4，推到下一版本）
+
+**Commit 1 diff 体积管理（2S1 实施）**：vendor 树数百文件 + 7-9 个源文件改动一次性 commit。PR review 引导：
+- `git diff HEAD~1 -- ':!third_party'` 看核心改动（小）
+- `git diff HEAD~1 -- 'third_party'` 看 vendor 树（独立 review）
+- PR description 列出"核心改动文件清单 + vendor 体积"
 
 - [ ] 推 v0.8.4 tag 到 GitHub
 
@@ -735,10 +797,18 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 |---|---|---|---|
 | U1 | Gokb 下载（验证码弹窗） | Edge / Chrome 在 https://www.kingbase.com.cn/download.html → 接口驱动 → GOLANG → 验证码 → 下载 zip → 解压到 `third_party/kingbase-gokb/` | §3.1 vendor 内容、§10.1 验收 |
 | U2 | docker tar 下载（同上） | 数据库 → V9R1C10 → X64_Linux Docker tar → docker load → `docker images` 取 image tag | §3.5 替换 `<image_tag>` |
-| U3 | license 申请（联系金仓销售或填表） | 官网"授权文件" → 提交申请 → 邮件回复 license.dat → 挂载到容器 | §9.1 第 5 项 + §10.1 验收 |
+| U3 | license 申请（联系金仓销售或填表） | 官网"授权文件" → 提交申请 → 邮件回复 license.dat → 挂载到容器；**SLA 阈值 = 2 周（2C4）** | §9.1 第 5 项 + §10.1 验收 |
 | U4 | **A1 license 文件审查** | 解压 Gokb 后查 `LICENSE` / `LICENSE.txt`：若禁止 redistribute → 整个方案废，切 README 引导路径 | §2.1 vendor 策略行 |
+| U5 | **2S6 vendor 安全扫描** | `gosec ./third_party/kingbase-gokb/...` + `staticcheck ./third_party/...`，至少卡 HIGH 级（SQL 注入 / cmd exec / 网络回连） | §6 风险表"vendor 树供应链信任" |
+| U6 | **2S7 SHA256 校验官网 zip** | `sha256sum kingbase-gokb-*.zip` 记录 hash，写入 README + plan task0-results.md，下游可据此校验防 fork 投毒 | §9.1 第 4 项 |
 
-**U1/U2/U3/U4 是 plan 启动前的硬前置**，全部完成后工程师才能动手。任一拒发 → abort v0.8.4。
+**U1/U2/U3/U4/U5/U6 是 plan 启动前的硬前置**，全部完成后工程师才能动手。任一拒发 → abort v0.8.4。
+
+**等待期工时利用（2S13）**：U3 license 申请等待期间（最长 2 周），工程师可并行做：
+- U1 完成后即可写 setup/contract 测试代码（用 `t.Skip` 守护无 DSN 时）
+- T2/T3/T4/T5（cgo / 注册名 / go.mod / vet 验证）—— 不依赖 license
+- T13/T14/T15（grep Gokb 协议层）—— 不依赖 license
+- 等 license 到位后再跑 T6-T11 并 push commit 1
 
 ### 11.2 工程师自驱（🟡 plan Task 0 实测）
 
@@ -752,10 +822,14 @@ KingbaseES PG-compat 模式**继承 PG 全部行为**（与 DM 继承 Oracle 相
 | T6 | docker run env 白名单（`DB_MODE=pg` 是否被识别） | `docker run --rm <image> env` + 容器内 README + `docker logs` | U2 |
 | T7 | KingbaseES `system` 默认密码 + 首登策略 | 镜像 README + 容器内 ksql 验证 | U2, U3, T6 |
 | T8 | `db.Name()` 实测确认（A3 验证） | throwaway main.go：`gorm.Open(postgres.New(Config{Conn: gokbDB})); fmt.Println(db.Name())` | U1, U2, U3, T4, T7 |
-| T9 | `MySQLUser` 字段是否撞 KingbaseES PG-compat 保留字 | ksql 跑 `SELECT word FROM sys_get_keywords() WHERE word IN ('name','age','email')`（注意是 `sys_*` 不是 `pg_*`） | U2, U3, T7 |
+| T9 | `MySQLUser` 字段是否撞 KingbaseES PG-compat 保留字 | ksql 优先跑 `SELECT word FROM pg_get_keywords() WHERE word IN ('name','age','email')`（PG 核心函数 KB 大概率可用）；返回空再尝试 `sys_get_keywords()` | U2, U3, T7 |
 | T10 | KingbaseES V9R1C10 底层 PG 版本号 | `SELECT version()` + `SHOW server_version` | U2, U3, T7 |
-| T11 | `database_mode` 诊断 SQL 定型 | `SELECT current_setting('database_mode')` 或同等（plan 实测三选一） | U2, U3, T7 |
-| T12 | tar 拉取/license 申请失败 abort 阈值 | plan 写定时间盒（48h 仅适用 docker tar；license 不可控不在时间盒内） | 无 |
+| T11 | `database_mode` 诊断 SQL 定型 | 三选一实测：① `SELECT current_setting('database_mode')` ② `SHOW database_mode`（PG 语法糖，KB 必同时支持） ③ `SELECT * FROM sys_settings WHERE name='database_mode'`；setup 不留 fallback，定型为唯一 SQL（2A2 fail-fast）；同时实测返回值范围（pg/oracle/0/1） | U2, U3, T7 |
+| T12 | tar 拉取 abort 阈值 | docker tar 拉取 48h 时间盒；license 申请独立阈值 = **2 周**（金仓销售 SLA 不可控，2C4） | 无 |
+| T13 | Gokb 是否实现 `Conn.CheckNamedValue` | `grep -r "CheckNamedValue" third_party/kingbase-gokb/` | U1 |
+| T14 | Gokb 是否实现 `LISTEN/NOTIFY` 协议 | `grep -r "Listen\\|Notify" third_party/kingbase-gokb/` | U1 |
+| T15 | Gokb 是否实现 `COPY FROM STDIN` 协议 | `grep -r "CopyFrom\\|CopyData" third_party/kingbase-gokb/` | U1 |
+| T16 | Gokb 启动 stderr 日志噪声 | 跑 setup 看是否输出 `[INFO] kingbase driver init...`；噪声大则 setup 加 `log.SetOutput(io.Discard)` 一次性消音 | U1, T7 |
 
 ### 11.3 依赖图
 
@@ -775,7 +849,18 @@ T1 (baseline) 独立，最先跑
 
 ### 11.4 README 落地强制条件
 
-**plan Task 0 完成前 README 章节不能合并**——所有 placeholder（vX.Y.Z 版本号 / DSN 样例 / image tag / 默认密码 / 诊断 SQL）必须由 plan 阶段实测填实，否则下游照抄不通。
+**plan Task 0 完成前 README 章节不能合并**——所有 placeholder 必须由 plan 阶段实测填实，否则下游照抄不通：
+
+| placeholder | 来源 task | 实测内容 |
+|---|---|---|
+| `<image_tag>` | T6 | docker tar load 后 `docker images` 真实 tag |
+| `<your-strong-password-min-12chars>` | T7 | KB SYSTEM_PWD 实际密码策略（12+ 位 / 16+ 位 / 含特殊字符规则） |
+| DSN 样例 真实值 | T7 | 含 schema 切换 / UTF8 字符集的 2 个真实 DSN |
+| `current_setting('database_mode')` | T11 | 实际可用 SQL（current_setting / SHOW / sys_settings 三选一定型） |
+| `database_mode` 期望值 | T11 | `pg` / `0` 或别的实际返回字符串 |
+| 错误码格式 (`KB-*` / SQLSTATE) | T11 | KB 实际错误码命名 |
+| Gokb 协议层缺失清单 | T13/T14/T15 | 2025-08 Gokb 实际是否已补 CheckNamedValue / LISTEN/NOTIFY / COPY |
+| Gokb zip SHA256 | U6 | 官网 zip hash |
 
 ## 12. 后续候选（不在本期）
 
