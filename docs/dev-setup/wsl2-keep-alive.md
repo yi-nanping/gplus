@@ -14,16 +14,48 @@
 
 ## 0. 一次性配置（已做过的不用重复）
 
-### 0.1 容器自动 start
+### 0.1 容器自动 start + 命名卷数据持久化
 
-让 dockerd 启动时自动 start 业务容器（dm8-test / mysql8 等）：
+**4 容器统一约定**（已在本机配置，下游可参考）：
 
-```powershell
-# dm8-test（DM 8 Oracle 兼容模式，gplus dm 测试用）
-wsl -d Ubuntu-24.04 -e docker update --restart=unless-stopped dm8-test
+| 容器 | 端口 | 命名卷 → 容器内路径 | RestartPolicy |
+|---|---|---|---|
+| dm8-test | 5236 | `dm8-data` → `/opt/dmdbms/data` | unless-stopped |
+| mysql8 | 3306 | `mysql8-data` → `/var/lib/mysql` | unless-stopped |
+| pg16 | 5432 | `pg16-data` → `/var/lib/postgresql/data` | unless-stopped |
+| oracle-free | 1521 | `oracle-data` → `/opt/oracle/oradata` | unless-stopped |
 
-# mysql8（gplus mysql 测试用，2026-05-09 从 Windows MySQL 迁过来）
-wsl -d Ubuntu-24.04 -e docker update --restart=unless-stopped mysql8
+**重建命令样例**（首次部署或彻底重建用）：
+
+```bash
+# 在 WSL 内（或 wsl -d Ubuntu-24.04 -e bash -c "..."）
+
+# dm8-test（dameng 8 Oracle 兼容模式，自构建镜像）
+docker run -d --name dm8-test --restart=unless-stopped \
+  -p 5236:5236 -v dm8-data:/opt/dmdbms/data gplus/dm8:8.1.4.200
+
+# mysql8
+docker run -d --name mysql8 --restart=unless-stopped \
+  -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=test \
+  -v mysql8-data:/var/lib/mysql mysql:8.0
+
+# pg16
+docker run -d --name pg16 --restart=unless-stopped \
+  -p 5432:5432 -e POSTGRES_PASSWORD=postgres \
+  -v pg16-data:/var/lib/postgresql/data postgres:16
+
+# oracle-free
+docker run -d --name oracle-free --restart=unless-stopped \
+  -p 1521:1521 -e ORACLE_PASSWORD=oracle \
+  -v oracle-data:/opt/oracle/oradata gvenzl/oracle-free:23-slim
+```
+
+> **docker named volume 自动 populate**：dm8 / oracle 这种镜像 build 时已写入数据目录的，docker 看到挂载的命名卷为空时会**自动从镜像层 populate**，不需要手动 cp。pg / mysql 镜像 build 时数据目录是空的，由 entry script 在容器首次启动时 init。
+
+**给已存在容器加 restart 策略**（不重建，仅修改）：
+
+```bash
+docker update --restart=unless-stopped dm8-test mysql8 pg16 oracle-free
 ```
 
 验证：`docker inspect <名> --format '{{.HostConfig.RestartPolicy.Name}}'` 应为 `unless-stopped`。
