@@ -795,17 +795,22 @@ v0.8.3 仅验证：DM 8 Oracle 兼容模式（COMPATIBLE_MODE=2）+ 单实例 + 
 
 ### 启动 DM 8 容器（WSL2 + Docker Engine）
 
-> **⚠ WSL2 用户必读**：v0.8.3 实施期实测发现，WSL2 默认 `vmIdleTimeout=60000ms`（60 秒无活跃进程则 distro auto stop），distro stop 时 dockerd 被 SIGTERM 拖死所有内部容器（DM 容器走完整 graceful shutdown 序列，不是 crash 但服务不可用）。**会话关闭、终端退出后约 1 分钟容器自动死**——必须根治：
+> **⚠ WSL2 用户必读**：v0.8.3 实施期实测发现，WSL2 distro 在"无 wsl.exe 进程 attached"时会被 auto stop，distro stop 时 dockerd 被 SIGTERM 拖死所有内部容器（DM 容器走完整 graceful shutdown 序列，不是 crash 但服务不可用）。**关闭终端后约 1 分钟容器自动死**。
 >
-> 修改 `%USERPROFILE%\.wslconfig`（Windows 路径，如 `C:\Users\<你>\.wslconfig`）：
+> **以下方案实测无效（请勿浪费时间尝试）**：
 >
-> ```ini
-> [wsl2]
-> networkingMode=mirrored
-> vmIdleTimeout=-1
-> ```
+> - `.wslconfig` 设 `vmIdleTimeout=-1` 或 `vmIdleTimeout=4294967295` —— 实测（WSL 2.6.3.0）无论数值如何，distro 仍约 60 秒后 idle stop
+> - distro 内 systemd `sleep infinity` keep-alive service —— distro 内进程不影响 lifecycle 判断
 >
-> 然后 `wsl --shutdown` 让配置生效（注意：会关所有 WSL distro 内的所有容器，重要工作请先保存）。需要 WSL 2.5+ 才支持 `vmIdleTimeout=-1`，旧版本可设大数值如 `4294967295`。
+> **实测有效的 workaround（按推荐度排序）**：
+>
+> | 方案 | 优 | 劣 |
+> |---|---|---|
+> | A. 跑测试期间保持终端 attached（最简单） | 零配置 | 必须有人开着终端 |
+> | B. PowerShell `Start-Process wsl -ArgumentList '-d','Ubuntu-24.04','-e','sleep','infinity' -WindowStyle Hidden` | 单条命令，立即生效 | 重启 Windows 后失效，需重新跑 |
+> | C. Windows 任务计划：登录时自动跑 `wsl -d Ubuntu-24.04 -e sleep infinity`（隐藏窗口） | 一次配置，开机生效 | 需手动配置任务计划 |
+>
+> 三个方案的核心都是：**Windows 主机持续有一个 wsl.exe 进程 attached** 防止 distro idle stop。本机自验证：跑 `wsl -d Ubuntu-24.04 -e sleep 200` 后台进程，90 秒后 distro 仍 Running ✅。
 
 ```bash
 # 加载 dameng 技术社区 tar 包（或自构建镜像）

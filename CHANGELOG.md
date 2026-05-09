@@ -82,7 +82,9 @@ DM 特有：
 
 ### 已知部署陷阱（post-tag 文档补丁，v0.8.3 tag 不变）
 
-- **WSL2 用户：vmIdleTimeout 必须显式禁用**：v0.8.3 实施期实测发现，WSL2 默认 `vmIdleTimeout=60000ms`（60 秒无活跃进程则 distro auto stop），关闭终端/会话后约 1 分钟容器跟随 graceful shutdown。需在 `%USERPROFILE%\.wslconfig` 加 `vmIdleTimeout=-1` 并 `wsl --shutdown` 让配置生效。详见 README "启动 DM 8 容器" 段警告框（v0.8.3 README 已含此警告，下游通过 GitHub README 即可看到）。
+- **WSL2 用户：dm 容器跟随 distro idle stop 被 SIGTERM**：v0.8.3 实施期实测发现，WSL2 distro 在"无 wsl.exe 进程 attached"时约 60 秒后 auto stop，dockerd 收 SIGTERM 拖死所有容器（DM 走完整 graceful shutdown）。
+- **vmIdleTimeout 路径实测无效（首次 commit 571696b 误判，本次 commit 修订）**：尝试过 `vmIdleTimeout=-1` 与 `vmIdleTimeout=4294967295` 在 WSL 2.6.3.0 下均不起作用（distro 仍按约 60 秒 idle stop）；distro 内 systemd `sleep infinity` keep-alive service 也无效（distro 内进程不影响 lifecycle 判断）。
+- **实测有效的 workaround**：Windows 主机持续有一个 wsl.exe 进程 attached——三种方案：A. 保持终端 attached / B. PowerShell `Start-Process wsl ... sleep infinity -WindowStyle Hidden` 后台 / C. Windows 任务计划开机自动跑。详见 README "启动 DM 8 容器" 段。
 - 此条目仅文档补丁，v0.8.3 git tag 指向不变，下游 `go get @v0.8.3` 行为不受影响。
 
 ---
