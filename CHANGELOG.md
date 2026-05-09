@@ -80,6 +80,11 @@ DM 特有：
 下一步候选（v0.8.4）：DM MySQL 兼容模式（与 gplus 已有 mysql 路径冲突需重测 quoter）。
 更远（v0.9+）：人大金仓 KingbaseES（信创第二大户，PG 兼容模式）/ 批量 RETURNING 适配（解 TD-13）/ 保留字列名自动加引号（解 TD-14）。
 
+### 已知部署陷阱（post-tag 文档补丁，v0.8.3 tag 不变）
+
+- **WSL2 用户：vmIdleTimeout 必须显式禁用**：v0.8.3 实施期实测发现，WSL2 默认 `vmIdleTimeout=60000ms`（60 秒无活跃进程则 distro auto stop），关闭终端/会话后约 1 分钟容器跟随 graceful shutdown。需在 `%USERPROFILE%\.wslconfig` 加 `vmIdleTimeout=-1` 并 `wsl --shutdown` 让配置生效。详见 README "启动 DM 8 容器" 段警告框（v0.8.3 README 已含此警告，下游通过 GitHub README 即可看到）。
+- 此条目仅文档补丁，v0.8.3 git tag 指向不变，下游 `go get @v0.8.3` 行为不受影响。
+
 ---
 
 ## [0.8.2] - 2026-05-08

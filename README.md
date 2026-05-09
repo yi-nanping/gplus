@@ -795,6 +795,18 @@ v0.8.3 仅验证：DM 8 Oracle 兼容模式（COMPATIBLE_MODE=2）+ 单实例 + 
 
 ### 启动 DM 8 容器（WSL2 + Docker Engine）
 
+> **⚠ WSL2 用户必读**：v0.8.3 实施期实测发现，WSL2 默认 `vmIdleTimeout=60000ms`（60 秒无活跃进程则 distro auto stop），distro stop 时 dockerd 被 SIGTERM 拖死所有内部容器（DM 容器走完整 graceful shutdown 序列，不是 crash 但服务不可用）。**会话关闭、终端退出后约 1 分钟容器自动死**——必须根治：
+>
+> 修改 `%USERPROFILE%\.wslconfig`（Windows 路径，如 `C:\Users\<你>\.wslconfig`）：
+>
+> ```ini
+> [wsl2]
+> networkingMode=mirrored
+> vmIdleTimeout=-1
+> ```
+>
+> 然后 `wsl --shutdown` 让配置生效（注意：会关所有 WSL distro 内的所有容器，重要工作请先保存）。需要 WSL 2.5+ 才支持 `vmIdleTimeout=-1`，旧版本可设大数值如 `4294967295`。
+
 ```bash
 # 加载 dameng 技术社区 tar 包（或自构建镜像）
 wsl -d Ubuntu-24.04 -e docker load -i /mnt/d/downloads/dm8.tar
