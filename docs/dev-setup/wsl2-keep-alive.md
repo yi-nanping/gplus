@@ -40,6 +40,10 @@ wsl
 
 优劣：可见、心理踏实、可在里面直接跑 docker 命令；但占一个可见窗口，误关 / `exit` / Ctrl+D 会退。
 
+> **管理员权限不必要**：keep-alive 只看 Windows 主机有没有 wsl.exe 进程 attached，跟权限无关。普通 PowerShell 跑 `wsl` 同样有效。
+>
+> 管理员权限的唯一好处是能用 `Stop-Process -Force` 杀别人启动的 wsl 进程（譬如方案 B 的 background 进程，普通 PowerShell 杀不动会报 Access Denied）。如果只是想关掉自己交互式 wsl，直接在 bash 里 `exit` 或关 PowerShell 窗口即可，不需要 admin。
+
 ### 方案 B：隐藏 background 进程
 
 ```powershell
