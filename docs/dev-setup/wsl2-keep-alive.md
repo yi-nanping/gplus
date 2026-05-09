@@ -14,13 +14,41 @@
 
 ## 0. 一次性配置（已做过的不用重复）
 
-dm8-test 容器设置 `--restart=unless-stopped`，让 dockerd 启动时自动 start 容器（已设，验证：`docker inspect dm8-test --format '{{.HostConfig.RestartPolicy.Name}}'` 应为 `unless-stopped`）：
+### 0.1 容器自动 start
+
+让 dockerd 启动时自动 start 业务容器（dm8-test / mysql8 等）：
 
 ```powershell
+# dm8-test（DM 8 Oracle 兼容模式，gplus dm 测试用）
 wsl -d Ubuntu-24.04 -e docker update --restart=unless-stopped dm8-test
+
+# mysql8（gplus mysql 测试用，2026-05-09 从 Windows MySQL 迁过来）
+wsl -d Ubuntu-24.04 -e docker update --restart=unless-stopped mysql8
 ```
 
-设了之后，每次 distro 启动 → systemd 自动起 dockerd → dockerd 自动 start dm8-test，**不用再手动 `docker start`**。
+验证：`docker inspect <名> --format '{{.HostConfig.RestartPolicy.Name}}'` 应为 `unless-stopped`。
+
+设了之后，每次 distro 启动 → systemd 自动起 dockerd → dockerd 自动 start 这些容器，**不用再手动 `docker start`**。
+
+### 0.2 Windows 主机 MySQL 已停（避免端口冲突）
+
+mysql8 容器映射 `-p 3306:3306` 与 Windows 主机 MySQL 服务冲突——已在管理员 PowerShell 跑：
+
+```powershell
+# 管理员 PowerShell（普通权限会 Access Denied）
+Stop-Service MySQL
+Set-Service MySQL -StartupType Manual
+```
+
+Windows MySQL 数据保留在 `D:\Environment\database\mysql\mysql-8.0.22-winx64\`，万一需要回退：管理员 `Set-Service MySQL -StartupType Automatic; Start-Service MySQL`，但需先 `docker stop mysql8` 释放 3306。
+
+### 0.3 mysql8 容器初始化命令（已建，不用重跑）
+
+```powershell
+wsl -d Ubuntu-24.04 -e bash -c "docker run -d --name mysql8 --restart=unless-stopped -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=test -v mysql8-data:/var/lib/mysql mysql:8.0"
+```
+
+数据卷 `mysql8-data`（docker named volume，跨容器重建持久化）。`test` 库自动建好供 gplus DSN 使用。
 
 ---
 
@@ -74,7 +102,9 @@ wsl -d Ubuntu-24.04 -e bash -c "until docker logs dm8-test 2>&1 | tail -50 | gre
 
 ---
 
-## 3. 跑 dm 测试（gplus 项目内）
+## 3. 跑 gplus 测试（项目内）
+
+### dm 测试（DM 8）
 
 ```powershell
 $env:TEST_DM_DSN="dm://SYSDBA:Test_DM_2026@127.0.0.1:5236"
@@ -83,6 +113,24 @@ go test -tags=dm -race -count=1 -v ./...
 ```
 
 期望 9 个 dm 测试 17+ 子测试全过。
+
+### mysql 测试
+
+```powershell
+$env:TEST_MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
+go test -race -count=1 -run "^TestMySQL_" -v ./...
+```
+
+不设 `TEST_MYSQL_DSN` 也能用——`defaultMySQLDSN` 默认就是这条，会被自动用。
+
+### 三方言一起（默认 sqlite + mysql + dm）
+
+```powershell
+$env:TEST_MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
+$env:TEST_DM_DSN="dm://SYSDBA:Test_DM_2026@127.0.0.1:5236"
+$env:TEST_DM_REQUIRED="1"
+go test -tags=dm -race -count=1 ./...
+```
 
 ---
 
