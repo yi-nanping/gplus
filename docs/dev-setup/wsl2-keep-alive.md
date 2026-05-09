@@ -12,40 +12,61 @@
 
 ---
 
-## 1. 启动 keep-alive（开始测试前）
+## 0. 一次性配置（已做过的不用重复）
 
-在 PowerShell 跑（不要在 Claude 对话框里跑——Claude 是非管理员杀不了它）：
+dm8-test 容器设置 `--restart=unless-stopped`，让 dockerd 启动时自动 start 容器（已设，验证：`docker inspect dm8-test --format '{{.HostConfig.RestartPolicy.Name}}'` 应为 `unless-stopped`）：
+
+```powershell
+wsl -d Ubuntu-24.04 -e docker update --restart=unless-stopped dm8-test
+```
+
+设了之后，每次 distro 启动 → systemd 自动起 dockerd → dockerd 自动 start dm8-test，**不用再手动 `docker start`**。
+
+---
+
+## 1. 启动 keep-alive（每次开机第一步）
+
+两种方案，按场景选：
+
+### 方案 A：交互式 `wsl`（最简单，推荐）
+
+在普通 PowerShell（不需要 admin）跑：
+
+```powershell
+wsl
+```
+
+进入 bash 提示符（如 `u1851@DESKTOP-AND8JCN:~$`）。**这个 PowerShell 窗口最小化挂着别关**——只要它在，distro 就 Running，dm8-test 就自动 Up。
+
+优劣：可见、心理踏实、可在里面直接跑 docker 命令；但占一个可见窗口，误关 / `exit` / Ctrl+D 会退。
+
+### 方案 B：隐藏 background 进程
 
 ```powershell
 Start-Process wsl -ArgumentList '-d','Ubuntu-24.04','-e','sleep','infinity' -WindowStyle Hidden
 ```
 
-**验证起来了**（应见至少 1 个 wsl 进程）：
+**验证起来了**（应见至少 1 个 wsl 进程，CPU 接近 0 说明 idle sleep）：
 
 ```powershell
 Get-Process wsl
 ```
 
-期望输出类似：
-
-```
-Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName
--------  ------    -----      -----     ------     --  -- -----------
-    109       7     1224       7628       0.02   2824   7 wsl
-    214      14     2676      13648       0.00  21508   7 wsl
-```
-
-CPU 接近 0 说明在 idle sleep 状态，符合预期。
+优劣：进程隐藏不占可见窗口、不会误关；但看不见、清理需 `wsl --shutdown` 或 admin Stop-Process。
 
 ---
 
-## 2. 启动 dm8-test 容器
+## 2. 等 dm8-test SYSTEM IS READY
+
+dockerd 自动 start 容器后，DM 8 内部启动到 SYSTEM IS READY 约 30 秒到 2 分钟。一条命令等就绪：
 
 ```powershell
-wsl -d Ubuntu-24.04 -e bash -c "docker start dm8-test && until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo READY"
+wsl -d Ubuntu-24.04 -e bash -c "until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo READY"
 ```
 
-DM 8 启动到 SYSTEM IS READY 大约 30 秒到 2 分钟。看到 `READY` 即可连接 `dm://SYSDBA:Test_DM_2026@127.0.0.1:5236`。
+看到 `READY` 即可连接 `dm://SYSDBA:Test_DM_2026@127.0.0.1:5236`。
+
+> 如果忘了配 `--restart=unless-stopped`（第 0 节），这一步前先手动 `wsl -d Ubuntu-24.04 -e docker start dm8-test`。
 
 ---
 
@@ -106,16 +127,19 @@ Get-Process wsl | Stop-Process -Force
 
 ## 7. 一次性快速启动脚本（可保存为 .ps1）
 
+前提：第 0 节的 `docker update --restart=unless-stopped dm8-test` 已配置过。
+
 ```powershell
 # start-dm-test.ps1
 # 用法：在 PowerShell 跑 powershell -ExecutionPolicy Bypass -File start-dm-test.ps1
 
 Start-Process wsl -ArgumentList '-d','Ubuntu-24.04','-e','sleep','infinity' -WindowStyle Hidden
 Start-Sleep -Seconds 2
-Write-Host "Background wsl.exe 已启动，进程列表:"
+Write-Host "Background wsl.exe 已启动（distro Running，dockerd 自动 start dm8-test）："
 Get-Process wsl | Format-Table Id,ProcessName -AutoSize
 
-wsl -d Ubuntu-24.04 -e bash -c "docker start dm8-test && until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo READY"
+Write-Host "等 dm8-test SYSTEM IS READY..."
+wsl -d Ubuntu-24.04 -e bash -c "until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo READY"
 
 Write-Host ""
 Write-Host "完成！现在可以跑测试："
