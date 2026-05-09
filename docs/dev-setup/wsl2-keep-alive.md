@@ -14,53 +14,56 @@
 
 ## 0. 一次性配置（已做过的不用重复）
 
-### 0.1 容器自动 start + 命名卷数据持久化
+### 0.1 容器命名卷数据持久化（不自动启动，按需手动 start）
 
-**4 容器统一约定**（已在本机配置，下游可参考）：
+**4 容器统一约定**：
 
 | 容器 | 端口 | 命名卷 → 容器内路径 | RestartPolicy |
 |---|---|---|---|
-| dm8-test | 5236 | `dm8-data` → `/opt/dmdbms/data` | unless-stopped |
-| mysql8 | 3306 | `mysql8-data` → `/var/lib/mysql` | unless-stopped |
-| pg16 | 5432 | `pg16-data` → `/var/lib/postgresql/data` | unless-stopped |
-| oracle-free | 1521 | `oracle-data` → `/opt/oracle/oradata` | unless-stopped |
+| dm8-test | 5236 | `dm8-data` → `/opt/dmdbms/data` | `no` |
+| mysql8 | 3306 | `mysql8-data` → `/var/lib/mysql` | `no` |
+| pg16 | 5432 | `pg16-data` → `/var/lib/postgresql/data` | `no` |
+| oracle-free | 1521 | `oracle-data` → `/opt/oracle/oradata` | `no` |
 
-**重建命令样例**（首次部署或彻底重建用）：
+> **2026-05-09 决策修订**：原本 4 容器都设 `--restart=unless-stopped` 自动启动。但实际频率统计后改成 `no`：oracle 启动 5 分钟 + ~1.5GB RAM + 罕用，pg 中频，mysql/dm 高频但启动也快——**全部按需手动 `docker start`** 比自动起更可控、避免无谓资源占用。
+
+**重建命令样例**（首次部署或彻底重建用，注意 `--restart=no` 显式声明默认策略）：
 
 ```bash
 # 在 WSL 内（或 wsl -d Ubuntu-24.04 -e bash -c "..."）
 
 # dm8-test（dameng 8 Oracle 兼容模式，自构建镜像）
-docker run -d --name dm8-test --restart=unless-stopped \
+docker run -d --name dm8-test --restart=no \
   -p 5236:5236 -v dm8-data:/opt/dmdbms/data gplus/dm8:8.1.4.200
 
 # mysql8
-docker run -d --name mysql8 --restart=unless-stopped \
+docker run -d --name mysql8 --restart=no \
   -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=test \
   -v mysql8-data:/var/lib/mysql mysql:8.0
 
 # pg16
-docker run -d --name pg16 --restart=unless-stopped \
+docker run -d --name pg16 --restart=no \
   -p 5432:5432 -e POSTGRES_PASSWORD=postgres \
   -v pg16-data:/var/lib/postgresql/data postgres:16
 
 # oracle-free
-docker run -d --name oracle-free --restart=unless-stopped \
+docker run -d --name oracle-free --restart=no \
   -p 1521:1521 -e ORACLE_PASSWORD=oracle \
   -v oracle-data:/opt/oracle/oradata gvenzl/oracle-free:23-slim
 ```
 
 > **docker named volume 自动 populate**：dm8 / oracle 这种镜像 build 时已写入数据目录的，docker 看到挂载的命名卷为空时会**自动从镜像层 populate**，不需要手动 cp。pg / mysql 镜像 build 时数据目录是空的，由 entry script 在容器首次启动时 init。
 
-**给已存在容器加 restart 策略**（不重建，仅修改）：
+**修改既有容器的 restart 策略**（不重建）：
 
 ```bash
-docker update --restart=unless-stopped dm8-test mysql8 pg16 oracle-free
+docker update --restart=no dm8-test mysql8 pg16 oracle-free      # 当前用此
+docker update --restart=unless-stopped dm8-test mysql8           # 想改回自启用此
 ```
 
-验证：`docker inspect <名> --format '{{.HostConfig.RestartPolicy.Name}}'` 应为 `unless-stopped`。
+验证：`docker inspect <名> --format '{{.HostConfig.RestartPolicy.Name}}'` 应为 `no`。
 
-设了之后，每次 distro 启动 → systemd 自动起 dockerd → dockerd 自动 start 这些容器，**不用再手动 `docker start`**。
+**新流程**：每次 distro 启动 → systemd 起 dockerd → 容器都 Exited 状态 → **按需 `docker start <名>`**，详见 §2。
 
 ### 0.2 Windows 主机 MySQL 已停（避免端口冲突）
 
@@ -96,7 +99,7 @@ wsl -d Ubuntu-24.04 -e bash -c "docker run -d --name mysql8 --restart=unless-sto
 wsl
 ```
 
-进入 bash 提示符（如 `u1851@DESKTOP-AND8JCN:~$`）。**这个 PowerShell 窗口最小化挂着别关**——只要它在，distro 就 Running，dm8-test 就自动 Up。
+进入 bash 提示符（如 `u1851@DESKTOP-AND8JCN:~$`）。**这个 PowerShell 窗口最小化挂着别关**——只要它在，distro 就 Running。注意：**容器不会自动 Up**（4 容器都设 `--restart=no`），需要在 §2 按需手动 `docker start`。
 
 优劣：可见、心理踏实、可在里面直接跑 docker 命令；但占一个可见窗口，误关 / `exit` / Ctrl+D 会退。
 
@@ -120,17 +123,30 @@ Get-Process wsl
 
 ---
 
-## 2. 等 dm8-test SYSTEM IS READY
+## 2. 启动需要的容器（按需手动 docker start）
 
-dockerd 自动 start 容器后，DM 8 内部启动到 SYSTEM IS READY 约 30 秒到 2 分钟。一条命令等就绪：
+4 容器都设 `--restart=no`，distro 启动后**不会自动起**。按今天要做的事 start 对应容器：
 
 ```powershell
-wsl -d Ubuntu-24.04 -e bash -c "until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo READY"
+# 跑 mysql 测试时
+wsl -d Ubuntu-24.04 -e docker start mysql8
+
+# 跑 dm 测试时（启动慢需等）
+wsl -d Ubuntu-24.04 -e bash -c "docker start dm8-test && until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo dm8-test READY"
+
+# 跑 pg 测试时
+wsl -d Ubuntu-24.04 -e bash -c "docker start pg16 && until docker logs pg16 2>&1 | tail -20 | grep -q 'database system is ready to accept connections'; do sleep 2; done; echo pg16 READY"
+
+# 跑 oracle 测试时（启动 ~5 分钟慢）
+wsl -d Ubuntu-24.04 -e bash -c "docker start oracle-free && until docker logs oracle-free 2>&1 | tail -50 | grep -q 'DATABASE IS READY'; do sleep 5; done; echo oracle-free READY"
 ```
 
-看到 `READY` 即可连接 `dm://SYSDBA:Test_DM_2026@127.0.0.1:5236`。
+ready 时长参考：
+- mysql8 / pg16：< 10 秒
+- dm8-test：30 秒到 2 分钟
+- oracle-free：约 5 分钟（首次更长，含 PDB 创建）
 
-> 如果忘了配 `--restart=unless-stopped`（第 0 节），这一步前先手动 `wsl -d Ubuntu-24.04 -e docker start dm8-test`。
+跑完测试想停容器释放资源：`wsl -d Ubuntu-24.04 -e docker stop <名>`。命名卷在 docker rm 之前不丢数据。
 
 ---
 
@@ -211,19 +227,24 @@ Get-Process wsl | Stop-Process -Force
 
 ## 7. 一次性快速启动脚本（可保存为 .ps1）
 
-前提：第 0 节的 `docker update --restart=unless-stopped dm8-test` 已配置过。
+前提：4 容器已建好（命名卷模式），见 §0.1。容器都设 `--restart=no`，需手动 start。
 
 ```powershell
 # start-dm-test.ps1
-# 用法：在 PowerShell 跑 powershell -ExecutionPolicy Bypass -File start-dm-test.ps1
+# 用法：powershell -ExecutionPolicy Bypass -File start-dm-test.ps1
 
+# 1. 启 background wsl.exe 持有 distro（防 idle stop）
 Start-Process wsl -ArgumentList '-d','Ubuntu-24.04','-e','sleep','infinity' -WindowStyle Hidden
 Start-Sleep -Seconds 2
-Write-Host "Background wsl.exe 已启动（distro Running，dockerd 自动 start dm8-test）："
+Write-Host "Background wsl.exe 已启动："
 Get-Process wsl | Format-Table Id,ProcessName -AutoSize
 
-Write-Host "等 dm8-test SYSTEM IS READY..."
-wsl -d Ubuntu-24.04 -e bash -c "until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done; echo READY"
+# 2. start 需要的容器（按今天要做的事改这里——示例只起 dm8-test + mysql8）
+wsl -d Ubuntu-24.04 -e bash -c "
+  docker start dm8-test mysql8
+  until docker logs dm8-test 2>&1 | tail -50 | grep -q 'SYSTEM IS READY'; do sleep 2; done
+  echo 'dm8-test READY'
+"
 
 Write-Host ""
 Write-Host "完成！现在可以跑测试："
@@ -235,7 +256,7 @@ Write-Host "  go test -tags=dm -race -count=1 -v ./..."
 清理对应：
 
 ```powershell
-# stop-dm-test.ps1
+# stop-dm-test.ps1（核打击：关 distro + 所有容器）
 wsl --shutdown
 Write-Host "WSL 全部 distro 已 shutdown，所有 wsl.exe + 容器已停"
 ```
