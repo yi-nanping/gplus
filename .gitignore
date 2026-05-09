@@ -128,3 +128,6 @@ go.work
 
 # ...even if they are in subdirectories
 !*/
+
+# 但 docs/dev-setup/local/ 是本机笔记目录，不进 git
+docs/dev-setup/local/
