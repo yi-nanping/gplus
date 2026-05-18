@@ -453,7 +453,7 @@ func (r *Repository[D, T]) UpdateByIdTx(ctx context.Context, entity *T, tx *gorm
 		return baseDB.Model(entity).Updates(entity).Error
 	}
 
-	oldVer := readVersionValue(unsafe.Pointer(entity), vInfo)
+	oldVer := readVersionValue(unsafe.Pointer(entity), vInfo) // #nosec G103 -- 乐观锁 version 字段 reflect 读取需 unsafe.Pointer
 	qL, qR := getQuoteChar(baseDB)
 	quotedCol := quoteColumn(vInfo.columnName, qL, qR)
 
@@ -470,7 +470,7 @@ func (r *Repository[D, T]) UpdateByIdTx(ctx context.Context, entity *T, tx *gorm
 	if result.RowsAffected == 0 {
 		return ErrOptimisticLock
 	}
-	writeVersionValue(unsafe.Pointer(entity), vInfo, oldVer+1)
+	writeVersionValue(unsafe.Pointer(entity), vInfo, oldVer+1) // #nosec G103 -- 乐观锁 version 字段 reflect 写入需 unsafe.Pointer
 	return nil
 }
 

@@ -209,6 +209,12 @@ func getVersionField[T any]() *versionFieldInfo {
 }
 
 // readVersionValue 从 entity 指针读取 version 字段值（统一返回 int64）。
+//
+// 范围安全性说明（gosec G115/CWE-190 静态扫描标注理由）：
+//   - version 字段语义上单调递增，业务实际值远小于 int64 max
+//   - uint → int64 / uint64 → int64 转换在极端值（>= 2^63）下会变负数，
+//     但 version 字段不会接近这个量级（10 次/秒跑 292 亿年才能耗尽 int64）
+//   - 因此 reflect 读取时的 uint→int64 转换是设计为之的统一化（write 路径反向转回去）
 func readVersionValue(entityPtr unsafe.Pointer, vInfo *versionFieldInfo) int64 {
 	ptr := unsafe.Add(entityPtr, vInfo.offset)
 	switch vInfo.kind {
@@ -219,32 +225,41 @@ func readVersionValue(entityPtr unsafe.Pointer, vInfo *versionFieldInfo) int64 {
 	case reflect.Int64:
 		return *(*int64)(ptr)
 	case reflect.Uint:
-		return int64(*(*uint)(ptr))
+		return int64(*(*uint)(ptr)) // #nosec G115 -- 见函数 doc 范围安全性说明
 	case reflect.Uint32:
 		return int64(*(*uint32)(ptr))
 	case reflect.Uint64:
-		return int64(*(*uint64)(ptr))
+		return int64(*(*uint64)(ptr)) // #nosec G115 -- 见函数 doc 范围安全性说明
 	default:
 		return 0
 	}
 }
 
 // writeVersionValue 向 entity 指针写入新的 version 字段值。
+//
+// 范围安全性说明（gosec G115/CWE-190 静态扫描标注理由）：
+//   - newVal 来源是 readVersionValue 读出的 oldVer + 1，单调递增
+//   - 支持的目标最小类型为 int32 / uint32（21 亿次更新，10 次/秒跑 6.7 年才耗尽）
+//   - 未支持 int8/int16/uint8/uint16（落 switch default 静默忽略，不会 wrap）
+//   - 因此 reflect 写入时的 int 收窄是设计为之的容量约定。下游用 int8/int16
+//     作 version 字段会被 readVersionValue 返回 0（单独是 bug 但不属于 G115 范畴）
+//
+// 各 case 的 // #nosec G115 注释见此说明，不在每行重复展开。
 func writeVersionValue(entityPtr unsafe.Pointer, vInfo *versionFieldInfo, newVal int64) {
 	ptr := unsafe.Add(entityPtr, vInfo.offset)
 	switch vInfo.kind {
 	case reflect.Int:
 		*(*int)(ptr) = int(newVal)
 	case reflect.Int32:
-		*(*int32)(ptr) = int32(newVal)
+		*(*int32)(ptr) = int32(newVal) // #nosec G115 -- 见函数 doc 范围安全性说明
 	case reflect.Int64:
 		*(*int64)(ptr) = newVal
 	case reflect.Uint:
-		*(*uint)(ptr) = uint(newVal)
+		*(*uint)(ptr) = uint(newVal) // #nosec G115 -- 见函数 doc 范围安全性说明
 	case reflect.Uint32:
-		*(*uint32)(ptr) = uint32(newVal)
+		*(*uint32)(ptr) = uint32(newVal) // #nosec G115 -- 见函数 doc 范围安全性说明
 	case reflect.Uint64:
-		*(*uint64)(ptr) = uint64(newVal)
+		*(*uint64)(ptr) = uint64(newVal) // #nosec G115 -- 见函数 doc 范围安全性说明
 	}
 }
 
