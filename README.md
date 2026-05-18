@@ -755,7 +755,20 @@ Oracle 走**空 quoter**（不加任何引号），**不与 DM 共用双引号 q
 
 下游手写 RawSQL/WhereRaw 时遇到 Oracle 保留字列名（`order` / `size` / `level` / `comment` / `type` / `group` / `role` / `number` / `date` 等），需**手动**加双引号包裹（如 `WHERE "order" = ?`），gplus 不会自动加（参见 TD-14）。
 
-### 5. 启动 Oracle 23c Free 容器
+### 5. 错误码导航
+
+| 错误码 | 触发场景 | 措施 |
+|---|---|---|
+| `ORA-00904 invalid identifier` | gplus 给列名加双引号但 migrator UPPERCASE 不带引号建表（列存为大写）| 确认 `getQuoteChar` 在 oracle 方言返回空 quoter（v0.8.2+ 默认）；RawSQL 中保留字列名手动加双引号 |
+| `ORA-00932 inconsistent datatypes` | string 字段映射 CLOB 后参与 LIKE/IN/=（Oracle CLOB 不支持等值比较）| struct 字段加 `gorm:"size:N"`（N ≤ 4000）显式映射 VARCHAR2；或用 `DBMS_LOB.SUBSTR(col, ...)` 截取后比较 |
+| `ORA-01430 column being added already exists` | migrator 重复 ALTER ADD（已存在表再次 AutoMigrate）| setup 走 DROP+AutoMigrate 路径，参考 `oracle_setup_test.go` 的 `truncateOracleTables` |
+| `ORA-00942 table or view does not exist` | schema 不对 / 表未创建 / 跨 schema 访问无权限 | 确认 `TEST_ORACLE_DSN` 末尾 service_name 与建表 schema 一致；跨 schema 用 `OWNER.TABLE` 限定 |
+| `ORA-01017 invalid username/password` | Oracle 23c Free 默认 system/oracle 改过 / PDB 与 CDB 账户混淆 | docker run 时设 `ORACLE_PWD`；连 PDB（FREEPDB1）而非 CDB$ROOT |
+| `ORA-12541 TNS: no listener` | 容器没起 / 端口未映射 / 监听器未启 | `docker ps` 看容器 + `docker logs` 看是否 "DATABASE IS READY TO USE!"；首次启动需 1-3 分钟 |
+| `ORA-00001 unique constraint violated` | 主键/唯一索引冲突 | 用 `gplus.Upsert` 或 `OnConflict.DoNothing` 处理冲突场景 |
+| `ORA-65096 invalid common user/role name` | 在 CDB 创建普通用户名未以 `C##` 开头 | 用 `oracle://user@host:port/FREEPDB1` 连 PDB 而非 CDB；或加 `C##` 前缀 |
+
+### 6. 启动 Oracle 23c Free 容器
 
 ```bash
 # 拉镜像（约 8GB，首次较慢）
