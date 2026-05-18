@@ -662,6 +662,8 @@ gplus/
 
 ## 方言支持
 
+> 完整方言路线图（含未来候选方言 OceanBase / GaussDB / openGauss、v0.9 多模架构方向、新方言贡献流程）见 [docs/ROADMAP.md](docs/ROADMAP.md)
+
 | 数据库 | 状态 | CI 验证 | 备注 |
 |---|---|---|---|
 | SQLite | ✅ 完整 | ✓ `:memory:` | 默认开发与单元测试方言；`getQuoteChar` 返回 `"` |
