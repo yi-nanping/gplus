@@ -786,7 +786,6 @@ func TestDataRule_AdditionalBranches(t *testing.T) {
 	})
 }
 
-
 // --- UpdateByCondTx nil updater 分支 ---
 
 func TestRepository_UpdateByCondTx_NilUpdater(t *testing.T) {
@@ -1196,8 +1195,8 @@ func TestApplyWhere_ComplexPaths(t *testing.T) {
 // TestBuildLeafSQL_BetweenDefensive 验证 BETWEEN value 不合法时返回 ok=false
 func TestBuildLeafSQL_BetweenDefensive(t *testing.T) {
 	cases := []struct {
-		name  string
-		cond  condition
+		name string
+		cond condition
 	}{
 		{"value 非 []any", condition{expr: "age", operator: OpBetween, value: "not_a_slice"}},
 		{"[]any 长度为 1", condition{expr: "age", operator: OpBetween, value: []any{1}}},
@@ -1284,7 +1283,7 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 func TestApplyJoins_CrossJoin(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
-	db.Create(&TestUser{Name:"Alice", Age: 25})
+	db.Create(&TestUser{Name: "Alice", Age: 25})
 
 	q, _ := NewQuery[TestUser](ctx)
 	q.CrossJoin("test_users AS t2")

@@ -1175,7 +1175,7 @@ func (q *Query[T]) appendJoinAs(joinType string, alias any, leftCol any, rightCo
 
 	// 4. 追加到 joins（rawSQL=true 表示 table 字段存储完整 SQL）
 	q.joins = append(q.joins, joinInfo{
-		table:     joinSQL,  // rawSQL 路径：table 存储完整 JOIN 片段
+		table:     joinSQL,   // rawSQL 路径：table 存储完整 JOIN 片段
 		args:      extraArgs, // 走 GORM 参数化
 		aliasName: aliasName,
 		rawSQL:    true,

@@ -65,7 +65,7 @@ func TestDM_BasicCRUD(t *testing.T) {
 
 // TestDM_WhereConditions 验证各类 WHERE 条件在 DM 方言下正确（镜像 TestOracle_WhereConditions）
 //
-// 不含 IsNull——沿用 Oracle 实测决策：DM Oracle 兼容模式 ''=NULL 语义下 IsNull 测试不可靠。
+// 不含 IsNull——沿用 Oracle 实测决策：DM Oracle 兼容模式 ”=NULL 语义下 IsNull 测试不可靠。
 func TestDM_WhereConditions(t *testing.T) {
 	repo, _ := setupDMDB(t)
 	ctx := context.Background()

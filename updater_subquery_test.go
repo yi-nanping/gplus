@@ -24,14 +24,30 @@ func TestUpdater_AllSub_DryRun(t *testing.T) {
 		{"GteSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.GteSub(&m.Age, sub) }, ">="},
 		{"LtSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.LtSub(&m.Age, sub) }, "<"},
 		{"LteSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.LteSub(&m.Age, sub) }, "<="},
-		{"OrInSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrInSub(&m.ID, sub) }, "IN"},
-		{"OrNotInSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrNotInSub(&m.ID, sub) }, "NOT IN"},
-		{"OrEqSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrEqSub(&m.Age, sub) }, "="},
-		{"OrNeSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrNeSub(&m.Age, sub) }, "<>"},
-		{"OrGtSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrGtSub(&m.Age, sub) }, ">"},
-		{"OrGteSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrGteSub(&m.Age, sub) }, ">="},
-		{"OrLtSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrLtSub(&m.Age, sub) }, "<"},
-		{"OrLteSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) { u.Eq(&m.Age, 0).OrLteSub(&m.Age, sub) }, "<="},
+		{"OrInSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrInSub(&m.ID, sub)
+		}, "IN"},
+		{"OrNotInSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrNotInSub(&m.ID, sub)
+		}, "NOT IN"},
+		{"OrEqSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrEqSub(&m.Age, sub)
+		}, "="},
+		{"OrNeSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrNeSub(&m.Age, sub)
+		}, "<>"},
+		{"OrGtSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrGtSub(&m.Age, sub)
+		}, ">"},
+		{"OrGteSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrGteSub(&m.Age, sub)
+		}, ">="},
+		{"OrLtSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrLtSub(&m.Age, sub)
+		}, "<"},
+		{"OrLteSub", func(u *Updater[UserWithDelete], m *UserWithDelete, sub Subquerier) {
+			u.Eq(&m.Age, 0).OrLteSub(&m.Age, sub)
+		}, "<="},
 	}
 
 	for _, tt := range tests {

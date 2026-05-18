@@ -137,9 +137,9 @@ func TestQuery_ScalarSub_DryRun(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		apply    func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier)
-		wantOp   string
+		name   string
+		apply  func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier)
+		wantOp string
 	}{
 		{"EqSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.EqSub(&u.Age, sub) }, "="},
 		{"NeSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.NeSub(&u.Age, sub) }, "<>"},
@@ -177,12 +177,24 @@ func TestQuery_OrScalarSub_DryRun(t *testing.T) {
 		name  string
 		apply func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier)
 	}{
-		{"OrEqSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrEqSub(&u.Age, sub) }},
-		{"OrNeSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrNeSub(&u.Age, sub) }},
-		{"OrGtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrGtSub(&u.Age, sub) }},
-		{"OrGteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrGteSub(&u.Age, sub) }},
-		{"OrLtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrLtSub(&u.Age, sub) }},
-		{"OrLteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) { q.Eq(&u.Age, 0).OrLteSub(&u.Age, sub) }},
+		{"OrEqSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) {
+			q.Eq(&u.Age, 0).OrEqSub(&u.Age, sub)
+		}},
+		{"OrNeSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) {
+			q.Eq(&u.Age, 0).OrNeSub(&u.Age, sub)
+		}},
+		{"OrGtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) {
+			q.Eq(&u.Age, 0).OrGtSub(&u.Age, sub)
+		}},
+		{"OrGteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) {
+			q.Eq(&u.Age, 0).OrGteSub(&u.Age, sub)
+		}},
+		{"OrLtSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) {
+			q.Eq(&u.Age, 0).OrLtSub(&u.Age, sub)
+		}},
+		{"OrLteSub", func(q *Query[UserWithDelete], u *UserWithDelete, sub Subquerier) {
+			q.Eq(&u.Age, 0).OrLteSub(&u.Age, sub)
+		}},
 	}
 
 	for _, tt := range tests {

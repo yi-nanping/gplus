@@ -206,7 +206,6 @@ func TestUpdateByCondTx_DataRuleError(t *testing.T) {
 	}
 }
 
-
 // --- toDBName：三连大写字母触发 lastCase && nextCase 分支 ---
 
 func TestToDBName_ConsecutiveUppercase(t *testing.T) {
@@ -319,7 +318,7 @@ func TestDeleteByCondTx_BuilderError(t *testing.T) {
 	// 先添加有效条件（不触发 IsEmpty），再添加无效 Select 写入 errs
 	q, m := NewQuery[TestUser](ctx)
 	q.Eq(&m.ID, 1) // 合法条件，conditions 非空
-	q.Select(nil)   // 写入 errs 但不清除 conditions
+	q.Select(nil)  // 写入 errs 但不清除 conditions
 	_, err := repo.DeleteByCond(q)
 	if err == nil {
 		t.Error("DeleteByCond 有 builder 错误时应返回错误")
@@ -333,7 +332,7 @@ func TestUpdateByCondTx_BuilderError(t *testing.T) {
 	ctx := context.Background()
 	u, m := NewUpdater[TestUser](ctx)
 	u.Set(&m.Name, "x") // setMap 非空
-	u.Select(nil)         // 写入 errs 但不影响 setMap
+	u.Select(nil)       // 写入 errs 但不影响 setMap
 	u.Eq(&m.ID, 1)
 	_, err := repo.UpdateByCond(u)
 	if err == nil {

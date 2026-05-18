@@ -991,7 +991,7 @@ func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (in
 		}
 	}
 	result := baseDB.Unscoped().Model(new(T)).Where(id).
-		Where(col + " IS NOT NULL").
+		Where(col+" IS NOT NULL").
 		Update(col, nil)
 	return result.RowsAffected, result.Error
 }
@@ -1031,7 +1031,7 @@ func (r *Repository[D, T]) RestoreByCondTx(q *Query[T], tx *gorm.DB) (int64, err
 	}
 	result := db.Unscoped().Model(new(T)).
 		Scopes(q.BuildUpdate()).
-		Where(col + " IS NOT NULL").
+		Where(col+" IS NOT NULL").
 		Update(col, nil)
 	return result.RowsAffected, result.Error
 }

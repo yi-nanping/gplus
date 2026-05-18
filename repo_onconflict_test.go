@@ -332,7 +332,7 @@ func TestInsertOnConflict_DoUpdatesAndExprs(t *testing.T) {
 	_, m := NewQuery[conflictUser](ctx)
 	oc := OnConflict{
 		Columns:     []any{&m.Email},
-		DoUpdates:   []any{&m.Name},                  // name 用 excluded 覆盖
+		DoUpdates:   []any{&m.Name},                    // name 用 excluded 覆盖
 		UpdateExprs: map[string]any{"score": incrExpr}, // score 原子累加
 	}
 
