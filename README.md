@@ -693,6 +693,90 @@ gplus/
   - DM 特有：`COMPATIBLE_MODE=2` 必须显式开启（docker run 加 `-e COMPATIBLE_MODE=2`，`SELECT PARA_VALUE FROM V$DM_INI WHERE PARA_NAME='COMPATIBLE_MODE'` 应返回 2）
   - 镜像默认密码版本差异：dameng 历史镜像有 `SYSDBA` / `SYSDBA001` / 首登强制改密——以拉到的镜像 README 为准
 
+## Oracle 数据库支持（v0.8.2+）
+
+> 仅本地/CI 验证场景。生产侧使用见下方"下游生产侧集成"。
+
+### 1. Quickstart 4 步
+
+1. **拉 gplus**：`go get github.com/yi-nanping/gplus@v0.8.3`
+2. **拉 Oracle 23c Free 镜像**：`docker pull container-registry.oracle.com/database/free:latest`（参见下方"启动 Oracle 23c Free 容器"）
+3. **设 DSN 环境变量**（可选，setup_test 有本地默认）：`export TEST_ORACLE_DSN="oracle://system:<密码>@127.0.0.1:1521/FREEPDB1"`
+4. **跑测试**：`go test -tags=oracle -v ./...`（强制不漏跑：`TEST_ORACLE_REQUIRED=1 go test -tags=oracle ./...` —— DSN 不通时 `t.Fatalf` 而非 `t.Skip`）
+
+### 2. TEST_ORACLE_DSN 格式
+
+BNF：
+
+```
+TEST_ORACLE_DSN := "oracle://" <user> ":" <password> "@" <host> ":" <port> "/" <service_name>
+```
+
+样例：
+
+```bash
+# Oracle 23c Free Docker 镜像默认（system / oracle / FREEPDB1）
+export TEST_ORACLE_DSN="oracle://system:oracle@127.0.0.1:1521/FREEPDB1"
+
+# 切换到独立测试账户（生产/CI 强烈推荐，仅授 CONNECT + RESOURCE）
+export TEST_ORACLE_DSN="oracle://testuser:<密码>@127.0.0.1:1521/FREEPDB1"
+
+# 19c/12c 经典 SID 模式
+export TEST_ORACLE_DSN="oracle://system:<密码>@127.0.0.1:1521/ORCL"
+```
+
+> **⚠ 安全提示**：`oracle_setup_test.go` 中的 `defaultOracleDSN = "oracle://system:oracle@127.0.0.1:1521/FREEPDB1"` **仅限本地 Docker 开发**。`system` 是 DBA 权限账户，`oracle` 是 Oracle 23c Free 镜像出厂默认密码——绝不能用于生产。CI/生产必须用 `TEST_ORACLE_DSN` 覆盖。
+
+### 3. 下游生产侧集成
+
+```go
+import (
+    oracle "github.com/godoes/gorm-oracle"
+    "gorm.io/gorm"
+    "github.com/yi-nanping/gplus"
+)
+
+func main() {
+    db, _ := gorm.Open(oracle.Open("oracle://system:..."), &gorm.Config{})
+    repo := gplus.NewRepository[int64, User](db)
+    // ... 与 sqlite/mysql/pg 完全一样
+}
+```
+
+gplus 自身**不预先注册** Dialector，下游需自己 `import _ "github.com/godoes/gorm-oracle"`（或显式 `gorm.Open(oracle.Open(...))`）。
+
+### 4. quoter 策略与列名匹配（重要）
+
+Oracle 走**空 quoter**（不加任何引号），**不与 DM 共用双引号 quoter**——这是 v0.8.2 立项时实测决策：
+
+- godoes/gorm-oracle migrator 用 `CREATE TABLE my_sql_users (USERNAME VARCHAR2(64),...)` UPPERCASE 不带引号建表，列名在 Oracle 中存为 UPPERCASE
+- 若 gplus 给列名加双引号（`"username"`），Oracle case-sensitive 解析为小写 `username`，与 DB 内 UPPERCASE 列名 `USERNAME` 不匹配，触发 `ORA-00904 invalid identifier`
+- gplus 在 oracle 方言下 `getQuoteChar` 返回 `("", "")` 空 quoter，让裸标识符走 Oracle 默认 UPPERCASE 大小写无关解析路径
+
+下游手写 RawSQL/WhereRaw 时遇到 Oracle 保留字列名（`order` / `size` / `level` / `comment` / `type` / `group` / `role` / `number` / `date` 等），需**手动**加双引号包裹（如 `WHERE "order" = ?`），gplus 不会自动加（参见 TD-14）。
+
+### 5. 启动 Oracle 23c Free 容器
+
+```bash
+# 拉镜像（约 8GB，首次较慢）
+docker pull container-registry.oracle.com/database/free:latest
+
+# 启动（默认 system/oracle，PDB 名 FREEPDB1，端口 1521）
+docker run -d --name oracle-free -p 1521:1521 \
+  -e ORACLE_PWD=oracle \
+  container-registry.oracle.com/database/free:latest
+
+# 等待启动完成（首次约 1-3 分钟，看 logs 出现 "DATABASE IS READY TO USE!"）
+docker logs -f oracle-free
+
+# 验证连接
+docker exec -it oracle-free sqlplus system/oracle@FREEPDB1
+```
+
+> 启动慢（>1 分钟）：Oracle 23c Free 首次启动需要初始化 PDB，是预期行为，与 spec §3.3 "Oracle 不在 CI"决策一致。
+>
+> WSL2 用户：与下方 DM 章节 "WSL2 用户必读" 同样适用——容器跟随 distro idle stop 风险一致，workaround 三方案（终端常开 / 后台 wsl.exe / 任务计划）通用。
+
 ## DM 数据库支持（v0.8.3+）
 
 > 仅本地/CI 验证场景。生产侧使用见下方"下游生产侧集成"。

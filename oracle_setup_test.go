@@ -30,11 +30,23 @@ func setupOracleDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
 	if dsn == "" {
 		dsn = defaultOracleDSN
 	}
+	// Skip 误报防护（对称 DM TEST_DM_REQUIRED）：TEST_ORACLE_REQUIRED=1 时，DSN 未设或
+	// 连接失败均改 t.Fatalf 避免 exit 0 误报。defaultOracleDSN 当前非空，DSN==空 路径
+	// 仅在未来 default 被改空时触发（如出于安全考虑去掉默认密码），保留对称便于演进。
+	if dsn == "" {
+		if os.Getenv("TEST_ORACLE_REQUIRED") == "1" {
+			t.Fatalf("TEST_ORACLE_DSN 未设置但 TEST_ORACLE_REQUIRED=1，Oracle 实测被强制要求")
+		}
+		t.Skip("TEST_ORACLE_DSN 未设置，跳过 Oracle 测试（参见 README Oracle 数据库支持章节）")
+	}
 
 	db, err := gorm.Open(oracle.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
+		if os.Getenv("TEST_ORACLE_REQUIRED") == "1" {
+			t.Fatalf("Oracle 强制要求但不可用: %v", err)
+		}
 		t.Skipf("Oracle 不可用，跳过集成测试: %v", err)
 	}
 	applyDBPoolLimits(t, db)
