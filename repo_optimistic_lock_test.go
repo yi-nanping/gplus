@@ -35,12 +35,6 @@ type UserWithEmbedVersion struct {
 	EmbedVersionBase
 }
 
-// setupVersionDB 初始化乐观锁测试用 DB，使用独立 AutoMigrate 避免污染 columnNameCache
-func setupVersionDB[T any](t *testing.T) (*Repository[int64, T], *gorm.DB) {
-	t.Helper()
-	return setupTestDB[T](t)
-}
-
 // TestOptimisticLock_NoVersionField 无 version 字段时走原有路径（回归测试）
 func TestOptimisticLock_NoVersionField(t *testing.T) {
 	unregisterModel[TestUser]()
@@ -204,8 +198,8 @@ func TestOptimisticLock_EmbedVersion(t *testing.T) {
 	if err := repo.UpdateById(ctx, user); err != nil {
 		t.Fatalf("嵌入 version UpdateById 失败: %v", err)
 	}
-	if user.EmbedVersionBase.Version != 1 {
-		t.Errorf("嵌入 version 应递增为 1，实际 %d", user.EmbedVersionBase.Version)
+	if user.Version != 1 {
+		t.Errorf("嵌入 version 应递增为 1，实际 %d", user.Version)
 	}
 }
 

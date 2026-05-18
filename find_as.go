@@ -97,7 +97,7 @@ func FindOneAsTx[T any, Dest any, D comparable](
 		return ErrQueryNil
 	}
 	// 编程式防御：同 q 已设 limit/offset 时拒绝
-	if q.ScopeBuilder.limit > 0 || q.ScopeBuilder.offset > 0 {
+	if q.limit > 0 || q.offset > 0 {
 		return ErrFindOneAsConflict
 	}
 	if err := q.GetError(); err != nil {

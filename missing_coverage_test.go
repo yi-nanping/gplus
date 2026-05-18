@@ -499,7 +499,7 @@ func TestRepository_GetByLock(t *testing.T) {
 		db.Create(&TestUser{Name: "LockUser", Age: 30})
 		var found *TestUser
 		var lockErr error
-		db.Transaction(func(tx *gorm.DB) error {
+		_ = db.Transaction(func(tx *gorm.DB) error {
 			q, m := NewQuery[TestUser](ctx)
 			q.Eq(&m.Name, "LockUser")
 			found, lockErr = repo.GetByLock(q, tx)

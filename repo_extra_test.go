@@ -457,7 +457,7 @@ func TestRepository_RawScan_Join(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
-	db.AutoMigrate(&testOrder{})
+	_ = db.AutoMigrate(&testOrder{})
 	truncateTables(t, db, &testOrder{})
 	t.Cleanup(func() { truncateTables(t, db, &testOrder{}) })
 
@@ -491,7 +491,7 @@ func TestRepository_RawScan_JoinGroupBy(t *testing.T) {
 	repo, db := setupTestDB[TestUser](t)
 	ctx := context.Background()
 
-	db.AutoMigrate(&testOrder{})
+	_ = db.AutoMigrate(&testOrder{})
 	truncateTables(t, db, &testOrder{})
 	t.Cleanup(func() { truncateTables(t, db, &testOrder{}) })
 

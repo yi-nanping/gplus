@@ -276,7 +276,7 @@ func TestQuoteColumns_EmptySlice(t *testing.T) {
 	}
 	// nil 切片同样触发早返回
 	result2 := quoteColumns(nil, "`", "`")
-	if result2 != nil && len(result2) != 0 {
+	if len(result2) != 0 {
 		t.Errorf("nil 切片应直接返回 nil，实际 %v", result2)
 	}
 }
@@ -288,7 +288,7 @@ func TestGetByLock_DataRuleError(t *testing.T) {
 	ctx := invalidDataRuleCtx()
 
 	var err error
-	db.Transaction(func(tx *gorm.DB) error {
+	_ = db.Transaction(func(tx *gorm.DB) error {
 		q, m := NewQuery[TestUser](ctx)
 		q.Eq(&m.ID, 1)
 		_, err = repo.GetByLock(q, tx)

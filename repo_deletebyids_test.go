@@ -89,7 +89,7 @@ func TestDeleteByIdsTx_Rollback(t *testing.T) {
 	db.Create(&TestUser{Name: "Eve", Age: 28})
 
 	_ = db.Transaction(func(tx *gorm.DB) error {
-		repo.DeleteByIdsTx(ctx, []int64{1}, tx)
+		_, _ = repo.DeleteByIdsTx(ctx, []int64{1}, tx)
 		return errors.New("rollback")
 	})
 

@@ -78,33 +78,11 @@ func (c *queryCore) context() context.Context {
 	return c.metadata.ctx
 }
 
-// outerQuery 返回 outerQueryRef（用于 resolveColumnName 沿链查找）
-func (c *queryCore) outerQuery() AnyQuery {
-	return c.outerQueryRef
-}
-
 // appendErr 累积错误（与 v0.6.0 errs 哲学一致）
 func (c *queryCore) appendErr(err error) {
 	if err != nil {
 		c.errs = append(c.errs, err)
 	}
-}
-
-// getError 聚合错误（沿整个 outerQuery 链）
-func (c *queryCore) getError() error {
-	var all []error
-	cur := c
-	for cur != nil {
-		all = append(all, cur.errs...)
-		if cur.outerQueryRef == nil {
-			break
-		}
-		cur = cur.outerQueryRef.gplusCore()
-	}
-	if len(all) == 0 {
-		return nil
-	}
-	return errors.Join(all...)
 }
 
 // addAlias 注册一个 alias 实例。
