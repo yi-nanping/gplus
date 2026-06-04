@@ -30,6 +30,15 @@ type orderItem struct {
 	isRaw bool
 }
 
+// selectItem 存储单个 SELECT 投影项。
+// isRaw=false：expr 为列名，需经 quoteColumn 转义；
+// isRaw=true ：expr 为原生表达式，原样输出不转义，args 为其绑定参数（按出现顺序）。
+type selectItem struct {
+	expr  string
+	args  []any
+	isRaw bool
+}
+
 // joinInfo 结构化 Join 存储，优化性能
 // joinInfo 结构化存储 Join 信息，避免闭包带来的额外开销
 type joinInfo struct {
@@ -74,7 +83,7 @@ type ScopeBuilder struct {
 	// conditions 是核心字段，用于构建 Where 条件
 	conditions []condition
 	// selects 用于构建 Select 字段
-	selects []string
+	selects []selectItem
 	// omits 用于构建 Omit 字段
 	omits []string
 	// orders 统一存储所有排序项，保留调用顺序；isRaw=true 时不经转义直接传给 GORM
@@ -210,8 +219,8 @@ func (b *ScopeBuilder) Clear() {
 	b.havings = nil
 	b.joins = nil
 	b.preloads = nil
+	b.selects = nil
 	// 纯 string 切片无嵌套引用，[:0] 保留容量可安全复用
-	b.selects = b.selects[:0]
 	b.omits = b.omits[:0]
 	b.orders = b.orders[:0]
 	b.groups = b.groups[:0]
@@ -270,11 +279,12 @@ func (b *ScopeBuilder) applyBaseTable(db *gorm.DB) *gorm.DB {
 
 // applySelects select
 func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
-	// 对 Select 字段进行深度转义
-	// GORM 的 Select 接收 string 或 []string
-	// 为了防止 GORM 再次错误转义，我们传入处理好的字符串
 	if len(b.selects) > 0 {
-		db = db.Select(quoteColumns(b.selects, qL, qR))
+		cols := make([]string, len(b.selects))
+		for i, it := range b.selects {
+			cols[i] = it.expr
+		}
+		db = db.Select(quoteColumns(cols, qL, qR))
 	}
 	if len(b.omits) > 0 {
 		db = db.Omit(quoteColumns(b.omits, qL, qR)...)

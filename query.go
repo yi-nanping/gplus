@@ -237,7 +237,7 @@ func (q *Query[T]) Select(cols ...any) *Query[T] {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
 		}
-		q.selects = append(q.selects, name)
+		q.selects = append(q.selects, selectItem{expr: name})
 	}
 	return q
 }
@@ -251,7 +251,7 @@ func (q *Query[T]) SelectRaw(expr string) *Query[T] {
 		q.errs = append(q.errs, errors.New("gplus: SelectRaw expr cannot be empty"))
 		return q
 	}
-	q.selects = append(q.selects, expr)
+	q.selects = append(q.selects, selectItem{expr: expr, isRaw: true})
 	return q
 }
 
@@ -722,7 +722,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Distinct invalid column pointer: %w", err))
 			continue
 		}
-		q.selects = append(q.selects, name)
+		q.selects = append(q.selects, selectItem{expr: name})
 	}
 	return q
 }

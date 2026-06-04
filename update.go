@@ -334,7 +334,7 @@ func (u *Updater[T]) Select(cols ...any) *Updater[T] {
 			u.errs = append(u.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
 		}
-		u.selects = append(u.selects, name)
+		u.selects = append(u.selects, selectItem{expr: name})
 	}
 	return u
 }
