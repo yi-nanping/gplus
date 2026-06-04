@@ -38,7 +38,7 @@
 - **AC-2**（列数不匹配）：`targetCols` 长度=3，`src` 仅 2 个投影（`SelectRaw("ancestor_id").SelectRaw("depth")`）→ 返回 `(int64(0), ErrInsertSelectColMismatch)`，不执行任何 SQL（表行数不变）。
 - **AC-3**（无投影拒绝）：`src` 未调用任何 `SelectRaw`/`Select`（`len(src.selects)==0`）→ 返回 `(int64(0), ErrInsertSelectNoProjection)`，拒绝退化成 `INSERT ... SELECT *`。
 - **AC-4**（nil / builder 错误传播）：`src == nil` → 返回 `(int64(0), ErrQueryNil)`；`src` 上用非法字段指针（如 `src.SelectRaw("x").Eq(&otherStruct.Field, 1)` 使 `src.GetError() != nil`）→ 该错误原样返回，`(int64(0), <该错误>)`，不执行 SQL。
-- **AC-5**（裸 ? 内联，无外层括号，正向断言）：AC-1 同输入下，对 `dbResolver.Exec` 生成的 SQL 串断言：以 `INSERT INTO ` 开头、列清单后**直接跟 `SELECT`**（用 DryRun 取 `Statement.SQL.String()`，断言 `strings.Contains(sql, ") SELECT ")` 为真 **且** `strings.Contains(sql, ") (SELECT") 为假`），且 Vars 为 `[9, 5]`（投影参数 9 在前、WHERE 参数 5 在后）。**已实测**：SQLite 真实 Exec 成功插入 AC-1 期望行。
+- **AC-5**（裸 ? 内联，无外层括号，执行式断言）：`InsertSelect` 返回 `(int64, error)` 不暴露 SQL 串，故无外层括号由**真实执行**证明——AC-1 同输入下 SQLite Exec 成功且插入期望行 `{1,9,1}`，即证明 SELECT 未被外层括号包裹（SQLite 对 `INSERT INTO t (cols) (SELECT...)` 报 `near "(": syntax error`，若内联带外层括号 AC-1 必失败）。Vars 顺序 `[9, 5]`（投影绑定 9 在前、WHERE 绑定 5 在后）由 Round 1 双路径保证。**已实测**。本条与 AC-1 同测试函数覆盖（见 plan AC 映射）。
 - **AC-6**（事务变体 + 回滚）：`InsertSelectTx(r, ctx, tx, cols, src)` 在传入 `tx` 上执行返回 `(1, nil)`；随后 `tx.Rollback()` → 目标表无新增行（仍为初始行数）。
 - **AC-7**（不注入 DataRule）：ctx 中存在匹配源表的 `DataRule`（如 `{Column:"depth", ...}` 过滤掉 `depth=0` 行）时，`InsertSelect` 生成的 SELECT **不含**该隔离条件——插入行数 = 无 DataRule 时的全量。验证：同一 ctx 下 `r.List(srcList)` 受 DataRule 过滤（行数减少），而 `InsertSelect` 源 SELECT 不过滤（插入全量）。
 - **AC-8**（targetCols 注入防御）：`targetCols` 含原始字符串恶意 payload `"id) ; DROP TABLE closure; --"`（非字段指针）→ 经 `validDataRuleColumn` 白名单拒绝，返回 `(int64(0), ErrInsertSelectColInvalid)`，不执行任何 SQL（`closure` 表仍存在且行数不变）。
@@ -99,12 +99,13 @@ InsertSelect(r, ctx, targetCols, src) / InsertSelectTx(..., tx, ...)
 
 ### 裸 ? 物化与括号安全（AC-5）
 
-`src.ToDB(exec)` 返回带条件的 `*gorm.DB`；作为 Var 传入 `exec.Exec("... ?", subDB)` 时 GORM 内联其 SQL **不加外层括号**。**实测**（SQLite，已删探针）：
+`src.ToDB(exec)` 返回带条件的 `*gorm.DB`；作为 Var 传入 `exec.Exec("... ?", subDB)` 时 GORM 内联其 SQL **不加外层括号**。**端到端实测**（SQLite，真实 Exec，已删探针）：
 ```
-INSERT INTO test_users (username, age) SELECT username, age + ? FROM `test_users` WHERE "age" = ?
-Vars = [1 5]   // SelectRaw 的 1 在前，WHERE 的 5 在后
+prefix   = INSERT INTO "probe_closure" ("ancestor_id","descendant_id","depth")
+affected = 1, err = <nil>
+rows     = {1,5,0}(原) + {1,9,1}(新)
 ```
-故无需 DryRun 取 SQL 再手拼（原稿方案删除），一行 `Exec` 即可。
+故无需 DryRun 取 SQL 再手拼（原稿方案删除），一行 `Exec` 即可。`InsertSelect` 不暴露 SQL 串，无外层括号由真实插入成功反证（见 AC-5）。
 
 ## Error Handling
 
