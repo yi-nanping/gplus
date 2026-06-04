@@ -186,3 +186,62 @@ func TestInsertSelect_rejects_distinct_source(t *testing.T) {
 	}
 	assertClosureCount(t, db, 1)
 }
+
+// AC-7：源 SELECT 不注入 DataRule —— 有匹配规则也插入全量（2 行而非被过滤的 1 行）
+func TestInsertSelect_does_not_inject_data_rule(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	base := context.Background()
+	if err := repo.Save(base, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed1: %v", err)
+	}
+	if err := repo.Save(base, &Closure{AncestorID: 2, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed2: %v", err)
+	}
+	// 若被注入，DataRule 会把源 SELECT 过滤成 ancestor_id=1 单行
+	rules := []DataRule{{Column: "ancestor_id", Condition: "=", Value: "1"}}
+	ctx := context.WithValue(base, DataRuleKey, rules)
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").SelectRaw("?", 9).SelectRaw("depth + 1").Eq(&m.DescendantID, 5)
+	affected, err := InsertSelect(repo, ctx, []any{&m.AncestorID, &m.DescendantID, &m.Depth}, src)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if affected != 2 {
+		t.Errorf("affected 期望 2（DataRule 未注入），实际 %d", affected)
+	}
+	assertClosureCount(t, db, 4)
+}
+
+// AC-10：源 WHERE 0 命中 → (0, nil)，无副作用
+func TestInsertSelect_zero_match_is_noop(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").SelectRaw("?", 9).SelectRaw("depth + 1").Eq(&m.DescendantID, 99999)
+	affected, err := InsertSelect(repo, ctx, []any{&m.AncestorID, &m.DescendantID, &m.Depth}, src)
+	if affected != 0 || err != nil {
+		t.Errorf("期望 (0, nil)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}
+
+// AC-11：cancelled ctx → context.Canceled 透传，表不变
+func TestInsertSelect_propagates_context_cancel(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	base := context.Background()
+	if err := repo.Save(base, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	ctx, cancel := context.WithCancel(base)
+	cancel()
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").SelectRaw("?", 9).SelectRaw("depth + 1").Eq(&m.DescendantID, 5)
+	affected, err := InsertSelect(repo, ctx, []any{&m.AncestorID, &m.DescendantID, &m.Depth}, src)
+	if affected != 0 || !errors.Is(err, context.Canceled) {
+		t.Errorf("期望 (0, context.Canceled)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}
