@@ -231,8 +231,8 @@ func TestMainAlias_first_path_not_supported(t *testing.T) {
 	q.Eq(&m.DescendantID, 5)
 
 	_, err := repo.GetOne(q)
-	if err == nil || !strings.Contains(err.Error(), "no such column") {
-		t.Fatalf("期望 First 路径报 no such column（已知限制），实际 err: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no such column") || !strings.Contains(err.Error(), "closure.id") {
+		t.Fatalf("期望 First 路径报 no such column: closure.id（已知限制），实际 err: %v", err)
 	}
 }
 

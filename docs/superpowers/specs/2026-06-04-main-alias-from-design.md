@@ -170,6 +170,7 @@ applyMainAlias(db, qL, qR):
 - **副别名物化路径**：不改（现有 `applyJoins` 正确）。
 - **子查询主别名物化**：`SubQuery`/`SubQueryAs` 主别名仅供列解析，FROM 不物化（清空 mainAlias）。`SubQueryAs("o")` 自定义别名在真实执行下的 FROM 别名（`FROM t AS o`）**仍不支持**——属既有限制（修复前 SubQueryAs 主别名同样从不物化 FROM，清空 mainAlias 是维持「原本就坏、无调用点触发真实执行」原状，未新引入破绽）。本轮不修。
 - **First 路径主别名（已确认不支持，已知限制）**：plan 探针已实测（2026-06-04）：GORM `.First()` 自动追加 `ORDER BY \`closure\`.\`id\``（用 model **裸表名**主键），在 `FROM "closure" AS "ext"` 下别名遮蔽裸表名 → **`no such column: closure.id`**。故 `GetOne`/`Last`/`GetByLock`/`FirstOrCreate`/`FirstOrUpdate`（均走 `.First()`）**不支持主别名查询**。用户须改用 `List`/`Page`/`Count`/`ToDB`/`FindAs`（这些路径主别名已验证可用）。Round 3a 不修 GORM 的 First ORDER BY 行为（属 GORM 内部、超范围）。Round 3b 的 InsertSelect 源 query 走 ToDB→BuildQuery（非 First），不受影响。**新增验证型 AC-11 锁死此限制**。
+- **写路径真实执行主别名（已确认不支持，已知限制）**：主别名 Query 传 `DeleteByCondTx`/`UpdateByCond` 等写路径时，BuildDelete/BuildUpdate 结构性不物化 FROM 别名（无 `AS ext`），但 WHERE/SET 子句的字段指针（如 `Eq(&m.DescendantID,5)`）经 aliases map 解析**仍带 `ext.` 前缀**（`WHERE "ext"."descendant_id"=5`），而裸表 DELETE/UPDATE 无该别名定义 → 真实执行报 `no such column: ext.<col>`。故主别名 Query **不可用于 Delete/Update 真实执行**，用户须用不带别名的普通 `NewQuery`。AC-8 以 DryRun 验证「FROM 不物化」这一结构不变量（真实执行因上述前缀必失败，非本轮修复目标）。plan 探针实测（2026-06-04，commit f816da2）确认。
 - **多段表名（`a.b.c`）**：`validTableName` 单点，不支持（引号位置 + YAGNI）。
 - **DataRule 列加别名前缀（AC-9 已知限制）**：主别名 + DataRule 注入列 + 自连接时，DataRule 生成裸列名在多别名下 ambiguous；用户须在 `DataRule.Column` 自带 `ext.` 前缀规避。Round 3a 不修 DataRule 系统。InsertSelect 源 query 不注入 DataRule（Round 2 已定），不影响 Round 3b。
 - **InsertSelect scenario 2 本体**：Round 3b（依赖本轮合入）。
