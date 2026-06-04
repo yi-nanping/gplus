@@ -54,6 +54,12 @@ func NewQueryAs[T any](ctx context.Context, alias string) (*Query[T], *T) {
 	}
 	// 复用 As 的全部校验逻辑（name 正则 / 链查重 / 创建独立实例）
 	t := As[T](q, alias)
+	// 仅合法别名才物化 FROM：As 对非法别名已累积 ErrAliasInvalidName 并返回规范单例，
+	// 不写 mainAlias 避免把坏别名拼进 db.Table("... AS 1bad") 生成语法错误 SQL。
+	if aliasNameRegexp.MatchString(alias) {
+		q.mainAlias = alias
+		q.mainAliasTable = q.mainTableName()
+	}
 	return q, t
 }
 
@@ -237,21 +243,22 @@ func (q *Query[T]) Select(cols ...any) *Query[T] {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Select invalid column pointer: %w", err))
 			continue
 		}
-		q.selects = append(q.selects, name)
+		q.selects = append(q.selects, selectItem{expr: name})
 	}
 	return q
 }
 
-// SelectRaw 添加原生 SELECT 字段表达式。
-// expr 为原生 SQL 表达式，不经列名转义直接传入 GORM。
-// 示例：q.SelectRaw("AVG(age)").SelectRaw("COUNT(*) as cnt")
-// 注意：expr 参数由调用方负责安全性，不可直接拼接用户输入。
-func (q *Query[T]) SelectRaw(expr string) *Query[T] {
+// SelectRaw 添加原生 SELECT 字段表达式，支持参数绑定。
+// expr 为原生 SQL 表达式片段，不经列名转义直接传入 GORM；expr 由调用方负责安全性，
+// 严禁拼接用户输入。args 为 expr 中 ? 占位符的绑定值（参数化绑定，防 SQL 注入），
+// 用户输入一律走 args。expr 中 ? 仅作绑定占位符，勿写字面量 ?。
+// 示例：q.SelectRaw("AVG(age)").SelectRaw("age + ?", 1)
+func (q *Query[T]) SelectRaw(expr string, args ...any) *Query[T] {
 	if expr == "" {
 		q.errs = append(q.errs, errors.New("gplus: SelectRaw expr cannot be empty"))
 		return q
 	}
-	q.selects = append(q.selects, expr)
+	q.selects = append(q.selects, selectItem{expr: expr, args: args, isRaw: true})
 	return q
 }
 
@@ -722,7 +729,7 @@ func (q *Query[T]) Distinct(cols ...any) *Query[T] {
 			q.errs = append(q.errs, fmt.Errorf("gplus: Distinct invalid column pointer: %w", err))
 			continue
 		}
-		q.selects = append(q.selects, name)
+		q.selects = append(q.selects, selectItem{expr: name})
 	}
 	return q
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"unsafe"
 
 	"gorm.io/gorm"
@@ -13,17 +14,21 @@ import (
 )
 
 var (
-	ErrQueryNil          = errors.New("gplus: query cannot be nil")
-	ErrRawSQLEmpty       = errors.New("gplus: raw sql cannot be empty")
-	ErrDeleteEmpty       = errors.New("gplus: delete content is empty")
-	ErrUpdateEmpty       = errors.New("gplus: update content is empty")
-	ErrUpdateNoCondition = errors.New("gplus: update requires at least one condition to prevent full-table update")
-	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
-	ErrDefaultsNil       = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
-	ErrRestoreEmpty      = errors.New("gplus: restore condition is empty")
-	ErrOnConflictInvalid = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
-	ErrOptimisticLock    = errors.New("gplus: optimistic lock conflict (version mismatch or row not found)")
-	ErrSubqueryNil       = errors.New("gplus: subquery is nil")
+	ErrQueryNil                 = errors.New("gplus: query cannot be nil")
+	ErrRawSQLEmpty              = errors.New("gplus: raw sql cannot be empty")
+	ErrDeleteEmpty              = errors.New("gplus: delete content is empty")
+	ErrUpdateEmpty              = errors.New("gplus: update content is empty")
+	ErrUpdateNoCondition        = errors.New("gplus: update requires at least one condition to prevent full-table update")
+	ErrTransactionReq           = errors.New("gplus: locking query must be executed within a transaction")
+	ErrDefaultsNil              = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
+	ErrRestoreEmpty             = errors.New("gplus: restore condition is empty")
+	ErrOnConflictInvalid        = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
+	ErrOptimisticLock           = errors.New("gplus: optimistic lock conflict (version mismatch or row not found)")
+	ErrSubqueryNil              = errors.New("gplus: subquery is nil")
+	ErrInsertSelectColMismatch  = errors.New("gplus: InsertSelect target column count does not match source projection count")
+	ErrInsertSelectNoProjection = errors.New("gplus: InsertSelect source query has no Select/SelectRaw projection")
+	ErrInsertSelectColInvalid   = errors.New("gplus: InsertSelect target column name is not a valid identifier")
+	ErrInsertSelectModifier     = errors.New("gplus: InsertSelect source query must not use Distinct/Omit")
 )
 
 // OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
@@ -1090,4 +1095,59 @@ func (r *Repository[D, T]) InsertBatchOnConflictTx(ctx context.Context, entities
 		return err
 	}
 	return r.dbResolver(ctx, tx).Clauses(c).Create(&entities).Error
+}
+
+// InsertSelect 以 src 的 SELECT 结果作为数据源，插入到 Repository 的目标表 T。
+// 生成 INSERT INTO <T表> (<targetCols>) SELECT ...（单表，无 JOIN）。
+// targetCols 为目标列：字段指针（&m.Field）或原始列名字符串（须为合法标识符）。
+// targetCols 数量必须等于 src 的投影列数（每个 SelectRaw/Select 算 1 列）。
+// 不应用 DataRule（结构性写入不被隔离过滤）。
+// D/T 从 r 推断、S 从 src 推断，调用可省略全部类型参数。
+func InsertSelect[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, targetCols []any, src *Query[S]) (int64, error) {
+	return InsertSelectTx[T, S, D](r, ctx, nil, targetCols, src)
+}
+
+// InsertSelectTx 是 InsertSelect 的事务变体，在传入的 tx 上执行。
+func InsertSelectTx[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, tx *gorm.DB, targetCols []any, src *Query[S]) (int64, error) {
+	if src == nil {
+		return 0, ErrQueryNil
+	}
+	if err := src.GetError(); err != nil {
+		return 0, err
+	}
+	if src.distinct || len(src.omits) > 0 {
+		return 0, ErrInsertSelectModifier
+	}
+	if len(src.selects) == 0 {
+		return 0, ErrInsertSelectNoProjection
+	}
+	cols := make([]string, 0, len(targetCols))
+	for _, c := range targetCols {
+		if s, ok := c.(string); ok {
+			if !validDataRuleColumn.MatchString(s) {
+				return 0, ErrInsertSelectColInvalid
+			}
+			cols = append(cols, s)
+			continue
+		}
+		name, err := resolveColumnName(c)
+		if err != nil {
+			return 0, err
+		}
+		cols = append(cols, name)
+	}
+	if len(cols) == 0 || len(cols) != len(src.selects) {
+		return 0, ErrInsertSelectColMismatch
+	}
+	exec := r.dbResolver(ctx, tx)
+	qL, qR := getQuoteChar(exec)
+	var zero T
+	table := aliasSchemaTableName(reflect.TypeOf(zero))
+	qcols := make([]string, len(cols))
+	for i, c := range cols {
+		qcols[i] = qL + c + qR
+	}
+	prefix := "INSERT INTO " + qL + table + qR + " (" + strings.Join(qcols, ",") + ") "
+	res := exec.Exec(prefix+"?", src.ToDB(exec))
+	return res.RowsAffected, res.Error
 }

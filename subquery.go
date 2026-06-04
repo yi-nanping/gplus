@@ -41,6 +41,10 @@ func SubQuery[X any](outer AnyQuery) (*Query[X], *X) {
 	// 自动以表名注册主表 alias（sub 默认主表 alias = 表名）
 	tableName := aliasSchemaTableName(reflect.TypeOf((*X)(nil)).Elem())
 	sub, x := NewQueryAs[X](ctx, tableName)
+	// C-1：子查询不物化 FROM（FROM 由 ToDB 的 Model(getModelInstance[X]()) 注入，
+	// 主别名仅供列解析）。清空避免 BuildQuery 发射 FROM <table> AS <table> 污染子查询。
+	sub.mainAlias = ""
+	sub.mainAliasTable = ""
 	sub.gplusCore().outerQueryRef = outer
 	return sub, x
 }
@@ -62,6 +66,9 @@ func SubQueryAs[X any](outer AnyQuery, alias string) (*Query[X], *X) {
 	ctx := core.context()
 	// NewQueryAs 内部调用 As(q, alias)，完成主表 alias 注册和 addrLow/addrHigh 计算
 	sub, x := NewQueryAs[X](ctx, alias)
+	// C-1：子查询不物化 FROM（同 SubQuery）。SubQueryAs 自定义别名的 FROM 物化属既有不支持限制。
+	sub.mainAlias = ""
+	sub.mainAliasTable = ""
 	sub.gplusCore().outerQueryRef = outer
 	return sub, x
 }

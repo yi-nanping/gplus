@@ -217,8 +217,8 @@ func TestUpdater_Select_InvalidPointer(t *testing.T) {
 		if len(u.selects) != 1 {
 			t.Errorf("有效列应正常追加，期望 1 个，实际 %d", len(u.selects))
 		}
-		if !strings.Contains(u.selects[0], "username") {
-			t.Errorf("selects[0] 期望包含 username，实际 %q", u.selects[0])
+		if !strings.Contains(u.selects[0].expr, "username") {
+			t.Errorf("selects[0] 期望包含 username，实际 %q", u.selects[0].expr)
 		}
 	})
 }

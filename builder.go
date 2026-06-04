@@ -30,6 +30,15 @@ type orderItem struct {
 	isRaw bool
 }
 
+// selectItem 存储单个 SELECT 投影项。
+// isRaw=false：expr 为列名，需经 quoteColumn 转义；
+// isRaw=true ：expr 为原生表达式，原样输出不转义，args 为其绑定参数（按出现顺序）。
+type selectItem struct {
+	expr  string
+	args  []any
+	isRaw bool
+}
+
 // joinInfo 结构化 Join 存储，优化性能
 // joinInfo 结构化存储 Join 信息，避免闭包带来的额外开销
 type joinInfo struct {
@@ -66,15 +75,24 @@ var DataRuleKey = dataRuleKey{}
 // 允许: 字母/数字/下划线开头，可含单个点（table.col 形式）
 var validDataRuleColumn = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
 
+// validTableName 白名单校验主别名物化时的表名，防注入（防 Table("x\"; DROP--") 经 qL+table+qR 拼接被引号提前闭合）。
+// 与 validDataRuleColumn 完全同源（单点）：允许 closure / closure_2024 / schema.table；多段 a.b.c 不支持（引号位置 + YAGNI）。
+var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+
 // ScopeBuilder 负责将条件转换为 GORM Scope
 // 这是 QueryCond 和 UpdateCond 的基类
 type ScopeBuilder struct {
 	// tableName 动态表名
 	tableName string
+	// mainAlias 主表别名（NewQueryAs 设置；仅 SELECT 路径 BuildQuery/BuildCount 物化为 FROM table AS alias）
+	mainAlias string
+	// mainAliasTable 主表别名对应的裸表名。
+	// ScopeBuilder 是非泛型基类拿不到 queryCore.aliases map，故由有 T 的 NewQueryAs 预存（mainAliasTable 冗余于 aliasEntry.typ 是抽象边界的必然妥协）。
+	mainAliasTable string
 	// conditions 是核心字段，用于构建 Where 条件
 	conditions []condition
 	// selects 用于构建 Select 字段
-	selects []string
+	selects []selectItem
 	// omits 用于构建 Omit 字段
 	omits []string
 	// orders 统一存储所有排序项，保留调用顺序；isRaw=true 时不经转义直接传给 GORM
@@ -117,6 +135,8 @@ func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 		qL, qR := getQuoteChar(db)
 		//  基础条件
 		db = b.applyBaseTable(db)
+		// 主别名物化（仅 SELECT 路径）
+		db = b.applyMainAlias(db, qL, qR)
 		// where
 		db = b.applyWhere(db, qL, qR)
 		//  join
@@ -140,6 +160,8 @@ func (b *ScopeBuilder) BuildQuery() func(*gorm.DB) *gorm.DB {
 		qL, qR := getQuoteChar(db)
 		// 基础条件
 		db = b.applyBaseTable(db)
+		// 主别名物化（仅 SELECT 路径）
+		db = b.applyMainAlias(db, qL, qR)
 		// 查询字段
 		db = b.applySelects(db, qL, qR)
 		// 去重
@@ -198,20 +220,22 @@ func (b *ScopeBuilder) BuildDelete() func(*gorm.DB) *gorm.DB {
 func (b *ScopeBuilder) Clear() {
 	// 1. 基础字段复位
 	b.tableName = "" //必须清除表名
+	b.mainAlias = ""
+	b.mainAliasTable = ""
 	b.limit = 0
 	b.offset = 0
 	b.unscoped = false
 	b.distinct = false
 
 	// 2. 切片复位
-	// 含嵌套引用的切片（condition.group、joinInfo.args、preloadInfo.args）
+	// 含嵌套引用的切片（condition.group、joinInfo.args、preloadInfo.args、selectItem.args）
 	// 置 nil 以释放内部引用，避免 backing array 持续持有内存
 	b.conditions = nil
 	b.havings = nil
 	b.joins = nil
 	b.preloads = nil
+	b.selects = nil
 	// 纯 string 切片无嵌套引用，[:0] 保留容量可安全复用
-	b.selects = b.selects[:0]
 	b.omits = b.omits[:0]
 	b.orders = b.orders[:0]
 	b.groups = b.groups[:0]
@@ -268,13 +292,61 @@ func (b *ScopeBuilder) applyBaseTable(db *gorm.DB) *gorm.DB {
 	return db
 }
 
+// applyMainAlias 物化主表别名为 FROM <table> AS <alias>。
+// 仅 SELECT 路径（BuildQuery/BuildCount）调用；写路径 BuildUpdate/BuildDelete 不调用
+// （DELETE/UPDATE ... AS alias 在 MySQL/PG 多方言非法，结构性禁止）。
+// table 优先用 b.tableName（用户 Table() 覆盖值），否则用 NewQueryAs 预存的 mainAliasTable。
+func (b *ScopeBuilder) applyMainAlias(db *gorm.DB, qL, qR string) *gorm.DB {
+	if b.mainAlias == "" {
+		return db
+	}
+	table := b.tableName
+	if table == "" {
+		table = b.mainAliasTable
+	}
+	if !validTableName.MatchString(table) {
+		return db // 表名非法：保守不物化（异常会在 GORM 执行层暴露）
+	}
+	return db.Table(qL + table + qR + " AS " + qL + b.mainAlias + qR)
+}
+
 // applySelects select
 func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
-	// 对 Select 字段进行深度转义
-	// GORM 的 Select 接收 string 或 []string
-	// 为了防止 GORM 再次错误转义，我们传入处理好的字符串
 	if len(b.selects) > 0 {
-		db = db.Select(quoteColumns(b.selects, qL, qR))
+		// 检查是否有任何带参数绑定的投影项
+		hasArgs := false
+		for _, it := range b.selects {
+			if len(it.args) > 0 {
+				hasArgs = true
+				break
+			}
+		}
+		if !hasArgs {
+			// 零回归路径：与迁移前完全一致（逗号无空格）
+			cols := make([]string, len(b.selects))
+			for i, it := range b.selects {
+				cols[i] = it.expr
+			}
+			db = db.Select(quoteColumns(cols, qL, qR))
+		} else {
+			// 绑定路径：单串 + 顺序展平 args（逗号带空格）
+			// raw 项原样输出不转义，普通列经 quoteColumn
+			parts := make([]string, len(b.selects))
+			var flatArgs []any
+			for i, it := range b.selects {
+				if it.isRaw {
+					parts[i] = it.expr
+					flatArgs = append(flatArgs, it.args...)
+				} else {
+					parts[i] = quoteColumn(it.expr, qL, qR)
+				}
+			}
+			expr := strings.Join(parts, ", ")
+			if b.distinct {
+				expr = "DISTINCT " + expr
+			}
+			db = db.Select(expr, flatArgs...)
+		}
 	}
 	if len(b.omits) > 0 {
 		db = db.Omit(quoteColumns(b.omits, qL, qR)...)
