@@ -76,10 +76,11 @@ InsertSelect spec 的 Round 3 推迟说明称「主别名在 List/Find 路径会
 - **AC-8（写路径不物化，守卫型，H-2）**：`q, m := r.NewQueryAs(ctx, "ext")`；`q.Eq(&m.DescendantID, 5)`；`r.DeleteByCondTx(q, nil)`（签名 `(q *Query[T], tx *gorm.DB) (int64,error)`，ctx 取自 `q.Context()`）真实执行返回 `(1, nil)`；该路径生成的 SQL **不含** `AS ext`（`DELETE FROM closure AS ext` 在 MySQL/PG 非法）。
   > **守卫型 AC（非复现型）**：BuildDelete 不调 `applyMainAlias`，实现前后都不含 `AS ext`，不要求先红后绿；本 AC 锁死「写路径永不物化主别名」防回归。
 - **AC-9（DataRule+自连接 ambiguous 已知限制，验证型）**：`closure` 含若干行；ctx 注入 `DataRule{Column:"depth", Condition:">=", Value:"0"}`；`q, ext := r.NewQueryAs(ctx, "ext")` + `As[Closure](q,"sub")` + `CrossJoinAs` 自连接。真实执行 `r.List(q)`。**断言**：返回 error 且错误串含子串 `ambiguous`（锁定「DataRule 裸列名在多别名自连接下 ambiguous」为已知限制——用户须在 `DataRule.Column` 自带 `ext.` 前缀规避，Round 3a 不负责加前缀）。
-  > plan 阶段须用一次性探针确认 SQLite 对此场景的确切错误文本（预期含 `ambiguous`），据此**定死**单一断言；若实测**不报** ambiguous，则 AC-9 改为断言「返回行集 = DataRule 过滤后预期」并把已知限制降级为文档说明。AC 在 plan 阶段定死，不在测试期二选一。
+  > plan 探针已实测确认（2026-06-04）：自连接下 DataRule 裸列 `depth` 报 `ambiguous column name: depth`（单表 P5b 不报，仅自连接）。断言定死为错误串含 `ambiguous`。
 - **AC-10（COUNT/Page 路径真实执行，BuildCount 物化）**：`closure` 含 2 行 `{1,5,0}`、`{2,5,0}`。`q, m := r.NewQueryAs(ctx, "ext")`；`q.Eq(&m.DescendantID, 5)`。
   - `r.Count(q)` 真实执行返回 `(2, nil)`；`q.ToCountSQL(db)` 含 `Contains("closure\" AS \"ext")`（证明 BuildCount 路径 `Model(new(T))+db.Table("...AS...")` 下 FROM 别名生效，COUNT 与 SELECT 表名一致）。
   - `list, total, err := r.Page(q, false)` 返回 `total==2`、`len(list)==2`（验证 Page 的 COUNT 段 + 数据段在 `Model+Session{}` clone=2 下别名一致，total 与 list 不错配）。
+- **AC-11（First 路径主别名不支持，已知限制守卫，验证型）**：`closure` 含 1 行 `{1,5,0}`。`q, m := r.NewQueryAs(ctx, "ext")`；`q.Eq(&m.DescendantID, 5)`；`r.GetOne(q)` 真实执行。**断言**：返回 error 且错误串含子串 `no such column` 与 `closure.id`（锁定「主别名查询走 First 路径因 GORM 自动 `ORDER BY closure.id` 裸表名被别名遮蔽而失败」为已知限制——用户须改用 `List`/`Count`/`Page`/`ToDB`/`FindAs`）。plan 探针已实测确认此错误文本。
 
 ## Architecture
 
@@ -145,7 +146,7 @@ applyMainAlias(db, qL, qR):
 > 6. `FindAs`（find_as.go:48，`Model(new(T)).Scopes(BuildQuery()).Find(dest)`，AC-6 用此路径）
 >
 > GORM 中 `Statement.Table != ""`（`db.Table()` 设过）优先于 Model/dest 反射，预期各路径一致，但须实测确认（尤其 ToDB 的 `Session{NewDB:true}` clone=1 与 Page 的 `Session{}` clone=2 后 Table 是否保留）。
-> **诚实标注**：已删探针只实测了**无引号** `db.Table("closure AS ext")` 可执行；H-3 定的**带引号** `db.Table(\`"closure" AS "ext"\`)` 形态**尚未实测**。plan 阶段须探针确认带引号形态在 SQLite 真实执行成功；若被 GORM 误转义/执行失败，则退回无引号形态并重评 R1。
+> **plan 探针已实测确认（2026-06-04）**：(1)**带引号** `db.Table(\`"closure" AS "ext"\`)` 在 SQLite 真实执行成功，GORM 原样透传，ToSQL 含 `closure" AS "ext`；(2) Count 路径 `Model+Table` → `SELECT count(*) FROM "closure" AS "ext"` cnt 正确；(3) 自连接（主表带引号 + JOIN 不带引号）`FindAs` 风格 Find 成功返回期望行；(4) **First 路径失败**（见 R4/AC-11）。实现期仍须对 List/ToSQL/ToDB/Page 各路径补回归断言确保一致。
 
 ## Error Handling
 
@@ -168,7 +169,7 @@ applyMainAlias(db, qL, qR):
 - **NewUpdaterAs**：不新增（无调用点，YAGNI）。写路径 `AS` 多方言不可移植，故 BuildUpdate/BuildDelete 结构性不调 `applyMainAlias`。
 - **副别名物化路径**：不改（现有 `applyJoins` 正确）。
 - **子查询主别名物化**：`SubQuery`/`SubQueryAs` 主别名仅供列解析，FROM 不物化（清空 mainAlias）。`SubQueryAs("o")` 自定义别名在真实执行下的 FROM 别名（`FROM t AS o`）**仍不支持**——属既有限制（修复前 SubQueryAs 主别名同样从不物化 FROM，清空 mainAlias 是维持「原本就坏、无调用点触发真实执行」原状，未新引入破绽）。本轮不修。
-- **First 路径单独 AC**：物化逻辑统一在 BuildQuery/BuildCount，First 路径（GetOne/Last/GetByLock/FirstOrCreate/FirstOrUpdate）的主别名物化由探针验证，不单列 AC。`.First()` 追加 `ORDER BY pk LIMIT 1` 的裸主键在主别名 FROM 下若异常，记为已知风险（plan 探针先确认）。
+- **First 路径主别名（已确认不支持，已知限制）**：plan 探针已实测（2026-06-04）：GORM `.First()` 自动追加 `ORDER BY \`closure\`.\`id\``（用 model **裸表名**主键），在 `FROM "closure" AS "ext"` 下别名遮蔽裸表名 → **`no such column: closure.id`**。故 `GetOne`/`Last`/`GetByLock`/`FirstOrCreate`/`FirstOrUpdate`（均走 `.First()`）**不支持主别名查询**。用户须改用 `List`/`Page`/`Count`/`ToDB`/`FindAs`（这些路径主别名已验证可用）。Round 3a 不修 GORM 的 First ORDER BY 行为（属 GORM 内部、超范围）。Round 3b 的 InsertSelect 源 query 走 ToDB→BuildQuery（非 First），不受影响。**新增验证型 AC-11 锁死此限制**。
 - **多段表名（`a.b.c`）**：`validTableName` 单点，不支持（引号位置 + YAGNI）。
 - **DataRule 列加别名前缀（AC-9 已知限制）**：主别名 + DataRule 注入列 + 自连接时，DataRule 生成裸列名在多别名下 ambiguous；用户须在 `DataRule.Column` 自带 `ext.` 前缀规避。Round 3a 不修 DataRule 系统。InsertSelect 源 query 不注入 DataRule（Round 2 已定），不影响 Round 3b。
 - **InsertSelect scenario 2 本体**：Round 3b（依赖本轮合入）。
@@ -179,7 +180,7 @@ applyMainAlias(db, qL, qR):
 - **R1（跨方言引号一致性）**：FROM 的 `qL+table+qR AS qL+alias+qR` 与 SELECT/WHERE 中 `quoteColumn` 对别名引用的转义须一致（同一 `getQuoteChar` 来源，已在 H-3 锁定）。SQLite 已实测（无引号形态）；带引号形态 + MySQL/PG/DM/Oracle 待 plan 探针/真机。AC-6 用字段指针路径覆盖 `resolveColumnName`→`quoteColumn` 与 FROM 别名引号端到端一致性。
 - **R2（既有 e2e 断言变化）**：`alias_datarule_e2e_test.go` 等 string-contains 断言修复后仍 PASS（FROM 新增 `AS ext` 不破坏 `Contains("boss")`）；子查询测试因 C-1 修复（mainAlias 清空）FROM 不变，零影响。须全量回归确认。
 - **R3（软删除模型 deleted_at 前缀）**：Closure 模型无 `deleted_at`，AC 不涉软删除。带软删除字段的模型在主别名 + 自连接下，GORM 自动 `deleted_at IS NULL` 是否带别名前缀未验证——记为已知风险，下游 InsertSelect scenario 2（Round 3b）若用软删除 closure 表须实测。
-- **R4（First 路径裸主键）**：`.First()` 追加 `ORDER BY pk LIMIT 1` 的裸主键 `id`/`WHERE id=?` 在 `FROM closure AS ext` 下能否解析（单表无歧义预期 OK，自连接下未涉）——plan 探针先确认。
+- **R4（First 路径裸主键，已确认不支持）**：plan 探针实测确认 `.First()` 追加 `ORDER BY \`closure\`.\`id\`` 在 `FROM "closure" AS "ext"` 下报 `no such column: closure.id`。已降级为「已知限制」（见显式排除 + AC-11），非待办风险。
 
 ## 审计修正记录
 
