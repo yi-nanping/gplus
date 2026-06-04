@@ -242,16 +242,17 @@ func (q *Query[T]) Select(cols ...any) *Query[T] {
 	return q
 }
 
-// SelectRaw 添加原生 SELECT 字段表达式。
-// expr 为原生 SQL 表达式，不经列名转义直接传入 GORM。
-// 示例：q.SelectRaw("AVG(age)").SelectRaw("COUNT(*) as cnt")
+// SelectRaw 添加原生 SELECT 字段表达式，支持参数绑定。
+// expr 为原生 SQL 表达式，不经列名转义直接传入 GORM；
+// args 为可选的参数绑定值，对应 expr 中的 ? 占位符，防止 SQL 注入。
+// 示例：q.SelectRaw("AVG(age)").SelectRaw("age + ?", 1)
 // 注意：expr 参数由调用方负责安全性，不可直接拼接用户输入。
-func (q *Query[T]) SelectRaw(expr string) *Query[T] {
+func (q *Query[T]) SelectRaw(expr string, args ...any) *Query[T] {
 	if expr == "" {
 		q.errs = append(q.errs, errors.New("gplus: SelectRaw expr cannot be empty"))
 		return q
 	}
-	q.selects = append(q.selects, selectItem{expr: expr, isRaw: true})
+	q.selects = append(q.selects, selectItem{expr: expr, args: args, isRaw: true})
 	return q
 }
 

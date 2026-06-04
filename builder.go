@@ -280,11 +280,36 @@ func (b *ScopeBuilder) applyBaseTable(db *gorm.DB) *gorm.DB {
 // applySelects select
 func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 	if len(b.selects) > 0 {
-		cols := make([]string, len(b.selects))
-		for i, it := range b.selects {
-			cols[i] = it.expr
+		// 检查是否有任何带参数绑定的投影项
+		hasArgs := false
+		for _, it := range b.selects {
+			if len(it.args) > 0 {
+				hasArgs = true
+				break
+			}
 		}
-		db = db.Select(quoteColumns(cols, qL, qR))
+		if !hasArgs {
+			// 零回归路径：与迁移前完全一致（逗号无空格）
+			cols := make([]string, len(b.selects))
+			for i, it := range b.selects {
+				cols[i] = it.expr
+			}
+			db = db.Select(quoteColumns(cols, qL, qR))
+		} else {
+			// 绑定路径：单串 + 顺序展平 args（逗号带空格）
+			// raw 项原样输出不转义，普通列经 quoteColumn
+			parts := make([]string, len(b.selects))
+			var flatArgs []any
+			for i, it := range b.selects {
+				if it.isRaw {
+					parts[i] = it.expr
+					flatArgs = append(flatArgs, it.args...)
+				} else {
+					parts[i] = quoteColumn(it.expr, qL, qR)
+				}
+			}
+			db = db.Select(strings.Join(parts, ", "), flatArgs...)
+		}
 	}
 	if len(b.omits) > 0 {
 		db = db.Omit(quoteColumns(b.omits, qL, qR)...)
