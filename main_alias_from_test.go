@@ -128,3 +128,83 @@ func TestMainAlias_no_alias_from_has_no_as(t *testing.T) {
 		t.Fatalf("无别名 List 应成功，实际: %v", err)
 	}
 }
+
+// AC-6：自连接主+副别名真实执行（scenario 2 源 query 形态），FindAs 投影
+func TestMainAlias_selfjoin_executes_and_projects(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	for _, c := range []Closure{{AncestorID: 1, DescendantID: 5, Depth: 0}, {AncestorID: 5, DescendantID: 7, Depth: 0}} {
+		if err := repo.Save(ctx, &c); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	q, ext := repo.NewQueryAs(ctx, "ext")
+	sub := As[Closure](q, "sub")
+	q.CrossJoinAs(sub).
+		WhereRaw("sub.ancestor_id = ?", 5).
+		Eq(&ext.DescendantID, 5)
+	q.SelectRaw("ext.ancestor_id").
+		SelectRaw("sub.descendant_id").
+		SelectRaw("ext.depth + sub.depth + 1 AS depth")
+
+	// 投影 DTO：字段经 GORM snake_case 映射 ancestor_id/descendant_id/depth
+	type projRow struct {
+		AncestorID   uint
+		DescendantID uint
+		Depth        uint
+	}
+	var rows []projRow
+	if err := FindAs[Closure, projRow](repo, q, &rows); err != nil {
+		t.Fatalf("FindAs 应成功，实际: %v", err)
+	}
+	if len(rows) != 1 || rows[0] != (projRow{AncestorID: 1, DescendantID: 7, Depth: 1}) {
+		t.Fatalf("期望 1 行 {1,7,1}，实际 %+v", rows)
+	}
+
+	sql, _ := q.ToSQL(db)
+	// FROM 主表带引号；CROSS JOIN 副表不带引号（appendJoinAsNoOn 生成）
+	if !strings.Contains(sql, `closure" AS "ext`) {
+		t.Errorf("FROM 应含带引号主别名 closure AS ext，实际: %s", sql)
+	}
+	if !strings.Contains(sql, "CROSS JOIN closure AS sub") {
+		t.Errorf("JOIN 应含不带引号副别名 closure AS sub，实际: %s", sql)
+	}
+}
+
+// AC-10：Count/Page 路径（BuildCount）主别名物化，total 与 list 表名一致
+func TestMainAlias_count_and_page_materialize_alias(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	for _, c := range []Closure{{AncestorID: 1, DescendantID: 5, Depth: 0}, {AncestorID: 2, DescendantID: 5, Depth: 0}} {
+		if err := repo.Save(ctx, &c); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	// Count 路径
+	q1, m1 := repo.NewQueryAs(ctx, "ext")
+	q1.Eq(&m1.DescendantID, 5)
+	total, err := repo.Count(q1)
+	if err != nil {
+		t.Fatalf("Count 应成功，实际: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("Count 期望 2，实际 %d", total)
+	}
+	countSQL, _ := q1.ToCountSQL(db)
+	if !strings.Contains(countSQL, `closure" AS "ext`) {
+		t.Errorf("ToCountSQL FROM 应含 closure AS ext，实际: %s", countSQL)
+	}
+
+	// Page 路径（COUNT 段 + 数据段一致）
+	q2, m2 := repo.NewQueryAs(ctx, "ext")
+	q2.Eq(&m2.DescendantID, 5)
+	list, pageTotal, err := repo.Page(q2, false)
+	if err != nil {
+		t.Fatalf("Page 应成功，实际: %v", err)
+	}
+	if pageTotal != 2 || len(list) != 2 {
+		t.Fatalf("Page 期望 total=2 len=2，实际 total=%d len=%d", pageTotal, len(list))
+	}
+}
