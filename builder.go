@@ -213,7 +213,7 @@ func (b *ScopeBuilder) Clear() {
 	b.distinct = false
 
 	// 2. 切片复位
-	// 含嵌套引用的切片（condition.group、joinInfo.args、preloadInfo.args）
+	// 含嵌套引用的切片（condition.group、joinInfo.args、preloadInfo.args、selectItem.args）
 	// 置 nil 以释放内部引用，避免 backing array 持续持有内存
 	b.conditions = nil
 	b.havings = nil
