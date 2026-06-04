@@ -75,11 +75,20 @@ var DataRuleKey = dataRuleKey{}
 // 允许: 字母/数字/下划线开头，可含单个点（table.col 形式）
 var validDataRuleColumn = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
 
+// validTableName 白名单校验主别名物化时的表名，防注入（防 Table("x\"; DROP--") 经 qL+table+qR 拼接被引号提前闭合）。
+// 与 validDataRuleColumn 完全同源（单点）：允许 closure / closure_2024 / schema.table；多段 a.b.c 不支持（引号位置 + YAGNI）。
+var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+
 // ScopeBuilder 负责将条件转换为 GORM Scope
 // 这是 QueryCond 和 UpdateCond 的基类
 type ScopeBuilder struct {
 	// tableName 动态表名
 	tableName string
+	// mainAlias 主表别名（NewQueryAs 设置；仅 SELECT 路径 BuildQuery/BuildCount 物化为 FROM table AS alias）
+	mainAlias string
+	// mainAliasTable 主表别名对应的裸表名。
+	// ScopeBuilder 是非泛型基类拿不到 queryCore.aliases map，故由有 T 的 NewQueryAs 预存（mainAliasTable 冗余于 aliasEntry.typ 是抽象边界的必然妥协）。
+	mainAliasTable string
 	// conditions 是核心字段，用于构建 Where 条件
 	conditions []condition
 	// selects 用于构建 Select 字段
@@ -126,6 +135,8 @@ func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 		qL, qR := getQuoteChar(db)
 		//  基础条件
 		db = b.applyBaseTable(db)
+		// 主别名物化（仅 SELECT 路径）
+		db = b.applyMainAlias(db, qL, qR)
 		// where
 		db = b.applyWhere(db, qL, qR)
 		//  join
@@ -149,6 +160,8 @@ func (b *ScopeBuilder) BuildQuery() func(*gorm.DB) *gorm.DB {
 		qL, qR := getQuoteChar(db)
 		// 基础条件
 		db = b.applyBaseTable(db)
+		// 主别名物化（仅 SELECT 路径）
+		db = b.applyMainAlias(db, qL, qR)
 		// 查询字段
 		db = b.applySelects(db, qL, qR)
 		// 去重
@@ -275,6 +288,24 @@ func (b *ScopeBuilder) applyBaseTable(db *gorm.DB) *gorm.DB {
 		db = db.Unscoped()
 	}
 	return db
+}
+
+// applyMainAlias 物化主表别名为 FROM <table> AS <alias>。
+// 仅 SELECT 路径（BuildQuery/BuildCount）调用；写路径 BuildUpdate/BuildDelete 不调用
+// （DELETE/UPDATE ... AS alias 在 MySQL/PG 多方言非法，结构性禁止）。
+// table 优先用 b.tableName（用户 Table() 覆盖值），否则用 NewQueryAs 预存的 mainAliasTable。
+func (b *ScopeBuilder) applyMainAlias(db *gorm.DB, qL, qR string) *gorm.DB {
+	if b.mainAlias == "" {
+		return db
+	}
+	table := b.tableName
+	if table == "" {
+		table = b.mainAliasTable
+	}
+	if !validTableName.MatchString(table) {
+		return db // 表名非法：保守不物化（异常会在 GORM 执行层暴露）
+	}
+	return db.Table(qL + table + qR + " AS " + qL + b.mainAlias + qR)
 }
 
 // applySelects select

@@ -54,6 +54,12 @@ func NewQueryAs[T any](ctx context.Context, alias string) (*Query[T], *T) {
 	}
 	// 复用 As 的全部校验逻辑（name 正则 / 链查重 / 创建独立实例）
 	t := As[T](q, alias)
+	// 仅合法别名才物化 FROM：As 对非法别名已累积 ErrAliasInvalidName 并返回规范单例，
+	// 不写 mainAlias 避免把坏别名拼进 db.Table("... AS 1bad") 生成语法错误 SQL。
+	if aliasNameRegexp.MatchString(alias) {
+		q.mainAlias = alias
+		q.mainAliasTable = q.mainTableName()
+	}
 	return q, t
 }
 
