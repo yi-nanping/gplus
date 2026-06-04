@@ -165,3 +165,15 @@ func TestSelectRaw_clear_resets_args(t *testing.T) {
 		t.Errorf("Clear 后 Vars 应为空，实际 %v", vars)
 	}
 }
+
+// AC-12：Distinct + SelectRaw(args) 必须保留 DISTINCT 且 Vars 正确
+func TestSelectRaw_with_distinct_keeps_distinct(t *testing.T) {
+	db := newDryRunDB(t)
+	q, u := NewQuery[TestUser](context.Background())
+	q.Distinct(&u.Age).SelectRaw("age + ?", 1)
+	sql, vars := buildSQL(t, db, q)
+	assertSQL(t, sql, "DISTINCT", "age + ?")
+	if len(vars) != 1 || vars[0] != 1 {
+		t.Errorf("Vars 期望 [1]，实际 %v", vars)
+	}
+}

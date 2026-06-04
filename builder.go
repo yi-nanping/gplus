@@ -308,7 +308,11 @@ func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 					parts[i] = quoteColumn(it.expr, qL, qR)
 				}
 			}
-			db = db.Select(strings.Join(parts, ", "), flatArgs...)
+			expr := strings.Join(parts, ", ")
+			if b.distinct {
+				expr = "DISTINCT " + expr
+			}
+			db = db.Select(expr, flatArgs...)
 		}
 	}
 	if len(b.omits) > 0 {
