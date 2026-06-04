@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"unsafe"
 
 	"gorm.io/gorm"
@@ -1090,4 +1091,43 @@ func (r *Repository[D, T]) InsertBatchOnConflictTx(ctx context.Context, entities
 		return err
 	}
 	return r.dbResolver(ctx, tx).Clauses(c).Create(&entities).Error
+}
+
+// InsertSelect 以 src 的 SELECT 结果作为数据源，插入到 Repository 的目标表 T。
+// 生成 INSERT INTO <T表> (<targetCols>) SELECT ...（单表，无 JOIN）。
+// targetCols 为目标列：字段指针（&m.Field）或原始列名字符串（须为合法标识符）。
+// targetCols 数量必须等于 src 的投影列数（每个 SelectRaw/Select 算 1 列）。
+// 不应用 DataRule（结构性写入不被隔离过滤）。
+// D/T 从 r 推断、S 从 src 推断，调用可省略全部类型参数。
+func InsertSelect[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, targetCols []any, src *Query[S]) (int64, error) {
+	return InsertSelectTx[T, S, D](r, ctx, nil, targetCols, src)
+}
+
+// InsertSelectTx 是 InsertSelect 的事务变体，在传入的 tx 上执行。
+func InsertSelectTx[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, tx *gorm.DB, targetCols []any, src *Query[S]) (int64, error) {
+	if src == nil {
+		return 0, ErrQueryNil
+	}
+	if err := src.GetError(); err != nil {
+		return 0, err
+	}
+	cols := make([]string, 0, len(targetCols))
+	for _, c := range targetCols {
+		name, err := resolveColumnName(c)
+		if err != nil {
+			return 0, err
+		}
+		cols = append(cols, name)
+	}
+	exec := r.dbResolver(ctx, tx)
+	qL, qR := getQuoteChar(exec)
+	var zero T
+	table := aliasSchemaTableName(reflect.TypeOf(zero))
+	qcols := make([]string, len(cols))
+	for i, c := range cols {
+		qcols[i] = qL + c + qR
+	}
+	prefix := "INSERT INTO " + qL + table + qR + " (" + strings.Join(qcols, ",") + ") "
+	res := exec.Exec(prefix+"?", src.ToDB(exec))
+	return res.RowsAffected, res.Error
 }
