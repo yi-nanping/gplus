@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 // AC-1：NewQueryAs 主别名查询经 List 真实执行，FROM 物化为 closure AS ext
@@ -169,6 +171,94 @@ func TestMainAlias_selfjoin_executes_and_projects(t *testing.T) {
 	}
 	if !strings.Contains(sql, "CROSS JOIN closure AS sub") {
 		t.Errorf("JOIN 应含不带引号副别名 closure AS sub，实际: %s", sql)
+	}
+}
+
+// AC-8：主别名 Query 传 DeleteByCondTx 走 BuildDelete，不物化别名（结构性禁止）
+// BuildDelete 只调用 applyWhere，不调用 applyMainAlias，因此 FROM 不含 AS ext。
+// 通过 db.ToSQL（DryRun 等价）验证 SQL 形态——不真实执行，
+// 因为 WHERE 字段仍带别名前缀（ext.descendant_id），属已知限制。
+func TestMainAlias_delete_path_no_materialize(t *testing.T) {
+	_, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+
+	q, m := NewQueryAs[Closure](ctx, "ext")
+	q.Eq(&m.DescendantID, 5)
+
+	var model Closure
+	deleteSQL := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).Model(&model).Scopes(q.BuildDelete()).Delete(&model)
+	})
+	// FROM 不含 AS ext（BuildDelete 不调用 applyMainAlias）
+	if strings.Contains(deleteSQL, `AS "ext"`) || strings.Contains(deleteSQL, "AS ext") {
+		t.Errorf("DELETE SQL FROM 不应含 AS ext，实际: %s", deleteSQL)
+	}
+	if !strings.Contains(deleteSQL, "DELETE FROM") {
+		t.Errorf("应生成 DELETE FROM 语句，实际: %s", deleteSQL)
+	}
+}
+
+// AC-9：主别名 + DataRule 注入裸列 depth + 自连接 → ambiguous（已知限制）
+func TestMainAlias_datarule_selfjoin_ambiguous(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	_ = db
+	rules := []DataRule{{Column: "depth", Condition: ">=", Value: "0"}}
+	ctx := context.WithValue(context.Background(), DataRuleKey, rules)
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	q, ext := repo.NewQueryAs(ctx, "ext")
+	sub := As[Closure](q, "sub")
+	q.CrossJoinAs(sub).WhereRaw("sub.ancestor_id = ?", 1).Eq(&ext.DescendantID, 5)
+	q.SelectRaw("ext.ancestor_id")
+
+	_, err := repo.List(q)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "ambiguous") {
+		t.Fatalf("期望 ambiguous 错误（DataRule 裸列 depth 在自连接下歧义），实际 err: %v", err)
+	}
+}
+
+// AC-11：主别名查询走 First 路径（GetOne）因 GORM 自动 ORDER BY closure.id 裸表名被别名遮蔽而失败（已知限制）
+func TestMainAlias_first_path_not_supported(t *testing.T) {
+	repo, _ := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	q, m := repo.NewQueryAs(ctx, "ext")
+	q.Eq(&m.DescendantID, 5)
+
+	_, err := repo.GetOne(q)
+	if err == nil || !strings.Contains(err.Error(), "no such column") {
+		t.Fatalf("期望 First 路径报 no such column（已知限制），实际 err: %v", err)
+	}
+}
+
+// M-1：validTableName 注入守卫表驱动单测
+func TestMainAlias_validTableName_guard(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"裸表名", "closure", true},
+		{"带数字下划线", "closure_2024", true},
+		{"单点 schema.table", "main.closure", true},
+		{"引号闭合注入", `x"; DROP TABLE closure; --`, false},
+		{"AS 注入", "closure AS evil", false},
+		{"空格", "clo sure", false},
+		{"空串", "", false},
+		{"数字开头", "2closure", false},
+		{"多段 a.b.c 不支持", "a.b.c", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validTableName.MatchString(tc.input); got != tc.want {
+				t.Errorf("validTableName(%q) = %v，期望 %v", tc.input, got, tc.want)
+			}
+		})
 	}
 }
 
