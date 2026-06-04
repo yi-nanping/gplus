@@ -245,3 +245,20 @@ func TestInsertSelect_propagates_context_cancel(t *testing.T) {
 	}
 	assertClosureCount(t, db, 1)
 }
+
+// targetCols 含未注册字段指针 → resolveColumnName 报错原样透传，零副作用
+func TestInsertSelect_propagates_target_col_resolve_error(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").Eq(&m.DescendantID, 5) // 1 投影
+	var stray Closure                                   // 非注册单例，字段地址不在 columnNameCache
+	affected, err := InsertSelect(repo, ctx, []any{&stray.AncestorID}, src)
+	if affected != 0 || err == nil {
+		t.Errorf("期望 (0, 非nil)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}
