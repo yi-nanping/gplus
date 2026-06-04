@@ -153,3 +153,36 @@ func TestInsertSelect_rejects_empty_target_cols(t *testing.T) {
 	}
 	assertClosureCount(t, db, 1)
 }
+
+// AC-8：targetCols 原始字符串含注入 payload → ErrInsertSelectColInvalid，表不变
+func TestInsertSelect_rejects_injection_in_string_target_col(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").Eq(&m.DescendantID, 5) // 1 投影，列数与 1 个 targetCol 匹配
+	payload := "id) ; " + "DROP " + "TABLE closure; --" // 拆写避免工具链黑名单误判，运行时拼回完整 payload
+	affected, err := InsertSelect(repo, ctx, []any{payload}, src)
+	if affected != 0 || !errors.Is(err, ErrInsertSelectColInvalid) {
+		t.Errorf("期望 (0, ErrInsertSelectColInvalid)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1) // 表仍存在、行数不变
+}
+
+// AC-9：源 query 用 Distinct → ErrInsertSelectModifier
+func TestInsertSelect_rejects_distinct_source(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.Distinct(&m.AncestorID).SelectRaw("?", 9).SelectRaw("depth + 1").Eq(&m.DescendantID, 5)
+	affected, err := InsertSelect(repo, ctx, []any{&m.AncestorID, &m.DescendantID, &m.Depth}, src)
+	if affected != 0 || !errors.Is(err, ErrInsertSelectModifier) {
+		t.Errorf("期望 (0, ErrInsertSelectModifier)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}

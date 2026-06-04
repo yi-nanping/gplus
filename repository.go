@@ -27,6 +27,8 @@ var (
 	ErrSubqueryNil              = errors.New("gplus: subquery is nil")
 	ErrInsertSelectColMismatch  = errors.New("gplus: InsertSelect target column count does not match source projection count")
 	ErrInsertSelectNoProjection = errors.New("gplus: InsertSelect source query has no Select/SelectRaw projection")
+	ErrInsertSelectColInvalid   = errors.New("gplus: InsertSelect target column name is not a valid identifier")
+	ErrInsertSelectModifier     = errors.New("gplus: InsertSelect source query must not use Distinct/Omit")
 )
 
 // OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
@@ -1113,11 +1115,21 @@ func InsertSelectTx[T any, S any, D comparable](r *Repository[D, T], ctx context
 	if err := src.GetError(); err != nil {
 		return 0, err
 	}
+	if src.distinct || len(src.omits) > 0 {
+		return 0, ErrInsertSelectModifier
+	}
 	if len(src.selects) == 0 {
 		return 0, ErrInsertSelectNoProjection
 	}
 	cols := make([]string, 0, len(targetCols))
 	for _, c := range targetCols {
+		if s, ok := c.(string); ok {
+			if !validDataRuleColumn.MatchString(s) {
+				return 0, ErrInsertSelectColInvalid
+			}
+			cols = append(cols, s)
+			continue
+		}
 		name, err := resolveColumnName(c)
 		if err != nil {
 			return 0, err
