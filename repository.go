@@ -14,17 +14,19 @@ import (
 )
 
 var (
-	ErrQueryNil          = errors.New("gplus: query cannot be nil")
-	ErrRawSQLEmpty       = errors.New("gplus: raw sql cannot be empty")
-	ErrDeleteEmpty       = errors.New("gplus: delete content is empty")
-	ErrUpdateEmpty       = errors.New("gplus: update content is empty")
-	ErrUpdateNoCondition = errors.New("gplus: update requires at least one condition to prevent full-table update")
-	ErrTransactionReq    = errors.New("gplus: locking query must be executed within a transaction")
-	ErrDefaultsNil       = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
-	ErrRestoreEmpty      = errors.New("gplus: restore condition is empty")
-	ErrOnConflictInvalid = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
-	ErrOptimisticLock    = errors.New("gplus: optimistic lock conflict (version mismatch or row not found)")
-	ErrSubqueryNil       = errors.New("gplus: subquery is nil")
+	ErrQueryNil                 = errors.New("gplus: query cannot be nil")
+	ErrRawSQLEmpty              = errors.New("gplus: raw sql cannot be empty")
+	ErrDeleteEmpty              = errors.New("gplus: delete content is empty")
+	ErrUpdateEmpty              = errors.New("gplus: update content is empty")
+	ErrUpdateNoCondition        = errors.New("gplus: update requires at least one condition to prevent full-table update")
+	ErrTransactionReq           = errors.New("gplus: locking query must be executed within a transaction")
+	ErrDefaultsNil              = errors.New("gplus: defaults cannot be nil, use &T{} to create a zero-value record explicitly")
+	ErrRestoreEmpty             = errors.New("gplus: restore condition is empty")
+	ErrOnConflictInvalid        = errors.New("gplus: OnConflict config invalid: DoNothing is mutually exclusive with DoUpdates/DoUpdateAll/UpdateExprs; DoUpdateAll is mutually exclusive with DoUpdates/UpdateExprs")
+	ErrOptimisticLock           = errors.New("gplus: optimistic lock conflict (version mismatch or row not found)")
+	ErrSubqueryNil              = errors.New("gplus: subquery is nil")
+	ErrInsertSelectColMismatch  = errors.New("gplus: InsertSelect target column count does not match source projection count")
+	ErrInsertSelectNoProjection = errors.New("gplus: InsertSelect source query has no Select/SelectRaw projection")
 )
 
 // OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
@@ -1111,6 +1113,9 @@ func InsertSelectTx[T any, S any, D comparable](r *Repository[D, T], ctx context
 	if err := src.GetError(); err != nil {
 		return 0, err
 	}
+	if len(src.selects) == 0 {
+		return 0, ErrInsertSelectNoProjection
+	}
 	cols := make([]string, 0, len(targetCols))
 	for _, c := range targetCols {
 		name, err := resolveColumnName(c)
@@ -1118,6 +1123,9 @@ func InsertSelectTx[T any, S any, D comparable](r *Repository[D, T], ctx context
 			return 0, err
 		}
 		cols = append(cols, name)
+	}
+	if len(cols) == 0 || len(cols) != len(src.selects) {
+		return 0, ErrInsertSelectColMismatch
 	}
 	exec := r.dbResolver(ctx, tx)
 	qL, qR := getQuoteChar(exec)

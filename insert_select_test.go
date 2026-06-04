@@ -105,3 +105,51 @@ func TestInsertSelect_propagates_src_builder_error(t *testing.T) {
 	}
 	assertClosureCount(t, db, 1)
 }
+
+// AC-3：源无投影 → ErrInsertSelectNoProjection
+func TestInsertSelect_rejects_source_without_projection(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.Eq(&m.DescendantID, 5) // 无任何 Select/SelectRaw
+	affected, err := InsertSelect(repo, ctx, []any{&m.AncestorID, &m.DescendantID, &m.Depth}, src)
+	if affected != 0 || !errors.Is(err, ErrInsertSelectNoProjection) {
+		t.Errorf("期望 (0, ErrInsertSelectNoProjection)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}
+
+// AC-2：目标列 3、投影 2 → ErrInsertSelectColMismatch
+func TestInsertSelect_rejects_column_count_mismatch(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").SelectRaw("depth").Eq(&m.DescendantID, 5)                         // 2 投影
+	affected, err := InsertSelect(repo, ctx, []any{&m.AncestorID, &m.DescendantID, &m.Depth}, src) // 3 目标列
+	if affected != 0 || !errors.Is(err, ErrInsertSelectColMismatch) {
+		t.Errorf("期望 (0, ErrInsertSelectColMismatch)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}
+
+// AC-12：空/nil targetCols + 有投影 → ErrInsertSelectColMismatch
+func TestInsertSelect_rejects_empty_target_cols(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src, m := repo.NewQuery(ctx)
+	src.SelectRaw("ancestor_id").Eq(&m.DescendantID, 5)
+	affected, err := InsertSelect(repo, ctx, nil, src)
+	if affected != 0 || !errors.Is(err, ErrInsertSelectColMismatch) {
+		t.Errorf("期望 (0, ErrInsertSelectColMismatch)，实际 (%d, %v)", affected, err)
+	}
+	assertClosureCount(t, db, 1)
+}
