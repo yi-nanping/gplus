@@ -1,7 +1,22 @@
 # InsertSelect — 跨表写时多表（`INSERT ... SELECT [... JOIN]`）设计
 
+> ⚠️ **状态：Round 2（已推迟，待修订）** — 2026-06-04 多专家审计（5 视角）判定 `revise_spec_first`。
+> 本特性已拆为两轮独立交付：
+> - **Round 1（先行）**：`SelectRaw(args)` 的 builder 改造 → 见 `2026-06-04-selectraw-args-design.md`。InsertSelect 依赖它。
+> - **Round 2（本文档）**：InsertSelect 本体，待 Round 1 合入后**按审计结论修订**再进 plan。
+>
+> **本文档下方内容尚未修订，含已被实测推翻的前提，勿直接据此实施。** 进 Round 2 时必须先并入以下审计 must-fix：
+> 1. 删除整段 DryRun/Statement 物化 → 改一行 `dbResolver(ctx,tx).Exec(prefix+"?", src.ToDB(db))`（裸 `?` 不产生括号，已实测）。
+> 2. 泛型签名 `[D,T,S any]` → `[T any, S any, D comparable]`（对齐全库 7 处 `[T,...,D comparable]` 惯例）；AC 示例改可省略类型参数。
+> 3. `targetCols` string 列名走 `validDataRuleColumn` 白名单 + `quoteColumn`；自拼 `INSERT INTO <table>(<cols>)` 的 table/cols 经 `getQuoteChar` 方言转义；补注入复现 AC。
+> 4. AC-5 自连接 `ON 列=字面量` 改 `CrossJoinAs+WhereRaw`，验收口径改"结果行集等价"；scenario 2 可再推迟。
+> 5. 源 query 守卫拒绝 `Distinct/Omit`（`len(src.selects)` 会被污染）；补边界 AC（0 命中 happy-path、ctx 取消、空/nil targetCols、错误实例字段指针）。
+> 6. AC-9 措辞：仅 SQLite 禁 `(SELECT...)` 括号；改正向断言。变更表"新增 3 sentinel"→2 个。
+>
+> 完整审计：6 agent / 539k tokens，task `wjojuebgk`。
+
 > **日期**：2026-06-04
-> **范围**：给 gplus 补 `INSERT ... SELECT` 写时多表能力 + 修复 `SelectRaw` 不带绑定参数的子缺口。
+> **范围**：给 gplus 补 `INSERT ... SELECT` 写时多表能力（依赖 Round 1 的 `SelectRaw(args)`）。
 > **触发来源**：下游 `gvs-server` 的 `docs/dev/gplus-raw-sql-feedback.md` 实测结论——穷举 21 处手写 SQL 后，gplus 唯一真实能力缺口是 A1（跨表 `INSERT ... SELECT`，2 个调用点，闭包表维护）。
 
 ---
