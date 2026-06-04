@@ -5,7 +5,8 @@
 > **本特性拆轮交付：**
 > - **Round 1（已完成）**：`SelectRaw(args)` 参数绑定 → `2026-06-04-selectraw-args-design.md`。已合入（commit 806a8b4..413c142）。InsertSelect 依赖它。
 > - **Round 2（本文档）**：InsertSelect 本体，**只覆盖 scenario 1（基础 `INSERT ... SELECT`，单表无 JOIN）**。
-> - **Round 3（推迟）**：scenario 2 自连接 `INSERT ... SELECT ... JOIN`。推迟原因：实测 `NewQueryAs` 的主表别名在 `ToDB` 物化路径会丢失（`FROM \`test_users\`` 不带 `AS ext`，而 SELECT 引用 `"ext".col` → 真库报别名未定义），需先单独修 `ToDB` 主别名应用，属独立 gap，不与 Round 2 耦合。
+> - **Round 3a（已合入）**：主别名 FROM 物化（解除 ToDB 主别名丢失阻塞）→ `2026-06-04-main-alias-from-design.md`。
+> - **Round 3b（已交付）**：scenario 2 自连接 `INSERT ... SELECT ... JOIN`，方案 A 纯验证+文档 → `2026-06-04-insert-select-join-design.md`。探针实测确认 Round 2 + Round 3a 组合已零改动解锁该能力。
 >
 > **修订已并入的 must-fix（原稿前提已被实测推翻处均已改写）：**
 > 1. ✅ 删除 DryRun/Statement 物化整段 → 改一行 `r.dbResolver(ctx,tx).Exec(prefix+"?", src.ToDB(db))`。**已实测**：裸 `?` 内联子查询不产生 `(SELECT...)` 外层括号，Vars 顺序 = SELECT 投影参数在前、WHERE 参数在后。
@@ -134,7 +135,7 @@ var (
 
 ## 显式排除（Out of Scope）
 
-- **scenario 2 自连接 `INSERT...SELECT...JOIN`**：推迟 Round 3（主表别名在 ToDB 物化路径丢失，需单独修）。
+- ~~**scenario 2 自连接 `INSERT...SELECT...JOIN`**：推迟 Round 3~~ → **已由 Round 3b 交付**（`2026-06-04-insert-select-join-design.md`，零改动验证 + 软删除/方言文档化）。
 - A2/A3/A4/A5/B（已可用 v0.8.0 表达，见反馈文件 §D 实测）。
 - 流式 InsertBuilder（YAGNI，仅 1 个 scenario 1 调用点）。
 - 源 SELECT 自动注入 DataRule（★B 决策：明确不注入，结构性写入不应被隔离静默过滤——AC-7 守此）。
