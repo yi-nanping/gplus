@@ -95,6 +95,21 @@ func TestMainAlias_table_override_uses_custom_table(t *testing.T) {
 	}
 }
 
+// AC-7：SubQuery 派生的子查询不被主别名物化波及（C-1 回归守卫）
+func TestMainAlias_subquery_from_not_polluted(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	outer, ou := repo.NewQuery(ctx)
+	sub, su := SubQuery[Closure](outer)
+	sub.Select(&su.AncestorID).Eq(&su.DescendantID, 5)
+	outer.InSub(&ou.AncestorID, sub)
+
+	sql, _ := outer.ToSQL(db)
+	if strings.Contains(sql, "closure AS closure") || strings.Contains(sql, `closure" AS "closure`) {
+		t.Errorf("子查询 FROM 不应被主别名物化为 closure AS closure，实际: %s", sql)
+	}
+}
+
 // AC-3：无别名查询 FROM 为裸表名，不含 AS（零回归）
 func TestMainAlias_no_alias_from_has_no_as(t *testing.T) {
 	repo, db := setupTestDB[Closure](t)
