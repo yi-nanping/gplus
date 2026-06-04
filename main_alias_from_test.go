@@ -50,6 +50,51 @@ func TestMainAlias_todb_materializes_alias(t *testing.T) {
 	}
 }
 
+// AC-5：Clear 后 mainAlias/mainAliasTable 重置，FROM 不含别名
+func TestMainAlias_clear_resets_alias_fields(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	q, _ := repo.NewQueryAs(ctx, "ext")
+
+	q.Clear()
+
+	if q.mainAlias != "" || q.mainAliasTable != "" {
+		t.Fatalf("Clear 后 mainAlias/mainAliasTable 应为空，实际 mainAlias=%q mainAliasTable=%q", q.mainAlias, q.mainAliasTable)
+	}
+	sql, _ := q.ToSQL(db)
+	if strings.Contains(sql, `AS "ext"`) {
+		t.Errorf("Clear 后 FROM 不应含 AS \"ext\"，实际: %s", sql)
+	}
+}
+
+// AC-4：NewQueryAs + Table("closure_2024") → FROM closure_2024 AS ext（Table 覆盖优先）
+func TestMainAlias_table_override_uses_custom_table(t *testing.T) {
+	repo, db := setupTestDB[Closure](t)
+	ctx := context.Background()
+	// 建 closure_2024 表（同 schema）并播种
+	if err := db.Exec(`CREATE TABLE closure_2024 (id integer PRIMARY KEY AUTOINCREMENT, ancestor_id integer, descendant_id integer, depth integer)`).Error; err != nil {
+		t.Fatalf("create closure_2024: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO closure_2024 (ancestor_id, descendant_id, depth) VALUES (7,5,0)`).Error; err != nil {
+		t.Fatalf("seed closure_2024: %v", err)
+	}
+
+	q, m := repo.NewQueryAs(ctx, "ext")
+	q.Table("closure_2024").Select(&m.AncestorID).Eq(&m.DescendantID, 5)
+
+	list, err := repo.List(q)
+	if err != nil {
+		t.Fatalf("List 应成功，实际: %v", err)
+	}
+	if len(list) != 1 || list[0].AncestorID != 7 {
+		t.Fatalf("期望 1 行 AncestorID=7，实际 %+v", list)
+	}
+	sql, _ := q.ToSQL(db)
+	if !strings.Contains(sql, `closure_2024" AS "ext`) {
+		t.Errorf("FROM 应含 closure_2024 AS ext，实际: %s", sql)
+	}
+}
+
 // AC-3：无别名查询 FROM 为裸表名，不含 AS（零回归）
 func TestMainAlias_no_alias_from_has_no_as(t *testing.T) {
 	repo, db := setupTestDB[Closure](t)

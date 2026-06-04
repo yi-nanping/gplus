@@ -220,6 +220,8 @@ func (b *ScopeBuilder) BuildDelete() func(*gorm.DB) *gorm.DB {
 func (b *ScopeBuilder) Clear() {
 	// 1. 基础字段复位
 	b.tableName = "" //必须清除表名
+	b.mainAlias = ""
+	b.mainAliasTable = ""
 	b.limit = 0
 	b.offset = 0
 	b.unscoped = false
