@@ -76,8 +76,10 @@ func TestInsertSelectJoin_softdelete_bare_column_fails(t *testing.T) {
 		SelectRaw("ext.depth + sub.depth + 1")
 
 	_, err := InsertSelect(repo, ctx, []any{"ancestor_id", "descendant_id", "depth"}, q)
-	if err == nil || !strings.Contains(err.Error(), "no such column") || !strings.Contains(err.Error(), "closure_sd.deleted_at") {
-		t.Fatalf("期望报 no such column: closure_sd.deleted_at（GORM 软删除裸表名被别名遮蔽），实际: %v", err)
+	// 错误文本随方言不同（SQLite: no such column；MySQL: Unknown column；PG: invalid reference to FROM-clause），
+	// 三方言公共子串仅表名 closure_sd（PG 错误不含 .deleted_at），故只断到表名 + 零副作用。
+	if err == nil || !strings.Contains(err.Error(), "closure_sd") {
+		t.Fatalf("期望报错（GORM 软删除裸表名 closure_sd 被别名遮蔽），实际: %v", err)
 	}
 	// 零副作用：closure_sd 未删行数仍 2（GORM Count 自动排除软删，本例无软删）。
 	var n int64

@@ -32,6 +32,12 @@ func buildSQL(t *testing.T, db *gorm.DB, q *Query[TestUser]) (string, []interfac
 	return stmt.SQL.String(), stmt.Vars
 }
 
+// stripIdentQuotes 去除标识符引号（反引号/双引号），用于方言无关的 SQL 结构断言。
+// SQLite/PG 用双引号、MySQL 用反引号；去引号后可统一断言 FROM/AS 等结构。
+func stripIdentQuotes(s string) string {
+	return strings.NewReplacer("`", "", `"`, "").Replace(s)
+}
+
 // assertSQL 检查 sql 中是否包含所有期望片段
 func assertSQL(t *testing.T, sql string, frags ...string) {
 	t.Helper()

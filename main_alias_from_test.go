@@ -28,7 +28,7 @@ func TestMainAlias_list_with_alias_emits_from_as(t *testing.T) {
 	}
 
 	sql, _ := q.ToSQL(db)
-	if !strings.Contains(sql, `closure" AS "ext`) {
+	if !strings.Contains(stripIdentQuotes(sql), "closure AS ext") {
 		t.Errorf("FROM 应含 closure AS ext，实际 SQL: %s", sql)
 	}
 }
@@ -64,8 +64,8 @@ func TestMainAlias_clear_resets_alias_fields(t *testing.T) {
 		t.Fatalf("Clear 后 mainAlias/mainAliasTable 应为空，实际 mainAlias=%q mainAliasTable=%q", q.mainAlias, q.mainAliasTable)
 	}
 	sql, _ := q.ToSQL(db)
-	if strings.Contains(sql, `AS "ext"`) {
-		t.Errorf("Clear 后 FROM 不应含 AS \"ext\"，实际: %s", sql)
+	if strings.Contains(stripIdentQuotes(sql), "AS ext") {
+		t.Errorf("Clear 后 FROM 不应含 AS ext，实际: %s", sql)
 	}
 }
 
@@ -73,10 +73,13 @@ func TestMainAlias_clear_resets_alias_fields(t *testing.T) {
 func TestMainAlias_table_override_uses_custom_table(t *testing.T) {
 	repo, db := setupTestDB[Closure](t)
 	ctx := context.Background()
-	// 建 closure_2024 表（同 schema）并播种
-	if err := db.Exec(`CREATE TABLE closure_2024 (id integer PRIMARY KEY AUTOINCREMENT, ancestor_id integer, descendant_id integer, depth integer)`).Error; err != nil {
+	// 建 closure_2024 表（同 schema）并播种；用 GORM 建表保证方言正确（手写 AUTOINCREMENT 仅 SQLite 支持）。
+	// closure_2024 是测试专属附加表，持久库（MySQL/PG）下需前置 DROP 清残留 + 结束清理，避免数据累积污染。
+	db.Exec("DROP TABLE IF EXISTS closure_2024")
+	if err := db.Table("closure_2024").AutoMigrate(&Closure{}); err != nil {
 		t.Fatalf("create closure_2024: %v", err)
 	}
+	t.Cleanup(func() { db.Exec("DROP TABLE IF EXISTS closure_2024") })
 	if err := db.Exec(`INSERT INTO closure_2024 (ancestor_id, descendant_id, depth) VALUES (7,5,0)`).Error; err != nil {
 		t.Fatalf("seed closure_2024: %v", err)
 	}
@@ -92,7 +95,7 @@ func TestMainAlias_table_override_uses_custom_table(t *testing.T) {
 		t.Fatalf("期望 1 行 AncestorID=7，实际 %+v", list)
 	}
 	sql, _ := q.ToSQL(db)
-	if !strings.Contains(sql, `closure_2024" AS "ext`) {
+	if !strings.Contains(stripIdentQuotes(sql), "closure_2024 AS ext") {
 		t.Errorf("FROM 应含 closure_2024 AS ext，实际: %s", sql)
 	}
 }
@@ -107,7 +110,7 @@ func TestMainAlias_subquery_from_not_polluted(t *testing.T) {
 	outer.InSub(&ou.AncestorID, sub)
 
 	sql, _ := outer.ToSQL(db)
-	if strings.Contains(sql, "closure AS closure") || strings.Contains(sql, `closure" AS "closure`) {
+	if strings.Contains(stripIdentQuotes(sql), "closure AS closure") {
 		t.Errorf("子查询 FROM 不应被主别名物化为 closure AS closure，实际: %s", sql)
 	}
 }
@@ -120,8 +123,8 @@ func TestMainAlias_no_alias_from_has_no_as(t *testing.T) {
 	q.Select(&m.AncestorID)
 
 	sql, _ := q.ToSQL(db)
-	if !strings.Contains(sql, "FROM `closure`") {
-		t.Errorf("无别名 FROM 应为裸表名 `closure`，实际: %s", sql)
+	if !strings.Contains(stripIdentQuotes(sql), "FROM closure") {
+		t.Errorf("无别名 FROM 应为裸表名 closure，实际: %s", sql)
 	}
 	if strings.Contains(sql, " AS ") {
 		t.Errorf("无别名查询 FROM 不应含 AS，实际: %s", sql)
@@ -165,9 +168,9 @@ func TestMainAlias_selfjoin_executes_and_projects(t *testing.T) {
 	}
 
 	sql, _ := q.ToSQL(db)
-	// FROM 主表带引号；CROSS JOIN 副表不带引号（appendJoinAsNoOn 生成）
-	if !strings.Contains(sql, `closure" AS "ext`) {
-		t.Errorf("FROM 应含带引号主别名 closure AS ext，实际: %s", sql)
+	// FROM 主表物化别名；CROSS JOIN 副表不带引号（appendJoinAsNoOn 生成）
+	if !strings.Contains(stripIdentQuotes(sql), "closure AS ext") {
+		t.Errorf("FROM 应含主别名 closure AS ext，实际: %s", sql)
 	}
 	if !strings.Contains(sql, "CROSS JOIN closure AS sub") {
 		t.Errorf("JOIN 应含不带引号副别名 closure AS sub，实际: %s", sql)
@@ -190,7 +193,7 @@ func TestMainAlias_delete_path_no_materialize(t *testing.T) {
 		return tx.WithContext(ctx).Model(&model).Scopes(q.BuildDelete()).Delete(&model)
 	})
 	// FROM 不含 AS ext（BuildDelete 不调用 applyMainAlias）
-	if strings.Contains(deleteSQL, `AS "ext"`) || strings.Contains(deleteSQL, "AS ext") {
+	if strings.Contains(stripIdentQuotes(deleteSQL), "AS ext") {
 		t.Errorf("DELETE SQL FROM 不应含 AS ext，实际: %s", deleteSQL)
 	}
 	if !strings.Contains(deleteSQL, "DELETE FROM") {
@@ -231,8 +234,9 @@ func TestMainAlias_first_path_not_supported(t *testing.T) {
 	q.Eq(&m.DescendantID, 5)
 
 	_, err := repo.GetOne(q)
-	if err == nil || !strings.Contains(err.Error(), "no such column") || !strings.Contains(err.Error(), "closure.id") {
-		t.Fatalf("期望 First 路径报 no such column: closure.id（已知限制），实际 err: %v", err)
+	// 错误文本随方言不同（GORM 自动 ORDER BY closure.id 裸表名被别名遮蔽），公共子串仅表名 closure。
+	if err == nil || !strings.Contains(err.Error(), "closure") {
+		t.Fatalf("期望 First 路径报错（裸表名 closure 被别名遮蔽，已知限制），实际 err: %v", err)
 	}
 }
 
@@ -283,7 +287,7 @@ func TestMainAlias_count_and_page_materialize_alias(t *testing.T) {
 		t.Fatalf("Count 期望 2，实际 %d", total)
 	}
 	countSQL, _ := q1.ToCountSQL(db)
-	if !strings.Contains(countSQL, `closure" AS "ext`) {
+	if !strings.Contains(stripIdentQuotes(countSQL), "closure AS ext") {
 		t.Errorf("ToCountSQL FROM 应含 closure AS ext，实际: %s", countSQL)
 	}
 
