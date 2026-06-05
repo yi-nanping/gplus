@@ -2,6 +2,63 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.9.0] - 2026-06-05
+
+本版聚焦查询/写入能力扩展（Round 1~3b）。新增均为向后兼容的公开 API，不破坏 v0.8.x 既有行为，故为 MINOR 版本。
+
+### 新增
+
+- **`SelectRaw` 参数绑定**（Round 1）：`SelectRaw(expr string, args ...any)` 支持 `?` 占位符参数绑定，走 GORM `clause.Expr{Vars}` 防注入。
+  - `ScopeBuilder.selects` 由 `[]string` 升级为 `[]selectItem{expr, args, isRaw}`（零行为变更重构）
+  - 双路径：无 args 走原 `[]string` 路径（零回归，逗号无空格）；有 args 拼单串走 `clause.Expr`
+- **`InsertSelect` / `InsertSelectTx` 跨表写入**（Round 2 + 3b）：包级泛型 `InsertSelect[T, S, D comparable]`，生成 `INSERT INTO <T>(cols) SELECT ...`，子查询裸 `?` 内联无外层括号。
+  - scenario 1：单表无 JOIN（Round 2）
+  - scenario 2：自连接 `INSERT...SELECT...JOIN`（Round 3b，与主别名 FROM 物化组合零实现改动解锁）
+  - 守卫链：nil → GetError → modifier 拒绝（distinct/omits）→ noProjection → 解析 targetCols（string 走白名单 / 指针走 `resolveColumnName`）→ colMismatch → exec，任一失败零副作用
+  - 4 个 sentinel error：`ErrInsertSelectColMismatch` / `ErrInsertSelectNoProjection` / `ErrInsertSelectColInvalid` / `ErrInsertSelectModifier`
+  - **不应用 DataRule**（结构性写入，不被数据权限过滤）
+- **主别名 FROM 物化**（Round 3a）：`NewQueryAs(ctx, alias)` 在 SELECT 路径（`List` / `Count` / `Page`）物化为 `FROM <table> AS <alias>`，支撑自连接源 query 形态。
+  - `validTableName` 正则防注入（与 `validDataRuleColumn` 同源单点）；`SubQuery`/`SubQueryAs` 清空主别名防子查询 FROM 污染；`Clear` 重置；`Table()` 覆盖优先
+
+### 修复
+
+- **`Distinct` 与 `SelectRaw(args)` 混用静默丢失 `DISTINCT`**：GORM Expression 路径忽略 `Statement.Distinct`，args 路径 `b.distinct` 时前置 `"DISTINCT "`（commit `c1ee736`）
+- **gosec G115/G103**：加 `nosec` 注释 + 设计意图说明（commit `7ac57f8`）
+- **测试方言无关化（修复 PG CI）**：`main_alias_from_test.go` / `insert_select_join_test.go` 写死了 SQLite 专属的标识符引号（双引号）与错误消息文本，CI 接入 PostgreSQL 后失败。新增 `stripIdentQuotes` helper 去引号后断言 FROM/AS 结构；错误断言改 `err!=nil` + 含表名（三方言公共子串）+ 零副作用；`closure_2024` DDL 改 GORM 建表（手写 `AUTOINCREMENT` 仅 SQLite 支持）+ 持久库 DROP 清理（commit `94d6d0f`）
+
+### 已知限制（主别名 / InsertSelect）
+
+- **主别名 First 路径不支持**：`GetOne` / `Last` / `GetByLock` / `FirstOrCreate` 下 GORM 自动 `ORDER BY <table>.id` 裸表名被别名遮蔽报错
+- **主别名写路径不物化**：`Delete` / `Update` 走 `BuildDelete`/`BuildUpdate`，FROM 不物化别名（WHERE/SET 字段带别名前缀，裸表无该别名 → 真实执行失败）
+- **自连接软删除表约束**：必须 `Unscoped()` + 手动两侧别名前缀（如 `ext.deleted_at IS NULL` / `sub.deleted_at IS NULL`），缺前缀会复活已删数据复制成未删行（不可逆污染）
+- **DataRule 裸列自连接 ambiguous**：用户须 `Column` 自带别名前缀
+- 多段表名 `a.b.c` 不支持；`SubQueryAs` 自定义别名 FROM 不物化（既有限制）
+
+### 方言风险（CI SQLite 覆盖不到，真机残留项）
+
+- **MySQL**：官方允许 INSERT...SELECT 目标表出现在顶层 FROM（内部临时表；error 1093 仅限 UPDATE/DELETE 同表子查询）
+- **达梦 DM**：JOIN INSERT...SELECT 连接列须 PK/UNIQUE + CASE_SENSITIVE/COMPATIBLE_MODE 大小写残留项；PostgreSQL 允许
+
+### 内部 / 测试
+
+- `selects []string` → `[]selectItem` 重构（零行为变更）
+- gofmt -w 8 文件 + 本地 CRLF baseline 治理
+- 新增测试：`select_raw_args_test.go` / `insert_select_test.go` / `insert_select_join_test.go` / `main_alias_from_test.go`（覆盖率 95%+）
+- CI 加 PostgreSQL 16 service container 后三方言测试基线对齐
+
+### 文档
+
+- spec：`docs/superpowers/specs/2026-06-04-main-alias-from-design.md` + `2026-06-04-insert-select-join-design.md`
+- plan：`docs/superpowers/plans/2026-06-04-*.md`
+- 主 spec Round 3 占位段更新指向 Round 3b 已交付
+
+### 兼容性
+
+- 不破坏 v0.8.x 既有 API；GORM 版本锁定保持 v1.31.x
+- `v0.8.x` tag 不受影响；下游 `go get @v0.9.0` 获得上述新增 API
+
+---
+
 ## [0.8.3] - 2026-05-08
 
 ### 支持版本与兼容性
