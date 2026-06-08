@@ -52,7 +52,13 @@ type joinInfo struct {
 
 // DataRule 对外开放的核心规则字段
 type DataRule struct {
-	Column    string   // 规则字段 (例如: "dept_id")；仅允许字母/数字/下划线及单个点分隔的表名前缀（如 "table.col"），含括号或运算符的表达式会被拒绝
+	// Table 表名或 JOIN 别名前缀（如 "ext"）；空字符串表示作用于主表。
+	// 仅允许单段标识符（不含点）；含点 / 含空白 / 非法字符将被拒绝。
+	// Table 非空时 Column 必须是裸列名（不含点）；跨表数据权限的推荐写法。
+	Table     string
+	// Column 规则字段 (例如: "dept_id")。Table 非空时必须是裸列名；
+	// Table 为空时兼容 "table.col" 点前缀写法（旧 workaround，向后兼容；新代码建议用 Table）。
+	Column    string   // 含括号或运算符的表达式会被拒绝
 	Condition string   // 规则条件 (例如: "=", "IN", "LIKE")
 	Value     string   // 规则值   (例如: "1001"）；IN/NOT IN/BETWEEN 建议使用 Values
 	Values    []string // IN/NOT IN/BETWEEN 的多值列表，优先于 Value 的逗号分隔解析
@@ -78,6 +84,39 @@ var validDataRuleColumn = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_
 // validTableName 白名单校验主别名物化时的表名，防注入（防 Table("x\"; DROP--") 经 qL+table+qR 拼接被引号提前闭合）。
 // 与 validDataRuleColumn 完全同源（单点）：允许 closure / closure_2024 / schema.table；多段 a.b.c 不支持（引号位置 + YAGNI）。
 var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+
+// resolveDataRuleColumn 解析 DataRule 的最终列名并完成全部列名侧安全校验（INV-1 最后防线）。
+// 返回的 column 可直接使用；err 非 nil 时已含完整上下文（含原始输入），
+// 调用方只需 append 到 errs 并 return，不得再做任何额外列名校验。
+//
+// 内部顺序（安全关键，不可调整）：
+//  1. Table == ""（旧路径，向后兼容）：validDataRuleColumn 校验 Column 后原样返回；
+//  2. Table != ""（新路径）：Column 禁含点（fail-fast）→ Table 单段校验 →
+//     拼接 → 拼接结果再过 validDataRuleColumn（防御性冗余，future-proof）。
+func resolveDataRuleColumn(rule DataRule) (string, error) {
+	// 1. 旧路径：Table 空，Column 过白名单后原样用（兼容 "table.col" 点前缀 workaround）
+	if rule.Table == "" {
+		if !validDataRuleColumn.MatchString(rule.Column) {
+			return "", fmt.Errorf("data rule: invalid column %q", rule.Column)
+		}
+		return rule.Column, nil
+	}
+	// 2a. fail-fast：Table 已提供前缀，Column 不得再含点（禁两套等价写法）
+	if strings.Contains(rule.Column, ".") {
+		return "", fmt.Errorf("data rule: column %q must not contain '.' when table %q is set", rule.Column, rule.Table)
+	}
+	// 2b. Table 单段校验：validTableName 允许 schema.table 单点，故额外禁点落实"单段"决策
+	if !validTableName.MatchString(rule.Table) || strings.Contains(rule.Table, ".") {
+		return "", fmt.Errorf("data rule: invalid table %q", rule.Table)
+	}
+	// 2c. 拼接
+	final := rule.Table + "." + rule.Column
+	// 2d. INV-1 最后防线（防御性冗余，future-proof，禁删）：拼接结果必过白名单
+	if !validDataRuleColumn.MatchString(final) {
+		return "", fmt.Errorf("data rule: invalid column %q", final)
+	}
+	return final, nil
+}
 
 // ScopeBuilder 负责将条件转换为 GORM Scope
 // 这是 QueryCond 和 UpdateCond 的基类
