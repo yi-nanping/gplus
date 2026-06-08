@@ -1334,3 +1334,63 @@ func TestHavingGroup_EmptyFn(t *testing.T) {
 		t.Errorf("期望 1 条，实际 %d", len(list))
 	}
 }
+
+// --- v0.10.x 覆盖补全：M-1 / M-2 / M-3 ---
+
+// M-1: Updater.OrNotExists OR 分支。共享的 appendExists 已被其他 Exists 测试覆盖，
+// 本测试补 OrNotExists wrapper（"NOT EXISTS", true）的直接调用覆盖，与 Query 侧 TestOrNotExists_OrBranchSQL 对称。
+func TestUpdater_OrNotExists_OrBranchSQL(t *testing.T) {
+	_, db := setupAdvancedDB(t)
+	u, m := NewUpdater[UserWithDelete](context.Background())
+	u.Set(&m.Name, "x").Eq(&m.Name, "alice")
+	sub, o := SubQuery[Order](u)
+	sub.Eq(&o.UserID, m.ID)
+	u.OrNotExists(sub)
+	sql, err := u.ToSQL(db)
+	if err != nil {
+		t.Fatalf("ToSQL: %v", err)
+	}
+	if !strings.Contains(sql, "OR NOT EXISTS") {
+		t.Errorf("期望 SQL 含 'OR NOT EXISTS'，实际: %s", sql)
+	}
+}
+
+// M-2: BuildQueryDB 把当前 Query 条件应用到 db 并返回带条件的 *gorm.DB（公开便捷 API，原零调用零覆盖）。
+func TestBuildQueryDB_AppliesConditions(t *testing.T) {
+	db := newDryRunDB(t)
+	q, u := NewQuery[TestUser](context.Background())
+	q.Eq(&u.Name, "alice")
+	got := q.BuildQueryDB(db.Session(&gorm.Session{DryRun: true}).Model(&TestUser{}))
+	sql := got.Find(&[]TestUser{}).Statement.SQL.String()
+	if !strings.Contains(sql, "username") {
+		t.Errorf("BuildQueryDB 应应用 Eq 条件（含 username 列），实际: %s", sql)
+	}
+}
+
+// M-3: FindAsTx / FindOneAsTx / PageAsTx 透传 DataRuleBuilder 错误。
+// 原测试均走无 tx 包装函数，Tx 变体的 DataRuleBuilder().GetError() 分支未被直接覆盖。
+func TestFindAsTx_Variants_PropagateDataRuleError(t *testing.T) {
+	_, repo := setupPageDB(t)
+	// SQL 条件类型被 applyDataRule 拒绝 → DataRuleBuilder().GetError() 非 nil
+	badRules := []DataRule{{Column: "age", Condition: "SQL", Value: "1=1"}}
+	badCtx := context.WithValue(context.Background(), DataRuleKey, badRules)
+
+	t.Run("FindAsTx", func(t *testing.T) {
+		q, _ := NewQuery[pageUser](badCtx)
+		var rows []pageVO
+		err := FindAsTx[pageUser, pageVO, uint](repo, q, &rows, nil)
+		assertError(t, err, true, "FindAsTx 应透传 DataRule 错误")
+	})
+	t.Run("FindOneAsTx", func(t *testing.T) {
+		q, _ := NewQuery[pageUser](badCtx)
+		var one pageVO
+		err := FindOneAsTx[pageUser, pageVO, uint](repo, q, &one, nil)
+		assertError(t, err, true, "FindOneAsTx 应透传 DataRule 错误")
+	})
+	t.Run("PageAsTx", func(t *testing.T) {
+		q, _ := NewQuery[pageUser](badCtx)
+		var rows []pageVO
+		_, err := PageAsTx[pageUser, pageVO, uint](repo, q, &rows, false, nil)
+		assertError(t, err, true, "PageAsTx 应透传 DataRule 错误")
+	})
+}
