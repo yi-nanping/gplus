@@ -407,7 +407,7 @@ type UserVO struct {
     DeptName string
 }
 
-q, m := gplus.NewQuery[User](ctx)
+q, _ := gplus.NewQuery[User](ctx)
 q.LeftJoin("dept", "users.dept_id = dept.id").
     Select("users.name", "dept.name AS dept_name").
     Page(1, 20) // 第 1 页，每页 20 条
