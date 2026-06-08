@@ -70,6 +70,7 @@ func TestDataRuleTable_rejects_injection_payloads(t *testing.T) {
 		{"尾空格", "ext "}, // 与 AC-11 呼应，AC-11 单列强调"不 TrimSpace"决策
 		{"Tab", "ext\t"},
 		{"换行", "ext\n"},
+		{"NUL字节", "ext\x00alias"}, // 部分驱动 C 层视 NUL 为字符串终止符，validTableName 正则拒
 		{"西里尔同形", "еxt"}, // 首字符 U+0435，非 ASCII [a-zA-Z_]
 	}
 	for _, p := range payloads {
@@ -98,6 +99,7 @@ func TestDataRuleTable_rejects_multi_segment_table(t *testing.T) {
 }
 
 // AC-11: Table 首尾空格 → GetError 非 nil（不做 TrimSpace，validTableName 拒）
+// 独立锁定"不 TrimSpace"这一设计决策——与 AC-4 尾空格 case 输入重叠是有意为之，勿当冗余删除。
 func TestDataRuleTable_rejects_table_with_trailing_space(t *testing.T) {
 	q, _ := drDataRuleSQL(t, []DataRule{{Table: "ext ", Column: "dept_id", Condition: "=", Value: "1"}})
 	if q.GetError() == nil {
