@@ -4,10 +4,13 @@
 
 ## [0.10.0] - 2026-06-08
 
-本版新增 `DataRule.Table` 跨表数据权限字段，兑现 v0.8.0 路线图承诺并消除 v0.9.0 反向兼容债。向后兼容，MINOR 版本。
+本版新增 `PageAs` 投影分页与 `DataRule.Table` 跨表数据权限字段，兑现 v0.8.0 路线图承诺并消除 v0.9.0 反向兼容债。向后兼容，MINOR 版本。
 
 ### 新增
 
+- **`PageAs` / `PageAsTx` 投影分页**：包级泛型 `PageAs[T, Dest, D comparable]`，等价 `repo.Page` 但把结果投影到自定义 `Dest`（JOIN 多表 + VO 场景），走 GORM Query callback chain（下游隔离/审计 callback 触发，与 `FindAs` 一致）。
+  - 返回 `(total int64, err error)`；`skipCount=true` 跳过 COUNT（`total` 恒 0），`false` 时若 COUNT=0 提前返回、不执行投影 Find
+  - 与 `FindOneAs` 不同：内部用 `Find` 不追加 `LIMIT 1`，与 `q.Page()` 的 LIMIT/OFFSET 协同
 - **`DataRule.Table` 跨表数据权限字段**：为数据权限规则显式指定作用的表名 / JOIN 别名前缀（如 `Table: "ext"`），生成 `ext.dept_id` 限定列。
   - 单一真相源 helper `resolveDataRuleColumn`：全部列名侧校验内聚（旧路径 Column 走 `validDataRuleColumn` 白名单；新路径 Table 单段校验 + 拼接结果防御性复校验，INV-1 最后防线）
   - Query 与 Updater 两侧接入塌缩为同一形态（INV-3 防双侧漂移），置于空值 early-return 之前（INV-2，保证 IS NULL / BETWEEN 等操作符也带 Table 前缀）
