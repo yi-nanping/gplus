@@ -55,10 +55,11 @@ type DataRule struct {
 	// Table 表名或 JOIN 别名前缀（如 "ext"）；空字符串表示作用于主表。
 	// 仅允许单段标识符（不含点）；含点 / 含空白 / 非法字符将被拒绝。
 	// Table 非空时 Column 必须是裸列名（不含点）；跨表数据权限的推荐写法。
-	Table     string
+	Table  string
 	// Column 规则字段 (例如: "dept_id")。Table 非空时必须是裸列名；
 	// Table 为空时兼容 "table.col" 点前缀写法（旧 workaround，向后兼容；新代码建议用 Table）。
-	Column    string   // 含括号或运算符的表达式会被拒绝
+	// 含括号或运算符的表达式会被拒绝（由 resolveDataRuleColumn 白名单校验，防注入）。
+	Column string
 	Condition string   // 规则条件 (例如: "=", "IN", "LIKE")
 	Value     string   // 规则值   (例如: "1001"）；IN/NOT IN/BETWEEN 建议使用 Values
 	Values    []string // IN/NOT IN/BETWEEN 的多值列表，优先于 Value 的逗号分隔解析
@@ -105,7 +106,8 @@ func resolveDataRuleColumn(rule DataRule) (string, error) {
 	if strings.Contains(rule.Column, ".") {
 		return "", fmt.Errorf("data rule: column %q must not contain '.' when table %q is set", rule.Column, rule.Table)
 	}
-	// 2b. Table 单段校验：validTableName 允许 schema.table 单点，故额外禁点落实"单段"决策
+	// 2b. Table 单段校验：validTableName 允许 schema.table 单点，故额外禁点落实"单段"决策。
+	// DataRule.Table 仅作列前缀（ext.dept_id），不需要 schema 前缀，禁点比 validTableName 更严格。
 	if !validTableName.MatchString(rule.Table) || strings.Contains(rule.Table, ".") {
 		return "", fmt.Errorf("data rule: invalid table %q", rule.Table)
 	}
