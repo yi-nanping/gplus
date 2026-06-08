@@ -55,11 +55,11 @@ type DataRule struct {
 	// Table 表名或 JOIN 别名前缀（如 "ext"）；空字符串表示作用于主表。
 	// 仅允许单段标识符（不含点）；含点 / 含空白 / 非法字符将被拒绝。
 	// Table 非空时 Column 必须是裸列名（不含点）；跨表数据权限的推荐写法。
-	Table  string
+	Table string
 	// Column 规则字段 (例如: "dept_id")。Table 非空时必须是裸列名；
 	// Table 为空时兼容 "table.col" 点前缀写法（旧 workaround，向后兼容；新代码建议用 Table）。
 	// 含括号或运算符的表达式会被拒绝（由 resolveDataRuleColumn 白名单校验，防注入）。
-	Column string
+	Column    string
 	Condition string   // 规则条件 (例如: "=", "IN", "LIKE")
 	Value     string   // 规则值   (例如: "1001"）；IN/NOT IN/BETWEEN 建议使用 Values
 	Values    []string // IN/NOT IN/BETWEEN 的多值列表，优先于 Value 的逗号分隔解析

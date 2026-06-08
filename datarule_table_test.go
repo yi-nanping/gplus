@@ -71,7 +71,7 @@ func TestDataRuleTable_rejects_injection_payloads(t *testing.T) {
 		{"Tab", "ext\t"},
 		{"换行", "ext\n"},
 		{"NUL字节", "ext\x00alias"}, // 部分驱动 C 层视 NUL 为字符串终止符，validTableName 正则拒
-		{"西里尔同形", "еxt"}, // 首字符 U+0435，非 ASCII [a-zA-Z_]
+		{"西里尔同形", "еxt"},          // 首字符 U+0435，非 ASCII [a-zA-Z_]
 	}
 	for _, p := range payloads {
 		t.Run(p.name, func(t *testing.T) {
