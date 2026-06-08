@@ -52,13 +52,18 @@
   在自连接（主别名 + ext 别名，两表均有 dept_id）场景真实执行：
   - 生成 SQL WHERE 去引号后含 `ext.dept_id`；
   - 种子数据须含 dept_id=1 与 dept_id=2 的行、且主表与 ext 表 dept_id 交叉（参照 insert_select_join_test.go AC-3 范式）；
-  - 断言结果集只含 ext 表 dept_id=1 的行；**把 Table 改为 ""（裸 dept_id）则结果改变或报 ambiguous**（证明 Table 前缀非死代码）。
+  - 断言结果集只含 ext 表 dept_id=1 的行；
+  - **强制对照子测试（防假绿，不可省）**：同一 DB、同种子上改用 `DataRule{Table:"", Column:"dept_id"}` 再执行一次，
+    断言其结果与上面 Table:"ext" 版本**不同**（行数不同 / 行内容不同 / 或返回 ambiguous error）——
+    必须是测试内的硬断言，证明 Table 前缀真实改变了查询行为、非死代码。
 - **AC-2（向后兼容：旧 workaround 真实执行等价）**：`DataRule{Table:"", Column:"ext.dept_id", Condition:"=", Value:"1"}`
   在 AC-1 同款种子下真实执行，结果集与 AC-1 逐行一致（证明旧点前缀路径零回归，不只比 SQL 字符串）。
 - **AC-6（零回归：单表裸列真实执行）**：`DataRule{Table:"", Column:"dept_id", Condition:"=", Value:"1"}`
   单表查询真实执行，WHERE 去引号后含裸 `dept_id`（无前缀），结果与现有 DataRule 行为逐行一致。
-- **AC-7（多 rule，新旧混用 + AND 语义真实执行）**：ctx 注入两条 rule——一条 `{Table:"ext", Column:"a", ...}`（新路径）、
-  一条 `{Table:"", Column:"sub.b", ...}`（旧点前缀路径），WHERE 去引号后同时含 `ext.a` 与 `sub.b`；
+- **AC-7（多 rule，新旧混用 + IN 路径 + AND 语义真实执行）**：ctx 注入两条 rule——
+  一条 `{Table:"ext", Column:"a", Condition:"IN", Values:[]string{"1","2"}}`（新路径 + 顺带覆盖 IN+Table 多值穿透）、
+  一条 `{Table:"", Column:"sub.b", Condition:"=", Value:"9"}`（旧点前缀路径），WHERE 去引号后同时含 `ext.a` 与 `sub.b`；
+  两条 rule 的值不同且可被独立字段验证（防参数绑定错位假绿）；
   种子设计为"同时满足两条件的行恰好 1 条、各只满足一条的行各 1 条"，断言结果恰 1 条且字段值正确
   （验证两条 rule 是 AND 且参数绑定不错位，新旧路径同查询共存无干扰）。
 
@@ -74,9 +79,10 @@
 - **AC-3（fail-fast：Table 非空 + Column 含点）**：`DataRule{Table:"ext", Column:"dept.id", Condition:"=", Value:"1"}`
   → `q.DataRuleBuilder().GetError()` 非 nil 且错误信息含**原始** `dept.id`；DryRun SQL 的 WHERE **不含** `dept`
   （证明 fail-fast 后未继续生成任何条件）。
-- **AC-4（注入防护：table-driven 多 payload）**：对下列每个 `Table` 值 → `GetError()` 非 nil 且不生成 SQL：
-  `ext";DROP--`（引号+分号）、`` ext`alias ``（反引号）、`ext.` / `.ext`（首尾点）、`public.users`（多段，决策：单段约束）、
-  `ext ` / `ext\t`（空白）、`еxt`（西里尔同形 Unicode）。
+- **AC-4（注入防护：table-driven 多 payload）**：对下列每个 `Table` 值 → `GetError()` 非 nil
+  **且 DryRun SQL 的 WHERE 不含该输入片段**（负例断言，证明非法输入未拼进 SQL）：
+  `ext";DROP--`（引号+分号）、`` ext`alias ``（反引号）、`ext.` / `.ext`（首尾点）、
+  `ext ` / `ext\t` / `ext\n`（空白与控制字符）、`еxt`（西里尔同形 Unicode）。多段 `public.users` 由 AC-10 专测。
 - **AC-10（Table 单段约束）**：`DataRule{Table:"public.users", Column:"id", Condition:"=", Value:"1"}`
   → `GetError()` 非 nil（Table 含点违反单段约束；与 AC-4 多段项呼应，单列以强调决策）。
 - **AC-11（Table 首尾空格 fail-fast）**：`DataRule{Table:"ext ", Column:"dept_id", Condition:"=", Value:"1"}`
@@ -89,6 +95,8 @@
 - **AC-5b（Updater 注入防护）**：Updater + `Table:"ext\";DROP--"` → `Updater.GetError()` 非 nil，不生成 SQL。
 - **AC-5c（Updater fail-fast）**：Updater + `Table:"ext", Column:"dept.id"` → `GetError()` 非 nil，含原始 `dept.id`。
 - **AC-5d（Updater 零回归）**：Updater + `Table:"", Column:"dept_id"` → UPDATE WHERE 去引号后含裸 `dept_id`（无前缀）。
+- **AC-5e（Updater 操作符穿透）**：Updater + `DataRule{Table:"ext", Column:"dept_id", Condition:"IS NULL"}`
+  → UPDATE WHERE 去引号后含 `ext.dept_id IS NULL`（对称 AC-8，验证 Updater 侧 helper 也在 early-return 之前调用 / INV-2）。
 
 ## Architecture
 
@@ -119,29 +127,38 @@ type DataRule struct {
 //   1. Table == ""（旧路径，向后兼容）：
 //        validDataRuleColumn.MatchString(Column) 失败 → error；否则原样返回 Column
 //   2. Table != ""（新路径）：
-//        a. Column 含 "." → error（含原始 Column）          // fail-fast：禁两套等价写法（AC-3）
-//        b. Table 含 "." 或不过 validTableName → error       // 决策：单段、不 TrimSpace（AC-10/11）
+//        a. Column 含 "." → error（含原始 Column）              // fail-fast：禁两套等价写法（AC-3）
+//        b. !validTableName.MatchString(Table) || strings.Contains(Table, ".") → error
+//                                                              // 决策：单段、不 TrimSpace（AC-10/11）
 //        c. final := Table + "." + Column
-//        d. validDataRuleColumn.MatchString(final) 失败 → error   // INV-1 最后防线（恒 ≤2 段）
+//        d. validDataRuleColumn.MatchString(final) 失败 → error // INV-1 最后防线（防御性冗余，见下注）
 //        e. 返回 final
 func resolveDataRuleColumn(rule DataRule) (column string, err error)
 ```
 
-- `Table` 单段校验：`validTableName.MatchString(Table)`（已防注入）**且** `!strings.Contains(Table, ".")`
-  （validTableName 允许 `schema.table` 单点，故需额外禁点以落实"单段"决策）。
+- `Table` 单段校验（step b）：`validTableName.MatchString(Table)` 为真**且** `!strings.Contains(Table, ".")`。
+  validTableName 允许 `schema.table` 单点，故需额外禁点以落实"单段"决策（伪代码与本句为同一逻辑的两种等价写法，实现以本句为准）。
+- **step d 是防御性冗余（future-proof，禁止删除）**：在 step a/b 通过后，`final` 恒为 `ident.ident` 形式、
+  必然匹配 `validDataRuleColumn`，故 step d 当前"永远通过"。保留它是 INV-1 的最后防线——
+  一旦未来有人放宽 step b 的 Table 校验，step d 仍兜底。AC-4/10/11 的拒绝由 step b 完成，step d 不单独可测。
+- **正则共用约束**：`validDataRuleColumn` 的单点允许（`ident.ident`）由旧路径（Column 点前缀）与新路径
+  （step d 校验拼接结果）**共用**。不得为区分两路径而单独收紧旧路径正则，否则 step d 兜底失效。
 - 错误用 `%q` 转义原始输入，沿用 query.go:1012 既有格式风格。
 
 ### 接入点（query.go:1005 / update.go:653 两侧，塌缩为同一形态）
 
 ```go
-// applyDataRule 开头，在 value=="" early-return 之前（INV-2）：
-column, err := resolveDataRuleColumn(rule)
+// applyDataRule 开头：现有首行 `column := rule.Column` 【整体替换】为下面两行，
+// 且必须在 value=="" early-return 之前（INV-2）：
+column, err := resolveDataRuleColumn(rule)   // 替换原 `column := rule.Column`
 if err != nil {
     q.errs = append(q.errs, err)   // Updater 侧：u.errs
     return
 }
 // 删除原有的独立 validDataRuleColumn.MatchString(column) 校验块——已内聚进 helper（INV-1/INV-3）。
-// 其后 value 空值检查、SQL/USE_SQL_RULES 拒绝、switch 操作符映射【保持不变】，各侧自留。
+// 其后 value 空值检查、SQL/USE_SQL_RULES 拒绝、switch 操作符映射【保持不变】，各侧自留；
+// 注意 switch 内所有 q.Eq(column,...) 等调用此时的 column 即 helper 返回值（含 Table 前缀），
+// 不再是 rule.Column——这是 Table 前缀穿透到各操作符分支的关键（INV-2）。
 ```
 
 > 注意：`SQL`/`USE_SQL_RULES` 拒绝的错误文案两侧不同（query 提示 RawQuery、update 提示 RawExec），
@@ -156,6 +173,7 @@ if err != nil {
 | `"ext"` | `dept.id`（含点） | fail-fast error（语义唯一，禁两套等价写法）（AC-3） |
 | `"public.users"`（含点） | 任意 | fail-fast error（Table 单段约束）（AC-10） |
 | `"ext "` / 含空白 / 非法字符 | 任意 | validTableName 拒，error（不 TrimSpace）（AC-4/AC-11） |
+| 任意 | `""`（空列） | validDataRuleColumn 拒（空串及拼出的 `ext.` 均不匹配正则）→ error（既有行为，helper 兜底，无新增逻辑） |
 
 ### 非目标（YAGNI）
 
@@ -172,7 +190,7 @@ if err != nil {
 | `resolveDataRuleColumn` helper（含双校验 + 格式化 error） | builder.go | ~18 行 |
 | `applyDataRule` 接入 helper + 删旧校验块（Query 侧） | query.go | ~5 行 |
 | `applyDataRule` 接入 helper + 删旧校验块（Updater 侧） | update.go | ~5 行 |
-| 测试（13 AC：AC-1~11 + AC-5a~5d） | 新增 `datarule_table_test.go` | ~300 行 |
+| 测试（14 AC：AC-1~11 + AC-5a~5e） | 新增 `datarule_table_test.go` | ~320 行 |
 
 核心实现约 30 行。
 
