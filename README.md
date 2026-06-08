@@ -418,6 +418,21 @@ users, err := repo.List(q)
 
 > **注意**：`DataRule.Column` 仅支持字母/数字/下划线/点，含括号或运算符的表达式会被拒绝以防注入。
 
+#### 跨表数据权限：`DataRule.Table`
+
+JOIN 多表查询时，用 `Table` 字段把数据权限规则限定到指定表 / JOIN 别名：
+
+```go
+rules := []gplus.DataRule{
+    {Table: "ext", Column: "dept_id", Condition: "=", Value: "1"}, // 生成 ext.dept_id = 1
+}
+ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
+```
+
+- `Table` 的值必须与查询中 JOIN 别名（`As[X]` 注册名 / `NewQueryAs` 主别名）**字符串一致**；gplus 不校验别名是否存在，拼错由数据库执行期报错。
+- `Table` 仅允许单段标识符（不含点 / 空白）；`Table` 非空时 `Column` 必须是裸列名（不得再含点）。
+- 向后兼容：不填 `Table`、在 `Column` 写 `"ext.dept_id"` 点前缀的旧写法仍可用，但新代码建议用 `Table`。
+
 ### 悲观锁查询（GetByLock）
 
 `GetByLock` 必须在事务中使用，否则返回 `ErrTransactionReq`。
@@ -1138,7 +1153,7 @@ q.LeftJoinAs(o, &o.UserID, &u.ID,
     "AND o.tenant_id = ?", tenantID) // ← 显式 + 参数化
 ```
 
-**禁止**用 fmt.Sprintf 拼接用户输入到 extraSQL（SQL 注入）。**禁止**在 DataRule.Column 写 alias 前缀（如 `"o.tenant_id"`）—— v0.9 cross-table DataRule 通过新增 `DataRule.Table` 字段提供，提前写 alias 前缀会形成兼容性陷阱。
+**禁止**用 fmt.Sprintf 拼接用户输入到 extraSQL（SQL 注入）。跨表数据权限请使用 `DataRule.Table` 字段（见上方「跨表数据权限」章节），在 `DataRule.Column` 直接写 alias 前缀（如 `"o.tenant_id"`）的旧写法仍向后兼容，但新代码建议用 `Table`。
 
 ## 许可证
 

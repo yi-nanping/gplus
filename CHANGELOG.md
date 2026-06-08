@@ -2,6 +2,26 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.10.0] - 2026-06-08
+
+本版新增 `DataRule.Table` 跨表数据权限字段，兑现 v0.8.0 路线图承诺并消除 v0.9.0 反向兼容债。向后兼容，MINOR 版本。
+
+### 新增
+
+- **`DataRule.Table` 跨表数据权限字段**：为数据权限规则显式指定作用的表名 / JOIN 别名前缀（如 `Table: "ext"`），生成 `ext.dept_id` 限定列。
+  - 单一真相源 helper `resolveDataRuleColumn`：全部列名侧校验内聚（旧路径 Column 走 `validDataRuleColumn` 白名单；新路径 Table 单段校验 + 拼接结果防御性复校验，INV-1 最后防线）
+  - Query 与 Updater 两侧接入塌缩为同一形态（INV-3 防双侧漂移），置于空值 early-return 之前（INV-2，保证 IS NULL / BETWEEN 等操作符也带 Table 前缀）
+  - fail-fast：`Table` 非空时 `Column` 禁含点（禁两套等价写法）；`Table` 仅单段（拒 `schema.table`）、不 TrimSpace
+  - 向后兼容：`Table` 空时旧 `Column:"ext.dept_id"` 点前缀写法零回归
+
+### 变更（还反向兼容债）
+
+- 兑现 v0.8.0 路线图「跨表 DataRule（DataRule.Table 字段）」承诺（v0.9.0 未交付，本版补齐）。
+- v0.8.0 行为约束「DataRule.Column 不应写 alias 前缀」更新：跨表权限现由 `Table` 字段正式提供；旧 Column 点前缀仍向后兼容，新代码引导用 `Table`。
+- v0.9.0 已知限制「DataRule 裸列自连接 ambiguous，须 Column 自带别名前缀」被取代：现可写 `Table:"ext", Column:"dept_id"`（裸列），由 gplus 拼前缀。
+
+---
+
 ## [0.9.0] - 2026-06-05
 
 本版聚焦查询/写入能力扩展（Round 1~3b）。新增均为向后兼容的公开 API，不破坏 v0.8.x 既有行为，故为 MINOR 版本。
@@ -31,7 +51,7 @@
 - **主别名 First 路径不支持**：`GetOne` / `Last` / `GetByLock` / `FirstOrCreate` 下 GORM 自动 `ORDER BY <table>.id` 裸表名被别名遮蔽报错
 - **主别名写路径不物化**：`Delete` / `Update` 走 `BuildDelete`/`BuildUpdate`，FROM 不物化别名（WHERE/SET 字段带别名前缀，裸表无该别名 → 真实执行失败）
 - **自连接软删除表约束**：必须 `Unscoped()` + 手动两侧别名前缀（如 `ext.deleted_at IS NULL` / `sub.deleted_at IS NULL`），缺前缀会复活已删数据复制成未删行（不可逆污染）
-- **DataRule 裸列自连接 ambiguous**：用户须 `Column` 自带别名前缀
+- **DataRule 裸列自连接 ambiguous**：用户须 `Column` 自带别名前缀（0.10.0 `DataRule.Table` 已支持裸列跨表）
 - 多段表名 `a.b.c` 不支持；`SubQueryAs` 自定义别名 FROM 不物化（既有限制）
 
 ### 方言风险（CI SQLite 覆盖不到，真机残留项）
@@ -257,7 +277,7 @@ DM 特有：
 ### 行为约束（须知）
 
 - **DataRule × alias 安全契约**：DataRule 仅作用主表，alias 副表用户自负责。详见 README "Alias 与跨表查询" 章节
-- **DataRule.Column 不应写 alias 前缀**：v0.9 cross-table DataRule 通过新增 Table 字段提供，提前在 Column 写 alias 前缀会形成兼容性陷阱
+- **DataRule.Column 不应写 alias 前缀**：v0.9 cross-table DataRule 通过新增 Table 字段提供，提前在 Column 写 alias 前缀会形成兼容性陷阱（0.10.0 `Table` 字段已正式提供）
 - **JoinAs extraSQL 必须参数化**：禁止 fmt.Sprintf 拼接用户输入；占位符 `?` + extraArgs 走 GORM 参数化
 - **As(q=nil) panic ErrAliasQueryNil**（API 入口编程错误）；其他错误均累积 + BuildQuery 短路（决策 1B）
 - **Clear() 后 alias 实例失效**：Clear 翻转所有 alias entry 的 revoked 标记，后续使用累积 ErrAliasRevoked
@@ -272,7 +292,7 @@ DM 特有：
 - ANY / ALL 24 方法 → v0.8.1
 - SelectSub → v0.8.1（依赖 GORM Select 嵌套实测）
 - 类型安全 ON extra 三元组 / 包级泛型 LeftJoinAs[L,R] → v0.9
-- 跨表 DataRule（DataRule.Table 字段）→ v0.9
+- 跨表 DataRule（DataRule.Table 字段）→ v0.9（实际于 0.10.0 交付）
 - UNION / WITH CTE / 窗口函数 → v1.0+
 
 ---
