@@ -67,7 +67,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule` 并将条件追加到查询中。由 `dataRuleApplied bool` 保护——对同一 `Query` 多次调用是安全的（幂等）。始终以 `q.DataRuleBuilder().BuildQuery()` 方式调用，在 repository 方法中不要直接调用 `q.BuildQuery()`。
 
-`DataRule.Column` 须匹配白名单正则（字母/数字/下划线/点），含括号或运算符的表达式会被拒绝。
+`DataRule.Column` 须匹配白名单正则（字母/数字/下划线/点），含括号或运算符的表达式会被拒绝。`DataRule.Table` 非空时走 `resolveDataRuleColumn` 新路径：`Table` 单段校验（拒 `schema.table`）+ 拼接结果防御性复校验，`Table` 非空时 `Column` 不得含点；旧路径（`Table` 空）向后兼容点前缀写法。
 
 ### 错误处理模式
 
@@ -119,6 +119,9 @@ gplus.Sum[T, R, D](r, q, col)                 // SUM 聚合，NULL 安全
 gplus.Max[T, R, D](r, q, col)                 // MAX 聚合，NULL 安全
 gplus.Min[T, R, D](r, q, col)                 // MIN 聚合，NULL 安全
 gplus.Avg[T, R, D](r, q, col)                 // AVG 聚合，NULL 安全
+gplus.FindAs[T, R, D](r, q, dest)              // 投影查询（多行），走 Query callback chain
+gplus.FindOneAs[T, R, D](r, q, dest)           // 投影查询（单行），无匹配返回 ErrRecordNotFound
+gplus.PageAs[T, R, D](r, q, dest, skipCount)   // 投影分页，返回 (total, err)；均含 Tx 变体（FindAsTx/FindOneAsTx/PageAsTx）
 
 // 原生 SQL
 repo.RawQuery(ctx, sql, args...)              // 原生查询，返回 []T

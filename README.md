@@ -397,6 +397,39 @@ err := db.Transaction(func(tx *gorm.DB) error {
 - `Dest` 仅决定 SELECT 列 → struct 字段映射（GORM 默认 snake_case）
 - 跨表 JOIN 列必须 SQL alias，否则字段名冲突 GORM 无法定位
 
+### PageAs / PageAsTx — 投影分页（Query-chain-safe）
+
+等价于 `repo.Page`，但把分页结果投影到自定义 `Dest`（JOIN 多表 + VO 场景），走 GORM Query callback chain，下游挂在 Query chain 上的隔离/审计 callback 会触发（与 FindAs 一致）。
+
+```go
+type UserVO struct {
+    Name     string
+    DeptName string
+}
+
+q, m := gplus.NewQuery[User](ctx)
+q.LeftJoin("dept", "users.dept_id = dept.id").
+    Select("users.name", "dept.name AS dept_name").
+    Page(1, 20) // 第 1 页，每页 20 条
+
+var rows []UserVO
+total, err := gplus.PageAs(repo, q, &rows, false)
+// total = 满足条件的总行数；skipCount=true 时 total 恒为 0
+
+// 事务版本
+err := db.Transaction(func(tx *gorm.DB) error {
+    var rows []UserVO
+    _, err := gplus.PageAsTx(repo, q, &rows, false, tx)
+    return err
+})
+```
+
+**要点**：
+- 返回 `(total int64, err error)`；`skipCount=true` 跳过 COUNT（`total` 恒为 0），适合不需要总数的场景
+- `skipCount=false` 时先执行 COUNT；若总数为 0 则提前返回，不执行投影 Find
+- 与 `FindOneAs` 的区别：内部用 `Find` 不追加 `LIMIT 1`，正是要与 `q.Page()` 设的 `LIMIT/OFFSET` 协同
+- **副作用**：调用后 `q` 会永久追加 DataRule 条件（`dataRuleApplied` 保护幂等），不应再跨不同 `ctx` 复用，与 `FindAs` 行为一致
+
 ### 数据权限（DataRule）
 
 `DataRule` 通过 `context.Context` 传入，由 Repository 方法自动应用到所有查询和写操作，无需在每处手动添加条件。适合多租户、行级权限等场景。
