@@ -150,7 +150,7 @@ func TestDataRuleTable_crosstable_filters_ext_side_and_differs_from_bare(t *test
 	}
 
 	// (3) 强制对照（防假绿，不可省）：裸 dept_id 自连接两表同名列 → 行为必不同
-	// （SQLite 报 ambiguous，或解析到 m.dept_id 致行数不同）。仅"无错且行数相同"才判死代码。
+	// （自连接同名裸列 SQLite/MySQL/PG 均报 ambiguous → bareErr!=nil）。仅"无错且行数相同"才判死代码。
 	repo2, _ := setupDRDB(t)
 	ctxBare := context.WithValue(context.Background(), DataRuleKey,
 		[]DataRule{{Column: "dept_id", Condition: "=", Value: "1"}})
@@ -255,7 +255,10 @@ func drUpdaterSQL(t *testing.T, rules []DataRule) (*Updater[drUser], string) {
 	ctx := context.WithValue(context.Background(), DataRuleKey, rules)
 	u, mu := NewUpdater[drUser](ctx)
 	u.Set(&mu.Name, "x")
-	s, _ := u.ToSQL(db)
+	s, err := u.ToSQL(db)
+	if err != nil {
+		t.Fatalf("drUpdaterSQL: ToSQL 非预期错误: %v", err)
+	}
 	return u, stripIdentQuotes(s)
 }
 
