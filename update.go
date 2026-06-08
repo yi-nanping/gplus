@@ -651,15 +651,14 @@ func (u *Updater[T]) DataRuleBuilder() *Updater[T] {
 
 // applyDataRule 将单条 DataRule 转换为更新条件追加到 Updater 中
 func (u *Updater[T]) applyDataRule(rule DataRule) {
-	column := rule.Column
-	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
-	value := rule.Value
-
-	// 白名单校验列名，防止含括号/运算符的恶意表达式绕过 quoteColumn 转义
-	if !validDataRuleColumn.MatchString(column) {
-		u.errs = append(u.errs, fmt.Errorf("data rule: invalid column %q", column))
+	// 解析列名 + 全部列名侧校验内聚进 helper（含 Table 前缀拼接，INV-1/INV-2/INV-3）
+	column, err := resolveDataRuleColumn(rule)
+	if err != nil {
+		u.errs = append(u.errs, err)
 		return
 	}
+	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
+	value := rule.Value
 
 	if value == "" && len(rule.Values) == 0 && c != "IS NULL" && c != "IS NOT NULL" {
 		return

@@ -247,3 +247,63 @@ func TestDataRuleTable_between_carries_table_prefix(t *testing.T) {
 		t.Fatalf("BETWEEN 应带 ext 前缀，实际: %s", sql)
 	}
 }
+
+// drUpdaterSQL 注入 rules 后用 ToSQL 生成 UPDATE SQL（去引号）。Set name 防 ErrUpdateEmpty。
+func drUpdaterSQL(t *testing.T, rules []DataRule) (*Updater[drUser], string) {
+	t.Helper()
+	db := newDryRunDB(t)
+	ctx := context.WithValue(context.Background(), DataRuleKey, rules)
+	u, mu := NewUpdater[drUser](ctx)
+	u.Set(&mu.Name, "x")
+	s, _ := u.ToSQL(db)
+	return u, stripIdentQuotes(s)
+}
+
+// drUpdaterErr 注入 rules 后返回 Updater 累积错误（用于 fail-fast / 注入断言）。
+func drUpdaterErr(t *testing.T, rules []DataRule) error {
+	t.Helper()
+	ctx := context.WithValue(context.Background(), DataRuleKey, rules)
+	u, mu := NewUpdater[drUser](ctx)
+	u.Set(&mu.Name, "x")
+	u.DataRuleBuilder()
+	return u.GetError()
+}
+
+// AC-5a: Updater 跨表正路 → UPDATE WHERE 含 ext.dept_id
+func TestDataRuleTable_updater_crosstable_prefix(t *testing.T) {
+	_, sql := drUpdaterSQL(t, []DataRule{{Table: "ext", Column: "dept_id", Condition: "=", Value: "1"}})
+	if !strings.Contains(sql, "ext.dept_id") {
+		t.Fatalf("Updater UPDATE WHERE 期望含 ext.dept_id，实际: %s", sql)
+	}
+}
+
+// AC-5b: Updater 注入防护 → GetError 非 nil
+func TestDataRuleTable_updater_rejects_injection(t *testing.T) {
+	if drUpdaterErr(t, []DataRule{{Table: `ext";DROP--`, Column: "dept_id", Condition: "=", Value: "1"}}) == nil {
+		t.Fatal("Updater 注入 payload 期望 GetError 非 nil")
+	}
+}
+
+// AC-5c: Updater fail-fast（Table 非空 + Column 含点）→ 错误含原始 dept.id
+func TestDataRuleTable_updater_failfast_column_dot(t *testing.T) {
+	err := drUpdaterErr(t, []DataRule{{Table: "ext", Column: "dept.id", Condition: "=", Value: "1"}})
+	if err == nil || !strings.Contains(err.Error(), "dept.id") {
+		t.Fatalf("Updater fail-fast 期望错误含原始 dept.id，实际: %v", err)
+	}
+}
+
+// AC-5d: Updater 零回归（单表裸列）→ UPDATE WHERE 裸 dept_id 无前缀
+func TestDataRuleTable_updater_single_table_no_regression(t *testing.T) {
+	_, sql := drUpdaterSQL(t, []DataRule{{Table: "", Column: "dept_id", Condition: "=", Value: "1"}})
+	if !strings.Contains(sql, "dept_id") || strings.Contains(sql, ".dept_id") {
+		t.Fatalf("Updater 单表应裸 dept_id 无前缀，实际: %s", sql)
+	}
+}
+
+// AC-5e: Updater 操作符穿透（IS NULL + Table）→ ext.dept_id IS NULL（对称 AC-8，验证 Updater 侧 INV-2）
+func TestDataRuleTable_updater_is_null_carries_prefix(t *testing.T) {
+	_, sql := drUpdaterSQL(t, []DataRule{{Table: "ext", Column: "dept_id", Condition: "IS NULL"}})
+	if !strings.Contains(sql, "ext.dept_id IS NULL") {
+		t.Fatalf("Updater IS NULL 应带 ext 前缀（INV-2），实际: %s", sql)
+	}
+}
