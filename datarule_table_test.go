@@ -56,3 +56,51 @@ func TestDataRuleTable_table_prefix_produces_qualified_column(t *testing.T) {
 		t.Fatalf("WHERE 期望含 ext.dept_id（helper 拼前缀，覆盖 2b/2c/2d），实际 SQL: %s", sql)
 	}
 }
+
+// AC-4: 注入 payload（table-driven）→ 每个 GetError 非 nil 且条件未拼进 SQL
+func TestDataRuleTable_rejects_injection_payloads(t *testing.T) {
+	payloads := []struct {
+		name  string
+		table string
+	}{
+		{"双引号分号", `ext";DROP--`},
+		{"反引号", "ext`alias"},
+		{"尾点", "ext."},
+		{"首点", ".ext"},
+		{"尾空格", "ext "}, // 与 AC-11 呼应，AC-11 单列强调"不 TrimSpace"决策
+		{"Tab", "ext\t"},
+		{"换行", "ext\n"},
+		{"西里尔同形", "еxt"}, // 首字符 U+0435，非 ASCII [a-zA-Z_]
+	}
+	for _, p := range payloads {
+		t.Run(p.name, func(t *testing.T) {
+			q, sql := drDataRuleSQL(t, []DataRule{{Table: p.table, Column: "dept_id", Condition: "=", Value: "1"}})
+			if q.GetError() == nil {
+				t.Fatalf("payload %q 期望 GetError 非 nil", p.table)
+			}
+			// 负例断言：非法输入被拒后该 rule 不生成任何条件，SQL 不含列名
+			if strings.Contains(sql, "dept_id") {
+				t.Fatalf("payload %q 非法但条件被拼进 SQL: %s", p.table, sql)
+			}
+		})
+	}
+}
+
+// AC-10: Table 含点（多段 public.users）违反单段约束 → GetError 非 nil
+func TestDataRuleTable_rejects_multi_segment_table(t *testing.T) {
+	q, sql := drDataRuleSQL(t, []DataRule{{Table: "public.users", Column: "id", Condition: "=", Value: "1"}})
+	if q.GetError() == nil {
+		t.Fatal("Table=public.users 含点违反单段约束，期望 GetError 非 nil")
+	}
+	if strings.Contains(sql, "public") {
+		t.Fatalf("多段 Table 被拒后不应拼进 SQL: %s", sql)
+	}
+}
+
+// AC-11: Table 首尾空格 → GetError 非 nil（不做 TrimSpace，validTableName 拒）
+func TestDataRuleTable_rejects_table_with_trailing_space(t *testing.T) {
+	q, _ := drDataRuleSQL(t, []DataRule{{Table: "ext ", Column: "dept_id", Condition: "=", Value: "1"}})
+	if q.GetError() == nil {
+		t.Fatal(`Table="ext "（含尾空格，不 TrimSpace）期望 GetError 非 nil`)
+	}
+}
