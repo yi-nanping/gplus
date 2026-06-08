@@ -109,3 +109,57 @@ func FindOneAsTx[T any, Dest any, D comparable](
 	return r.dbResolver(q.Context(), tx).
 		Model(new(T)).Scopes(q.BuildQuery()).First(dest).Error
 }
+
+// PageAs 投影分页查询。dest 必须是 *[]Dest 切片指针。
+//
+// 等价于 repo.Page，但把结果投影到自定义 Dest（JOIN 多表 + VO 场景），
+// 走 GORM Query callback chain，下游隔离/审计 callback 会触发（与 FindAs 一致）。
+//
+// skipCount 语义同 Page：true 跳过 COUNT（total 恒为 0），适合不需要总数的场景；
+// false 时先 COUNT，若总数为 0 则提前返回、不执行投影 Find。
+//
+// 【副作用】调用后 q.conditions 会被永久追加 DataRule 条件（dataRuleApplied 保护幂等），
+// q 不应再跨不同 ctx 复用。与 List/FindAs 等行为一致。
+//
+// 【与 FindOneAs 的区别】FindOneAs 禁止与 q.Limit()/q.Page() 组合（内部 First 加 LIMIT 1
+// 会冲突）；PageAs 内部用 Find 不追加 LIMIT 1，正是要与 q.Page() 设的 LIMIT/OFFSET 协同。
+//
+// 【调用形态】类型推导后无需写类型参数：
+//
+//	var rows []UserVO
+//	total, err := gplus.PageAs(repo, q, &rows, false)
+func PageAs[T any, Dest any, D comparable](
+	r *Repository[D, T], q *Query[T], dest *[]Dest, skipCount bool,
+) (total int64, err error) {
+	return PageAsTx[T, Dest, D](r, q, dest, skipCount, nil)
+}
+
+// PageAsTx 支持事务的 PageAs。tx 为 nil 时与 PageAs 等价。
+func PageAsTx[T any, Dest any, D comparable](
+	r *Repository[D, T], q *Query[T], dest *[]Dest, skipCount bool, tx *gorm.DB,
+) (total int64, err error) {
+	if q == nil {
+		return 0, ErrQueryNil
+	}
+	if err = q.GetError(); err != nil {
+		return 0, err
+	}
+	if err = q.DataRuleBuilder().GetError(); err != nil {
+		return 0, err
+	}
+	baseDb := r.dbResolver(q.Context(), tx).Model(new(T))
+
+	if !skipCount {
+		err = baseDb.Session(&gorm.Session{}).
+			Scopes(q.BuildCount()).
+			Count(&total).Error
+		if err != nil || total == 0 {
+			return total, err
+		}
+	}
+
+	err = baseDb.Session(&gorm.Session{}).
+		Scopes(q.BuildQuery()).
+		Find(dest).Error
+	return total, err
+}
