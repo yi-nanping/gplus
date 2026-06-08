@@ -106,3 +106,144 @@ func TestDataRuleTable_rejects_table_with_trailing_space(t *testing.T) {
 		t.Fatal(`Table="ext "（含尾空格，不 TrimSpace）期望 GetError 非 nil`)
 	}
 }
+
+// setupDRDB 建库 + AutoMigrate drUser + 自连接对照种子。
+// 种子让"裸 dept_id"与"ext.dept_id"在错位自连接（ext.id=m.id+1）下结果必然不同。
+func setupDRDB(t *testing.T) (*Repository[int64, drUser], *gorm.DB) {
+	t.Helper()
+	repo, db := setupTestDB[drUser](t)
+	seeds := []drUser{
+		{ID: 1, DeptID: 2, Age: 9, Name: "a"},
+		{ID: 2, DeptID: 1, Age: 5, Name: "b"},
+		{ID: 3, DeptID: 1, Age: 9, Name: "c"},
+	}
+	for i := range seeds {
+		if err := db.Create(&seeds[i]).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	return repo, db
+}
+
+// AC-1: 跨表正路（裸列 dept_id + Table:"ext"），ext 侧过滤，且与裸列对照行为不同（防死代码）
+func TestDataRuleTable_crosstable_filters_ext_side_and_differs_from_bare(t *testing.T) {
+	rule := []DataRule{{Table: "ext", Column: "dept_id", Condition: "=", Value: "1"}}
+
+	// (1) 结构：DryRun WHERE 含 ext.dept_id（裸列经 helper 拼前缀，非旧点前缀 workaround）
+	_, sql := drDataRuleSQL(t, rule)
+	if !strings.Contains(sql, "ext.dept_id") {
+		t.Fatalf("WHERE 期望含 ext.dept_id（helper 拼前缀），实际 SQL: %s", sql)
+	}
+
+	// (2) 行为：错位自连接真实执行，ext.dept_id=1 过滤 ext 侧
+	// 配对 ext.id=m.id+1 → (m1,ext2)(m2,ext3)；ext2/ext3 dept 均=1 → 2 行
+	repo, _ := setupDRDB(t)
+	ctxExt := context.WithValue(context.Background(), DataRuleKey, rule)
+	qExt, _ := repo.NewQueryAs(ctxExt, "m")
+	qExt.CrossJoinAs(As[drUser](qExt, "ext")).WhereRaw("ext.id = m.id + 1")
+	extCount, err := repo.Count(qExt)
+	if err != nil {
+		t.Fatalf("ext 前缀版 Count 失败: %v", err)
+	}
+	if extCount != 2 {
+		t.Fatalf("ext.dept_id=1 期望 2 行（配对 ext2/ext3 均 dept1），实际 %d", extCount)
+	}
+
+	// (3) 强制对照（防假绿，不可省）：裸 dept_id 自连接两表同名列 → 行为必不同
+	// （SQLite 报 ambiguous，或解析到 m.dept_id 致行数不同）。仅"无错且行数相同"才判死代码。
+	repo2, _ := setupDRDB(t)
+	ctxBare := context.WithValue(context.Background(), DataRuleKey,
+		[]DataRule{{Column: "dept_id", Condition: "=", Value: "1"}})
+	qBare, _ := repo2.NewQueryAs(ctxBare, "m")
+	qBare.CrossJoinAs(As[drUser](qBare, "ext")).WhereRaw("ext.id = m.id + 1")
+	bareCount, bareErr := repo2.Count(qBare)
+	if bareErr == nil && bareCount == extCount {
+		t.Fatalf("Table:\"ext\" 与裸 dept_id 结果相同(count=%d)，Table 前缀未改变行为=死代码", bareCount)
+	}
+}
+
+// AC-2: 旧点前缀写法 Table:"" Column:"ext.dept_id" 真实执行，与 AC-1 的 Table:"ext" 等价（零回归）
+func TestDataRuleTable_legacy_dotprefix_equivalent_to_table_field(t *testing.T) {
+	repo, _ := setupDRDB(t)
+	ctx := context.WithValue(context.Background(), DataRuleKey,
+		[]DataRule{{Table: "", Column: "ext.dept_id", Condition: "=", Value: "1"}})
+	q, _ := repo.NewQueryAs(ctx, "m")
+	q.CrossJoinAs(As[drUser](q, "ext")).WhereRaw("ext.id = m.id + 1")
+	count, err := repo.Count(q)
+	if err != nil {
+		t.Fatalf("旧点前缀版 Count 失败: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("旧 workaround ext.dept_id=1 期望 2 行（与 AC-1 等价），实际 %d", count)
+	}
+}
+
+// AC-6: 单表裸列 Table:"" Column:"dept_id" 真实执行，WHERE 裸 dept_id 无前缀，结果不变
+func TestDataRuleTable_single_table_bare_column_no_regression(t *testing.T) {
+	repo, _ := setupDRDB(t)
+	ctx := context.WithValue(context.Background(), DataRuleKey,
+		[]DataRule{{Table: "", Column: "dept_id", Condition: "=", Value: "1"}})
+	q, _ := NewQuery[drUser](ctx)
+	count, err := repo.Count(q)
+	if err != nil {
+		t.Fatalf("单表裸列 Count 失败: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("单表 dept_id=1 期望 2 行，实际 %d", count)
+	}
+	_, sql := drDataRuleSQL(t, []DataRule{{Column: "dept_id", Condition: "=", Value: "1"}})
+	if !strings.Contains(sql, "dept_id") || strings.Contains(sql, ".dept_id") {
+		t.Fatalf("单表应裸 dept_id 无前缀，实际 SQL: %s", sql)
+	}
+}
+
+// AC-7: 两条 rule（新路径 ext.dept_id IN + 旧点前缀 m.age=）AND 共存，参数绑定不错位
+func TestDataRuleTable_multi_rule_new_old_mixed_AND_no_param_corruption(t *testing.T) {
+	repo, db := setupTestDB[drUser](t)
+	// 种子让两条件唯一同时满足 1 行：仅 (m1 age9, ext2 dept1) 满足 ext.dept∈{1,2} ∧ m.age=9
+	seeds := []drUser{
+		{ID: 1, DeptID: 2, Age: 9, Name: "a"},
+		{ID: 2, DeptID: 1, Age: 5, Name: "b"},
+		{ID: 3, DeptID: 1, Age: 9, Name: "c"},
+	}
+	for i := range seeds {
+		if err := db.Create(&seeds[i]).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	rules := []DataRule{
+		{Table: "ext", Column: "dept_id", Condition: "IN", Values: []string{"1", "2"}},
+		{Table: "", Column: "m.age", Condition: "=", Value: "9"},
+	}
+	ctx := context.WithValue(context.Background(), DataRuleKey, rules)
+	q, _ := repo.NewQueryAs(ctx, "m")
+	q.CrossJoinAs(As[drUser](q, "ext")).WhereRaw("ext.id = m.id + 1")
+	count, err := repo.Count(q)
+	if err != nil {
+		t.Fatalf("多 rule Count 失败: %v", err)
+	}
+	// AND 语义 + 参数不错位：配对 (m1 age9,ext2 dept1) 唯一同时满足 → 1
+	if count != 1 {
+		t.Fatalf("ext.dept_id IN(1,2) ∧ m.age=9 期望 1 行，实际 %d", count)
+	}
+	_, sql := drDataRuleSQL(t, rules)
+	if !strings.Contains(sql, "ext.dept_id") || !strings.Contains(sql, "m.age") {
+		t.Fatalf("WHERE 期望同时含 ext.dept_id 与 m.age，实际: %s", sql)
+	}
+}
+
+// AC-8: IS NULL + Table → ext.dept_id IS NULL（证明空值 early-return 前已解析 Table 前缀）
+func TestDataRuleTable_is_null_carries_table_prefix(t *testing.T) {
+	_, sql := drDataRuleSQL(t, []DataRule{{Table: "ext", Column: "dept_id", Condition: "IS NULL"}})
+	if !strings.Contains(sql, "ext.dept_id IS NULL") {
+		t.Fatalf("IS NULL 应带 ext 前缀（INV-2），实际: %s", sql)
+	}
+}
+
+// AC-9: BETWEEN + Table + 多值 → ext.age BETWEEN（证明 Table 穿透到非 = 多值分支）
+func TestDataRuleTable_between_carries_table_prefix(t *testing.T) {
+	_, sql := drDataRuleSQL(t, []DataRule{{Table: "ext", Column: "age", Condition: "BETWEEN", Values: []string{"10", "30"}}})
+	if !strings.Contains(sql, "ext.age BETWEEN") {
+		t.Fatalf("BETWEEN 应带 ext 前缀，实际: %s", sql)
+	}
+}
