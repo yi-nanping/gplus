@@ -262,6 +262,54 @@ func (q *Query[T]) SelectRaw(expr string, args ...any) *Query[T] {
 	return q
 }
 
+// SelectExpr 添加一个类型安全的投影表达式（Col / Lit / Add 组合）。
+// Col 字段地址在调用期立即经 resolveColumnNameAny 解析为列名（与 Select 一致），
+// 解析错误（未注册地址 / revoked alias）立即累积到 q.errs，由终端方法 GetError 拦截，
+// 不会发出 SQL。字面量（Lit）走参数化绑定（? 占位），防 SQL 注入。
+// 引号转义留到 build 期（方言引号字符此时才已知）。
+// 解析全部成功后恰好追加 1 个 selectItem（AC-9）。
+func (q *Query[T]) SelectExpr(e Expr) *Query[T] {
+	parts, ok := q.flattenExpr(e)
+	if !ok {
+		return q
+	}
+	q.selects = append(q.selects, selectItem{exprParts: parts})
+	return q
+}
+
+// flattenExpr 递归将 Expr 树扁平化为 []exprPart（全加法满足结合律，可安全扁平化）。
+// ok=false 表示遇到错误（已累积到 q.errs），调用方不应追加 selectItem。
+func (q *Query[T]) flattenExpr(e Expr) ([]exprPart, bool) {
+	switch node := e.(type) {
+	case colRef:
+		name, err := q.resolveColumnNameAny(node.ptr)
+		if err != nil {
+			q.errs = append(q.errs, fmt.Errorf("gplus: SelectExpr invalid column pointer: %w", err))
+			return nil, false
+		}
+		return []exprPart{{col: name}}, true
+	case litVal:
+		return []exprPart{{lit: node.val, isLit: true}}, true
+	case addExpr:
+		if len(node.operands) == 0 {
+			q.errs = append(q.errs, ErrExprEmpty)
+			return nil, false
+		}
+		var parts []exprPart
+		for _, op := range node.operands {
+			sub, ok := q.flattenExpr(op)
+			if !ok {
+				return nil, false
+			}
+			parts = append(parts, sub...)
+		}
+		return parts, true
+	default:
+		q.errs = append(q.errs, ErrExprEmpty)
+		return nil, false
+	}
+}
+
 // WhereRaw 添加原生 SQL 条件（AND）。
 // sql 为完整条件片段，args 为参数绑定值，防止 SQL 注入。
 // 示例：q.WhereRaw("YEAR(created_at) = ?", 2024)

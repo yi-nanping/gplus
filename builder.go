@@ -33,10 +33,22 @@ type orderItem struct {
 // selectItem 存储单个 SELECT 投影项。
 // isRaw=false：expr 为列名，需经 quoteColumn 转义；
 // isRaw=true ：expr 为原生表达式，原样输出不转义，args 为其绑定参数（按出现顺序）。
+// exprParts 非 nil 时此 item 为已解析的表达式树（由 SelectExpr 降解），
+// 渲染时覆盖 expr/isRaw 路径：遍历 parts 拼成加法片段，列经 quoteColumn、字面量走 ? 绑定。
 type selectItem struct {
-	expr  string
-	args  []any
-	isRaw bool
+	expr      string
+	args      []any
+	isRaw     bool
+	exprParts []exprPart
+}
+
+// exprPart 是表达式树降解后的单元。
+// isLit=false：col 为已解析列名（待 build 期 quoteColumn 转义）；
+// isLit=true ：lit 为字面量值（待 build 期渲染为 ? 并入 args）。
+type exprPart struct {
+	col   string
+	lit   any
+	isLit bool
 }
 
 // joinInfo 结构化 Join 存储，优化性能
@@ -354,15 +366,16 @@ func (b *ScopeBuilder) applyMainAlias(db *gorm.DB, qL, qR string) *gorm.DB {
 // applySelects select
 func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 	if len(b.selects) > 0 {
-		// 检查是否有任何带参数绑定的投影项
-		hasArgs := false
+		// 检查是否需要走绑定路径：含 args（SelectRaw 绑定）或含 exprParts（SelectExpr 表达式树）。
+		// 纯 Add(Col,Col) 无字面量但仍需拼 "col + col"，不能走只 quoteColumn 单列的零回归路径。
+		needsBindingPath := false
 		for _, it := range b.selects {
-			if len(it.args) > 0 {
-				hasArgs = true
+			if len(it.args) > 0 || it.exprParts != nil {
+				needsBindingPath = true
 				break
 			}
 		}
-		if !hasArgs {
+		if !needsBindingPath {
 			// 零回归路径：与迁移前完全一致（逗号无空格）
 			cols := make([]string, len(b.selects))
 			for i, it := range b.selects {
@@ -371,14 +384,26 @@ func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 			db = db.Select(quoteColumns(cols, qL, qR))
 		} else {
 			// 绑定路径：单串 + 顺序展平 args（逗号带空格）
-			// raw 项原样输出不转义，普通列经 quoteColumn
+			// raw 项原样输出不转义，exprParts 拼加法片段，普通列经 quoteColumn
 			parts := make([]string, len(b.selects))
 			var flatArgs []any
 			for i, it := range b.selects {
-				if it.isRaw {
+				switch {
+				case it.exprParts != nil:
+					segs := make([]string, len(it.exprParts))
+					for j, p := range it.exprParts {
+						if p.isLit {
+							segs[j] = "?"
+							flatArgs = append(flatArgs, p.lit)
+						} else {
+							segs[j] = quoteColumn(p.col, qL, qR)
+						}
+					}
+					parts[i] = strings.Join(segs, " + ")
+				case it.isRaw:
 					parts[i] = it.expr
 					flatArgs = append(flatArgs, it.args...)
-				} else {
+				default:
 					parts[i] = quoteColumn(it.expr, qL, qR)
 				}
 			}
