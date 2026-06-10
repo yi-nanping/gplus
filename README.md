@@ -473,8 +473,8 @@ q.SelectExpr(gplus.Add(gplus.Col(&m.Depth), gplus.Lit(1))).Eq(&m.DescendantID, 5
 ```go
 // 定义数据权限规则（通常在中间件中设置）
 rules := []gplus.DataRule{
-    {Column: "tenant_id", Op: gplus.OpEq, Val: "tenant-abc"},
-    {Column: "deleted_at", Op: gplus.OpIsNull},
+    {Column: "tenant_id", Condition: "=", Value: "tenant-abc"},
+    {Column: "deleted_at", Condition: "IS NULL"},
 }
 ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
 
@@ -1023,7 +1023,15 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 ## 版本历史
 
-### v0.6.0（最新，2026-04-30）
+> 最新版本 **v0.11.1**（2026-06-10），完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。v0.7 起的要点：
+>
+> - **v0.11**：typed-expr 类型化投影表达式（`Model[T]`/`Col`/`Lit`/`Add` + `SelectExpr`）+ `InsertSelectMap` 成对列映射
+> - **v0.10**：`DataRule.Table` 跨表数据权限 + `PageAs` 投影分页
+> - **v0.9**：`SelectRaw` 参数绑定 + `InsertSelect`/`InsertSelectTx` + `NewQueryAs` 主别名 FROM 物化
+> - **v0.8**：alias 体系（`As`/`NewQueryAs`/`JoinAs`/`SubQueryAs` + EXISTS 子查询）；0.8.1~0.8.3 PG / Oracle / 达梦多方言验证
+> - **v0.7**：`FindAs`/`FindOneAs` 投影查询（走 Query callback chain，下游 callback 不失效）
+
+### v0.6.0（2026-04-30）
 
 类型安全子查询，消灭体系性 `WhereRaw` 裂缝。
 
