@@ -181,6 +181,10 @@ func TestInsertSelectMap_src_expr_resolve_failure_leaves_src_untouched(t *testin
 	if affected != 0 || err == nil {
 		t.Errorf("期望 (0, 非nil)，实际 (%d, %v)", affected, err)
 	}
+	// Src 的 Col(&foreign.X) 地址未注册到 src alias 链/全局 cache → ErrFieldAddrUnregistered。
+	if !errors.Is(err, ErrFieldAddrUnregistered) {
+		t.Errorf("err 期望 ErrFieldAddrUnregistered，实际 %v", err)
+	}
 	if len(src.selects) != 0 {
 		t.Errorf("src.selects 期望 0（零副作用），实际 %d", len(src.selects))
 	}
@@ -215,6 +219,8 @@ func TestInsertSelectMapTx_rolls_back_on_rollback(t *testing.T) {
 	if affected != 1 {
 		t.Errorf("affected 期望 1，实际 %d", affected)
 	}
-	tx.Rollback()
+	if err := tx.Rollback().Error; err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
 	assertClosureCount(t, db, 2)
 }

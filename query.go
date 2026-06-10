@@ -294,7 +294,7 @@ func (q *Query[T]) flattenExpr(e Expr) ([]exprPart, bool) {
 	case colRef:
 		name, err := q.resolveColumnNameAny(node.ptr)
 		if err != nil {
-			q.errs = append(q.errs, fmt.Errorf("gplus: SelectExpr invalid column pointer: %w", err))
+			q.errs = append(q.errs, fmt.Errorf("gplus: Expr invalid column pointer: %w", err))
 			return nil, false
 		}
 		return []exprPart{{col: name}}, true
@@ -315,7 +315,7 @@ func (q *Query[T]) flattenExpr(e Expr) ([]exprPart, bool) {
 		}
 		return parts, true
 	default:
-		q.errs = append(q.errs, fmt.Errorf("gplus: SelectExpr unknown node %T: %w", node, ErrExprUnknownNode))
+		q.errs = append(q.errs, fmt.Errorf("gplus: Expr unknown node %T: %w", node, ErrExprUnknownNode))
 		return nil, false
 	}
 }

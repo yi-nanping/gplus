@@ -1166,7 +1166,11 @@ type InsertCol struct {
 // src 必须未设置任何投影（投影由本 API 独占设置）；含手动 Select/SelectRaw/SelectExpr
 // 时返回 ErrInsertSelectMapConflict。
 // 成功路径会变更调用方 src（追加投影）——这同时构成天然防重入：同一 src 二次调用
-// 必撞 ErrInsertSelectMapConflict。失败路径零副作用，src 修正后可复用。
+// 必撞 ErrInsertSelectMapConflict。
+// 失败路径对 src.selects 无副作用（阶段 A 不追加投影）。
+// 注意：Src 表达式解析失败时错误已累积到 src.errs，src 不可复用，须新建 Query；
+// Target 解析失败（包级 resolveColumnName，不碰 src.errs）则 src 可复用。
+// src 还须未设置 Distinct/Omit（设置则下游返回 ErrInsertSelectModifier）。
 // 不应用 DataRule（结构性写入不被隔离过滤）。
 func InsertSelectMap[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, cols []InsertCol, src *Query[S]) (int64, error) {
 	return InsertSelectMapTx[T, S, D](r, ctx, nil, cols, src)
