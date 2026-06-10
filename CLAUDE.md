@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 命令
 
-> 本机 `go` 在 PATH 中，go1.24.11（go toolchain 自动管理，由 `go.mod` 的 `go 1.24` 触发下载）。
+> 本机 `go` 在 PATH 中（当前 go1.26.1，直接满足 `go.mod` 的 `go 1.24` 要求）。
 > 直接用裸 `go` 命令即可，无需指定路径。
 
 ```bash
@@ -24,7 +24,7 @@ go test -v ./...
 go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 ```
 
-**已知的预存在测试失败**：无（所有测试均通过，覆盖率 94.0%）
+**已知的预存在测试失败**：无（所有测试均通过，覆盖率 95%+）
 
 ## 架构
 
