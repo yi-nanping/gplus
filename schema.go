@@ -205,3 +205,15 @@ func getModelInstance[T any]() *T {
 	modelInstanceCache.Store(typeStr, ptr)
 	return ptr
 }
+
+// Model 返回类型 T 的规范单例指针（字段地址已注册于全局 columnNameCache）。
+// 返回的指针与 NewQuery[T] / r.NewQuery(ctx) 第二个返回值是同一指针，首次调用
+// 时自动完成注册（委托给 getModelInstance 的慢路径，modelInitMu 保护）。
+//
+// 用途：作为 InsertSelect 的 targetCols / InsertSelectMap 的 Target 等场景
+// 提供字段指针来源（如 &Model[User]().Name）。
+//
+// ⚠️ 该单例是全局共享的只读锚点，仅用于取字段地址，禁止写入其任何字段值。
+func Model[T any]() *T {
+	return getModelInstance[T]()
+}

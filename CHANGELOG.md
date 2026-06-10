@@ -2,6 +2,31 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.11.0] - 2026-06-10
+
+本版新增类型化投影表达式（`Expr`/`Col`/`Lit`/`Add` + `Query.SelectExpr`）、规范单例导出 `Model[T]()` 与成对列映射 `InsertSelectMap`，让 `INSERT...SELECT...JOIN` 写操作做到零手写 SQL 字符串。向后兼容，MINOR 版本。
+
+### 新增
+
+- **`Model[T]()` 规范单例导出**：返回类型 T 的规范单例指针（字段地址注册于全局 cache），作为 `InsertSelect` targetCols / `InsertSelectMap` Target 的字段指针来源。⚠️ 只读锚点，禁写字段值。
+- **类型化投影表达式（`Expr` / `Col` / `Lit` / `Add` + `Query.SelectExpr`）**：消灭投影侧裸 SQL 表达式片段。
+  - `Col(&model.Field)` 字段引用（调用期经 alias 链解析）/ `Lit(val)` 字面量（参数化绑定防注入）/ `Add(...)` 变长加法
+  - `q.SelectExpr(e Expr)` 追加 1 个类型化投影列；Col 地址在 **SelectExpr 调用期**解析（错误立即累积，终端方法 `GetError()` 前置拦截，不发 SQL）
+  - 最小算子集（YAGNI）：仅 `Add`；`Sub`/`Mul`/函数/CASE 留待真实调用点
+  - 新 sentinel：`ErrExprEmpty`（Add 空操作数）/ `ErrExprUnknownNode`（未知节点，封闭接口内部防御）
+- **`InsertSelectMap` / `InsertSelectMapTx` 成对列映射**：`InsertCol{Target, Src}` 逐对声明目标列与源表达式，列数不匹配与顺序错位从「运行时数据错」提升为「结构上不可能」。
+  - 投影独占：src 不得有手动 Select/SelectRaw/SelectExpr（违反返回 `ErrInsertSelectMapConflict`）
+  - 阶段 A 全量解析（fail-fast 零追加）→ 阶段 B 统一追加 → 复用 `InsertSelectTx` 主流程
+  - Target 走包级 `resolveColumnName`（未注册→`ErrColumnNotFound`，不污染 src.errs，q 可复用）；Src 的 Col 走 alias 链（未注册→`ErrFieldAddrUnregistered`，污染 src.errs，q 不可复用）
+  - 成功路径变更 src（追加投影），天然防重入（二次调用撞 `ErrInsertSelectMapConflict`）；失败路径对 src.selects 零副作用
+- **下游收益**：`gvs-server` 闭包表自连接搬移可零手写 SQL（字段指针表达列引用，改列名构建期报错）。
+
+### 测试
+
+- 覆盖率维持 95.4%；新增 `model_export_test.go` / `expr_test.go` / `insert_select_map_test.go`，AC 1:1 映射测试。
+
+---
+
 ## [0.10.0] - 2026-06-08
 
 本版新增 `PageAs` 投影分页与 `DataRule.Table` 跨表数据权限字段，兑现 v0.8.0 路线图承诺并消除 v0.9.0 反向兼容债。向后兼容，MINOR 版本。

@@ -122,6 +122,15 @@ gplus.Avg[T, R, D](r, q, col)                 // AVG 聚合，NULL 安全
 gplus.FindAs[T, R, D](r, q, dest)              // 投影查询（多行），走 Query callback chain
 gplus.FindOneAs[T, R, D](r, q, dest)           // 投影查询（单行），无匹配返回 ErrRecordNotFound
 gplus.PageAs[T, R, D](r, q, dest, skipCount)   // 投影分页，返回 (total, err)；均含 Tx 变体（FindAsTx/FindOneAsTx/PageAsTx）
+gplus.InsertSelect[T, S, D](r, ctx, targetCols, src)  // INSERT INTO T(cols) SELECT...（含 Tx 变体）
+gplus.InsertSelectMap[T, S, D](r, ctx, cols, src)     // 成对列映射版，target/source 顺序天然对位（含 Tx 变体）
+gplus.Model[T]()                              // 返回 T 规范单例指针（取字段地址用，禁写字段值）
+
+// 类型化投影表达式（配合 q.SelectExpr / InsertSelectMap.Src）
+gplus.Col(&model.Field)                        // 字段引用（调用期经 alias 链解析）
+gplus.Lit(val)                                 // 字面量（参数化绑定，防注入）
+gplus.Add(ops...)                              // 变长加法表达式（仅 Add，YAGNI）
+// InsertCol{Target any; Src Expr} — InsertSelectMap 的成对映射元素
 
 // 原生 SQL
 repo.RawQuery(ctx, sql, args...)              // 原生查询，返回 []T
@@ -131,6 +140,7 @@ repo.RawScan(ctx, dest, sql, args...)         // 原生查询映射到自定义�
 // Query/Updater 新增方法
 q.WithScope(fn func(*gorm.DB)*gorm.DB)        // 注入自定义 GORM scope
 q.IsEmpty()                                    // 判断是否无条件（WithScope 不计入）
+q.SelectExpr(e Expr)                          // 类型化投影表达式（Col/Lit/Add 组合）；Col 地址调用期解析
 ```
 
 ### Repository 错误变量
@@ -147,6 +157,9 @@ q.IsEmpty()                                    // 判断是否无条件（WithSc
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 在无条件时被调用 |
 | `ErrOnConflictInvalid` | `OnConflict` 中 DoNothing/DoUpdateAll/DoUpdates 互斥策略同时设置 |
 | `ErrOptimisticLock` | `UpdateById`/`UpdateByIdTx` 乐观锁版本冲突（version 不匹配或记录不存在） |
+| `ErrExprEmpty` | `Add()` 无操作数（表达式至少需一个操作数） |
+| `ErrInsertSelectMapConflict` | `InsertSelectMap` 的 src 已有手动投影（Select/SelectRaw/SelectExpr） |
+| `ErrExprUnknownNode` | 未知 Expr 节点类型（封闭接口内部防御，用户正常不可达） |
 
 ### 测试辅助工具（`model_test.go`）
 
