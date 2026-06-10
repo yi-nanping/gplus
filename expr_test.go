@@ -3,7 +3,6 @@ package gplus
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -44,10 +43,9 @@ func TestSelectExpr_单表加法字面量走绑定(t *testing.T) {
 	if !foundLit {
 		t.Errorf("Vars 应含字面量 1，实际 Vars=%v", stmt.Vars)
 	}
-	sql := stmt.SQL.String()
-	if !strings.Contains(sql, "?") {
-		t.Errorf("SQL 应含 ? 占位符，实际: %s", sql)
-	}
+	// 仅断言 Vars 含字面量即为绑定的充分证据（值进 Vars ⟹ 走绑定、未拼进 SQL 文本）。
+	// 不断言 SQL 占位符字符——占位符方言相关（SQLite/MySQL 为 ?，PG 为 $1，Oracle 为 :n），
+	// 硬断言 "?" 会在 PG CI 上误报（实际渲染 "depth" + $1）。
 }
 
 // AC-5：alias 列解析。ext/sub 两侧 Col 分别解析为 ext.depth / sub.depth。
