@@ -5,6 +5,9 @@ import "errors"
 // ErrExprEmpty 表示构造的表达式至少需要一个操作数（如 Add() 无参数）。
 var ErrExprEmpty = errors.New("gplus: expression requires at least one operand")
 
+// ErrExprUnknownNode 表示遇到了未知的 Expr 节点类型（内部错误）。
+var ErrExprUnknownNode = errors.New("gplus: unknown Expr node type (internal error)")
+
 // Expr 是投影表达式树的封闭接口，仅 colRef / litVal / addExpr 三种实现。
 // 构造期不持有 *Query，列地址解析延到 SelectExpr 调用期完成。
 type Expr interface {

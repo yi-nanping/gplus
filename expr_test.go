@@ -150,7 +150,7 @@ func TestSelectExpr_投影计数兼容(t *testing.T) {
 	q2, m2 := repo.NewQuery(ctx)
 	q2.Select(&m2.AncestorID).SelectRaw("depth + ?", 1).SelectExpr(Add(Col(&m2.Depth), Lit(2)))
 	if len(q2.selects) != 3 {
-		t.Fatalf("混用 3 个投影后 len(q.selects) 期望 3，实际 %d", len(q2.selects))
+		t.Fatalf("混用 3 个投影后 len(q2.selects) 期望 3，实际 %d", len(q2.selects))
 	}
 	if err := q2.GetError(); err != nil {
 		t.Fatalf("混用 GetError 应为 nil，实际: %v", err)

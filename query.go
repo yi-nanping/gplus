@@ -305,7 +305,7 @@ func (q *Query[T]) flattenExpr(e Expr) ([]exprPart, bool) {
 		}
 		return parts, true
 	default:
-		q.errs = append(q.errs, ErrExprEmpty)
+		q.errs = append(q.errs, fmt.Errorf("gplus: SelectExpr unknown node %T: %w", node, ErrExprUnknownNode))
 		return nil, false
 	}
 }

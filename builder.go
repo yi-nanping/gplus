@@ -363,7 +363,8 @@ func (b *ScopeBuilder) applyMainAlias(db *gorm.DB, qL, qR string) *gorm.DB {
 	return db.Table(qL + table + qR + " AS " + qL + b.mainAlias + qR)
 }
 
-// applySelects select
+// applySelects 将 selects 列表渲染到 db：零回归路径（无 args/exprParts）直接 quoteColumns；
+// 绑定路径展平 args，并对 exprParts 渲染加法片段（列名 quoteColumn、字面量 ? 绑定，" + " 连接）。
 func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 	if len(b.selects) > 0 {
 		// 检查是否需要走绑定路径：含 args（SelectRaw 绑定）或含 exprParts（SelectExpr 表达式树）。
