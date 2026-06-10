@@ -269,12 +269,22 @@ func (q *Query[T]) SelectRaw(expr string, args ...any) *Query[T] {
 // 引号转义留到 build 期（方言引号字符此时才已知）。
 // 解析全部成功后恰好追加 1 个 selectItem（AC-9）。
 func (q *Query[T]) SelectExpr(e Expr) *Query[T] {
+	item, ok := q.resolveExprItem(e)
+	if ok {
+		q.selects = append(q.selects, item)
+	}
+	return q
+}
+
+// resolveExprItem 将 Expr 解析为已降解的 selectItem（调用期解析 Col 地址），不 append。
+// ok=false 表示遇到错误（已累积到 q.errs）。供 SelectExpr 与 InsertSelectMap 共用：
+// 后者需要「先全量解析、全部成功后再统一追加」的零副作用语义（AC-13），故抽出此纯解析步骤。
+func (q *Query[T]) resolveExprItem(e Expr) (selectItem, bool) {
 	parts, ok := q.flattenExpr(e)
 	if !ok {
-		return q
+		return selectItem{}, false
 	}
-	q.selects = append(q.selects, selectItem{exprParts: parts})
-	return q
+	return selectItem{exprParts: parts}, true
 }
 
 // flattenExpr 递归将 Expr 树扁平化为 []exprPart（全加法满足结合律，可安全扁平化）。

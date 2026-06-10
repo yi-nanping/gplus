@@ -29,6 +29,7 @@ var (
 	ErrInsertSelectNoProjection = errors.New("gplus: InsertSelect source query has no Select/SelectRaw projection")
 	ErrInsertSelectColInvalid   = errors.New("gplus: InsertSelect target column name is not a valid identifier")
 	ErrInsertSelectModifier     = errors.New("gplus: InsertSelect source query must not use Distinct/Omit")
+	ErrInsertSelectMapConflict  = errors.New("gplus: InsertSelectMap requires source query without manual Select/SelectRaw/SelectExpr projection")
 )
 
 // OnConflict 定义 INSERT ... ON CONFLICT 的冲突处理策略。
@@ -1150,4 +1151,64 @@ func InsertSelectTx[T any, S any, D comparable](r *Repository[D, T], ctx context
 	prefix := "INSERT INTO " + qL + table + qR + " (" + strings.Join(qcols, ",") + ") "
 	res := exec.Exec(prefix+"?", src.ToDB(exec))
 	return res.RowsAffected, res.Error
+}
+
+// InsertCol 是 InsertSelectMap 中目标列与源表达式的成对映射。
+// Target 为目标表 T 的字段指针（Model[T]() 单例字段）或合法标识符字符串（与 InsertSelect 同规则）。
+// Src 为源表达式：Col（单列）或任意 Expr 组合（Add/Lit）。
+type InsertCol struct {
+	Target any
+	Src    Expr
+}
+
+// InsertSelectMap 以成对的目标列/源表达式映射执行 INSERT ... SELECT，
+// 使列数不匹配与顺序错位在结构上不可能（逐对声明，天然对位）。
+// src 必须未设置任何投影（投影由本 API 独占设置）；含手动 Select/SelectRaw/SelectExpr
+// 时返回 ErrInsertSelectMapConflict。
+// 成功路径会变更调用方 src（追加投影）——这同时构成天然防重入：同一 src 二次调用
+// 必撞 ErrInsertSelectMapConflict。失败路径零副作用，src 修正后可复用。
+// 不应用 DataRule（结构性写入不被隔离过滤）。
+func InsertSelectMap[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, cols []InsertCol, src *Query[S]) (int64, error) {
+	return InsertSelectMapTx[T, S, D](r, ctx, nil, cols, src)
+}
+
+// InsertSelectMapTx 是 InsertSelectMap 的事务变体，在传入的 tx 上执行。
+func InsertSelectMapTx[T any, S any, D comparable](r *Repository[D, T], ctx context.Context, tx *gorm.DB, cols []InsertCol, src *Query[S]) (int64, error) {
+	if src == nil {
+		return 0, ErrQueryNil
+	}
+	if err := src.GetError(); err != nil {
+		return 0, err
+	}
+	if len(src.selects) > 0 {
+		return 0, ErrInsertSelectMapConflict
+	}
+	if len(cols) == 0 {
+		return 0, ErrInsertSelectColMismatch
+	}
+	// 阶段 A——全量解析，零追加（fail-fast）：
+	// Target 用包级 resolveColumnName（目标表 T 的字段，全局 cache，不污染 src.errs）；
+	// Src 用 src.resolveExprItem（走 src 的 alias 链）。任一失败立即返回，src.selects 未被触碰。
+	targetCols := make([]any, len(cols))
+	items := make([]selectItem, len(cols))
+	for i, c := range cols {
+		if s, ok := c.Target.(string); ok {
+			if !validDataRuleColumn.MatchString(s) {
+				return 0, ErrInsertSelectColInvalid
+			}
+		} else if _, err := resolveColumnName(c.Target); err != nil {
+			return 0, err
+		}
+		targetCols[i] = c.Target
+
+		item, ok := src.resolveExprItem(c.Src)
+		if !ok {
+			return 0, src.GetError()
+		}
+		items[i] = item
+	}
+	// 阶段 B——全部成功后统一追加投影。
+	src.selects = append(src.selects, items...)
+	// 复用 InsertSelectTx 主流程（targetCols 二次解析/列数校验/转义/Exec 幂等无害）。
+	return InsertSelectTx[T, S, D](r, ctx, tx, targetCols, src)
 }
