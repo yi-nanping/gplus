@@ -66,7 +66,8 @@
   ```
   结果：`(1, nil)`；新增行**逐字段断言** `{ancestor_id:1, descendant_id:7, depth:1}`，总行数 3。
 - **AC-12**（与手动投影互斥）：`q` 已调用过 `Select`/`SelectRaw`/`SelectExpr`（`len(q.selects)>0`）再传入 `InsertSelectMap` → 返回 `(0, ErrInsertSelectMapConflict)`，不发 SQL（投影由映射 API 独占设置，杜绝双源）。
-- **AC-13**（Target 解析失败 + 零副作用）：3 对映射中第 2 对 `Target` 传未注册地址 → `(0, ErrFieldAddrUnregistered)` 传播，不发 SQL，**且 `len(q.selects) == 0`**（守卫/解析失败零追加，`q` 未被污染可复用——先全量解析所有 Target 与 Src，全部成功后才统一追加，见 Round 3 数据流）。
+- **AC-13**（Target 解析失败 + 零副作用）：3 对映射中第 2 对 `Target` 传未注册地址 → `(0, ErrColumnNotFound)` 传播，不发 SQL，**且 `len(q.selects) == 0`**（守卫/解析失败零追加，`q` 未被污染可复用——先全量解析所有 Target 与 Src，全部成功后才统一追加，见 Round 3 数据流）。
+  > **错误码说明（实施实测对齐）**：Target 是目标表 T 的全局单例字段，走**包级 `resolveColumnName`**（schema.go:119），未注册返回 `ErrColumnNotFound`。这与 Round 2 AC-7 的 `ErrFieldAddrUnregistered` 不同——后者是 Col 经 src 的 **alias 链解析**（`resolveColumnNameAny`→query.go:1445）的错误。两路径错误码不同是设计使然：Target 不经 src alias 链，正好令 Target 解析失败不污染 src.errs（故 `q` 可复用）。若失败的是 **Src 的 Col**（经 alias 链），返回 `ErrFieldAddrUnregistered` 且会污染 src.errs（`q` 不可复用）。
 - **AC-14**（空映射）：`cols == nil` 或 `len==0` → `(0, ErrInsertSelectColMismatch)`（复用现有 sentinel），不发 SQL。
 - **AC-15**（事务回滚）：`InsertSelectMapTx(r, ctx, tx, cols, q)` 返回 `(1, nil)` 后 `tx.Rollback()` → 目标表行数回到初始值。
 
@@ -154,9 +155,10 @@ InsertSelectMap(r, ctx, cols, src) / ...MapTx(..., tx, ...)
   1. 守卫：src==nil → ErrQueryNil；src.GetError()!=nil → 原样返回
   2. 守卫：len(src.selects)>0 → ErrInsertSelectMapConflict（投影独占）
   3. 守卫：len(cols)==0 → ErrInsertSelectColMismatch
-  4. 全量解析（fail-fast，零追加）：先解析所有 Target（字段指针→resolveColumnName /
-     字符串→validDataRuleColumn 白名单）与所有 Src 表达式（Col 地址经 src 的
-     resolveColumnNameAny），任一失败立即返回错误，src.selects 不被触碰（AC-13 零副作用）
+  4. 全量解析（fail-fast，零追加）：先解析所有 Target（字段指针→**包级** resolveColumnName，
+     未注册→ErrColumnNotFound，不污染 src.errs / 字符串→validDataRuleColumn 白名单）与所有
+     Src 表达式（Col 地址经 src 的 resolveExprItem→resolveColumnNameAny，未注册→ErrFieldAddrUnregistered
+     且污染 src.errs），任一失败立即返回错误，src.selects 不被触碰（AC-13 零副作用）
   5. 全部成功后统一追加：已解析 Src 逐个进 src.selects —— target/source 数量天然相等、
      顺序天然对位
   6. 复用 InsertSelectTx 既有主流程（守卫/转义/裸 ? 内联/Exec）。
@@ -168,7 +170,7 @@ InsertSelectMap(r, ctx, cols, src) / ...MapTx(..., tx, ...)
 1. **操作数显式构造（Col/Lit），不做 any 自动推断**：`Add(&ext.Depth, 1)` 形式虽然更短，但字符串操作数无法区分"列名"与"字符串字面量"，且裸指针与字面量指针无法可靠区分。显式构造把歧义消灭在 API 形状上，代价是调用略长——闭包表场景一年写一次，可接受。
 2. **InsertSelectMap 投影独占（AC-12）**：若允许 `q.Select*` 与 cols 混合，列对位保证立即失效（混入的投影破坏 cols 顺序映射），整个 API 的存在意义被掏空。互斥守卫是该 API 的核心不变式。
 3. **Expr 只进投影侧**：WHERE 侧已有完整类型化条件（Eq/Ge/In/...），残余需求（函数条件等）由 `WhereRaw` 覆盖；UPDATE SET 侧表达式是独立特性（updater.go 体系），不混入本轮。
-4. **InsertSelectMap 成功路径会变更调用方 `q`（追加投影）**：与 `InsertSelectTx` 不改 src 的行为不同，须在 doc 注释显式说明。副作用同时构成天然防重入——同一 `q` 二次调用必撞 `ErrInsertSelectMapConflict`（AC-12 守卫），不会静默重复插入。失败路径零副作用（AC-13），`q` 修正后可复用。
+4. **InsertSelectMap 成功路径会变更调用方 `q`（追加投影）**：与 `InsertSelectTx` 不改 src 的行为不同，须在 doc 注释显式说明。副作用同时构成天然防重入——同一 `q` 二次调用必撞 `ErrInsertSelectMapConflict`（AC-12 守卫），不会静默重复插入。失败路径对 `q.selects` 零副作用（阶段 A 不追加）；但**仅 Target 解析失败时 `q` 可复用**（包级解析不碰 src.errs），**Src 表达式解析失败会污染 src.errs，`q` 不可复用须新建**（code review I-2 校正）。
 5. **不提供 `ColE` 别名导出**（审计 M-3 删除）：与 `Col` 同实现的双导出名只增加 API 表面积并造成调用方风格分裂，`InsertCol.Src` 直接用 `Col`。
 
 ## Error Handling
@@ -184,7 +186,7 @@ var (
 )
 ```
 
-复用现有：`ErrQueryNil` / `ErrFieldAddrUnregistered` / `ErrAliasRevoked` / `ErrInsertSelectColMismatch` / `ErrInsertSelectColInvalid` / `ErrInsertSelectModifier`（src 用 Distinct/Omit 时经复用主流程报出）。
+复用现有：`ErrQueryNil` / `ErrColumnNotFound`（Target 包级解析未注册）/ `ErrFieldAddrUnregistered`（Src/Col 经 alias 链未注册）/ `ErrAliasRevoked` / `ErrInsertSelectColMismatch` / `ErrInsertSelectColInvalid` / `ErrInsertSelectModifier`（src 用 Distinct/Omit 时经复用主流程报出）。
 
 ## 方言
 
