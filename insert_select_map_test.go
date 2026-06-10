@@ -62,7 +62,7 @@ func TestInsertSelectMap_rejects_manual_projection(t *testing.T) {
 	assertClosureCount(t, db, 1)
 }
 
-// AC-13：第 2 对 Target 未注册地址 → ErrFieldAddrUnregistered，不发 SQL，且 src.selects 未被污染（len==0）。
+// AC-13：第 2 对 Target 未注册地址 → ErrColumnNotFound（Target 走包级 resolveColumnName），不发 SQL，且 src.selects 未被污染（len==0）。
 func TestInsertSelectMap_target_resolve_failure_leaves_src_untouched(t *testing.T) {
 	repo, db := setupTestDB[Closure](t)
 	ctx := context.Background()
