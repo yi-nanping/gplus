@@ -11,18 +11,15 @@ import (
 )
 
 type Updater[T any] struct {
-	// ScopeBuilder 是 Updater 的核心，用于构建 SQL 语句
+	// ScopeBuilder 是 Updater 的核心，用于构建 SQL 语句；
+	// errs（本体错误桶）与 core（alias 链级状态）已下沉至此，双轨规则见 ScopeBuilder 字段注释
 	ScopeBuilder
 	// ctx 是上下文信息，用于跟踪请求和处理请求的生命周期
 	ctx context.Context
 	// setMap 是更新字段的映射表，用于存储待更新的字段和值
 	setMap map[string]any
-	// errs 是错误列表，用于存储执行过程中出现的错误
-	errs []error
 	// dataRuleApplied 防止 DataRuleBuilder 对同一 Updater 重复追加数据权限条件
 	dataRuleApplied bool
-	// core 承载 alias 体系状态（v0.8.0）
-	core *queryCore
 }
 
 // NewUpdater 创建泛型更新构建器，同时返回类型 T 的规范实例指针。
@@ -31,13 +28,13 @@ type Updater[T any] struct {
 func NewUpdater[T any](ctx context.Context) (*Updater[T], *T) {
 	model := getModelInstance[T]()
 	return &Updater[T]{
-		ctx:  ctx,
-		core: newQueryCore(ctx),
+		ctx: ctx,
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
+			core:       newQueryCore(ctx),
+			errs:       make([]error, 0, 8),
 		},
 		setMap: make(map[string]any),
-		errs:   make([]error, 0, 8),
 	}, model
 }
 
@@ -184,19 +181,16 @@ func (u *Updater[T]) OrNotExists(sub Subquerier) *Updater[T] {
 }
 
 // appendExists 内部辅助：构建 EXISTS / NOT EXISTS 条件并追加到 conditions。
-// 若 sub.GetError() 非空，立即透传到 u.core.errs（与 InSub 等一致的错误累积策略）。
+// 错误写本体 u.errs（与 Query.appendExists / 双侧 InSub 对齐：本体错误 → errs，
+// 链级错误 → core.errs，见 ScopeBuilder 双轨规则注释）。
 func (u *Updater[T]) appendExists(op string, isOr bool, sub Subquerier) *Updater[T] {
 	if sub == nil {
-		if u.core != nil {
-			u.core.appendErr(ErrSubqueryNil)
-		}
+		u.errs = append(u.errs, ErrSubqueryNil)
 		return u
 	}
-	// 子查询已有错误，立即透传到外层 u.core.errs，使调用方 GetError() 可感知
+	// 子查询已有错误，立即透传到外层 u.errs，使调用方 GetError() 可感知
 	if subErr := sub.GetError(); subErr != nil {
-		if u.core != nil {
-			u.core.appendErr(subErr)
-		}
+		u.errs = append(u.errs, subErr)
 	}
 	u.conditions = append(u.conditions, condition{
 		subExpr:  sub,
@@ -744,9 +738,8 @@ func (u *Updater[T]) Clear() {
 		u.core.outerQueryRef = nil
 		u.core.errs = nil
 	}
-	u.ScopeBuilder.Clear()
+	u.ScopeBuilder.Clear() // 含本体 errs 清空
 	clear(u.setMap)
-	u.errs = u.errs[:0:0]
 	u.dataRuleApplied = false
 }
 

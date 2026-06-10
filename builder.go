@@ -1,6 +1,7 @@
 package gplus
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -171,6 +172,35 @@ type ScopeBuilder struct {
 	lockOptions string
 	// scopes 存储用户注入的自定义 GORM scope 函数，按顺序执行
 	scopes []func(*gorm.DB) *gorm.DB
+	// errs 本体错误桶：链式调用（Eq/Set/Select 等）的构建错误累积于此（v0.6 errs 哲学：
+	// 链式 API 无法逐调用报错，错误累积到执行前统一拦截）。
+	errs []error
+	// core alias 体系状态（v0.8.0），跨对象共享（子查询/alias 实例共用同一 core）；
+	// 懒初始化可为 nil（And/Or 闭包的临时 sub 无 core）。
+	// 链级错误（alias 重名/撤销/字段未注册）经 core.appendErr 累积到 core.errs。
+	// 双轨规则：本体错误 → errs；链级错误 → core.errs；唯一强制拦截点为四条 Build* 闭包
+	// 入口的 trackedErr 短路（终端方法/ToDB 的 GetError 前置检查仅为报错体验优化）。
+	core *queryCore
+}
+
+// trackedErr 合并本体 errs 与链级 core.errs；非 nil 表示 Build* 必须短路不生成 SQL。
+func (b *ScopeBuilder) trackedErr() error {
+	all := b.errs // 快路径别名仅作只读（errors.Join 不写入），无 aliasing 污染
+	if b.core != nil && len(b.core.errs) > 0 {
+		all = append(append([]error(nil), b.errs...), b.core.errs...) // 双桶合并时显式拷贝
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	return errors.Join(all...)
+}
+
+// shortCircuit 将聚合错误注入隔离 Session 并返回，不生成 SQL。
+// 防止错误条件被静默丢弃后执行残缺 SQL（fail-open → fail-closed）。
+func shortCircuit(db *gorm.DB, err error) *gorm.DB {
+	session := db.Session(&gorm.Session{})
+	_ = session.AddError(err)
+	return session
 }
 
 // applyScopes 将用户注入的自定义 scope 函数依次应用到 db
@@ -184,6 +214,9 @@ func (b *ScopeBuilder) applyScopes(db *gorm.DB) *gorm.DB {
 // BuildCount 计数构建
 func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		if err := b.trackedErr(); err != nil {
+			return shortCircuit(db, err)
+		}
 		// 获取当前数据库的转义符
 		qL, qR := getQuoteChar(db)
 		//  基础条件
@@ -209,6 +242,9 @@ func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 // BuildQuery 专门用于查询 (Find/First/List)
 func (b *ScopeBuilder) BuildQuery() func(*gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		if err := b.trackedErr(); err != nil {
+			return shortCircuit(db, err)
+		}
 		// 获取当前数据库的转义符
 		qL, qR := getQuoteChar(db)
 		// 基础条件
@@ -240,6 +276,9 @@ func (b *ScopeBuilder) BuildQuery() func(*gorm.DB) *gorm.DB {
 // 更新逻辑不应包含 Distinct, Limit, Offset, Order
 func (b *ScopeBuilder) BuildUpdate() func(*gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		if err := b.trackedErr(); err != nil {
+			return shortCircuit(db, err)
+		}
 		qL, qR := getQuoteChar(db)
 		db = b.applyBaseTable(db)
 		// 更新字段
@@ -259,6 +298,9 @@ func (b *ScopeBuilder) BuildUpdate() func(*gorm.DB) *gorm.DB {
 // 删除操作最核心的是 Where 和 Unscoped
 func (b *ScopeBuilder) BuildDelete() func(*gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		if err := b.trackedErr(); err != nil {
+			return shortCircuit(db, err)
+		}
 		qL, qR := getQuoteChar(db)
 		// 基础条件
 		db = b.applyBaseTable(db)
@@ -296,6 +338,9 @@ func (b *ScopeBuilder) Clear() {
 	// 清理锁状态
 	b.lockStrength = ""
 	b.lockOptions = ""
+
+	// 清空本体错误桶，解除 Build* 短路状态（core.errs 由 Query/Updater.Clear 处理）
+	b.errs = b.errs[:0:0]
 	b.scopes = nil
 }
 

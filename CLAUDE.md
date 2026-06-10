@@ -69,9 +69,13 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 `DataRule.Column` 须匹配白名单正则（字母/数字/下划线/点），含括号或运算符的表达式会被拒绝。`DataRule.Table` 非空时走 `resolveDataRuleColumn` 新路径：`Table` 单段校验（拒 `schema.table`）+ 拼接结果防御性复校验，`Table` 非空时 `Column` 不得含点；旧路径（`Table` 空）向后兼容点前缀写法。
 
-### 错误处理模式
+### 错误处理模式（双轨规则）
 
-`Query[T]` 和 `Updater[T]` 在链式调用过程中将错误累积到 `errs []error` 切片中（例如 `resolveColumnName` 失败时）。`GetError()` 返回带有摘要前缀的合并错误（`"gplus query builder failed with N errors"` / `"gplus updater failed with N errors"`）。Repository 方法会提前调用 `GetError()` 并在失败时立即返回。
+错误累积分两个桶，均下沉在 `ScopeBuilder`（builder.go）：
+- **本体错误 → `errs []error`**：链式调用的构建错误（`Eq`/`Set`/`Select` 传坏指针、空参数等）
+- **链级错误 → `core.errs`**：alias 体系错误（重名/撤销/字段未注册），core 跨对象共享（子查询/alias 实例共用），懒初始化可为 nil
+
+**唯一强制拦截点**：四条 `Build*` 闭包入口的 `trackedErr()` 短路——任一桶非空则 `AddError` 聚合错误、不生成 SQL（fail-closed，防错误条件被静默丢弃后执行残缺 SQL）。`GetError()` 返回带摘要前缀的合并错误（`"gplus query builder failed with N errors"` / `"gplus updater failed with N errors"`）；Repository 方法 / `ToDB` / debug 路径的 `GetError()` 前置检查是**报错体验优化**（错误作为返回值更直接），不是防线——新增终端方法时仍建议加，但忘加不会导致带错 SQL 执行。
 
 ### Repository API 关键签名
 

@@ -2,6 +2,19 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复（安全/一致性）
+
+- **Build\* 窄腰统一错误短路**：`ScopeBuilder` 四条构建路径（BuildQuery/BuildCount/BuildUpdate/BuildDelete）闭包入口统一检查本体 `errs` 与链级 `core.errs` 双桶，任一非空则注入聚合错误、不生成 SQL。取代 v0.8.0 决策 1B 的局部短路（仅 Query.BuildQuery × core.errs）。errs/core 字段下沉至 ScopeBuilder
+- **FirstOrUpdate 数据权限补齐**：UPDATE 阶段接入 `u.DataRuleBuilder()`（与 UpdateByCond 对称）；按主键重读改为带 DataRule 的查询
+- `Updater.Exists/NotExists(nil)` 错误写入桶对齐为本体 `errs`（与 Query 侧及 InSub 一致）
+
+### ⚠️ 行为变更
+
+- 直接 `.Scopes(q.Build*())` / `.Scopes(u.Build*())` 且不自查 `GetError()` 的调用方：builder 带错时从"执行条件残缺的 SQL"（fail-open，错误条件被静默丢弃）变为"`db.Error` 返回聚合错误、不执行"（fail-closed）。Repository / `ToDB` / debug 路径无变化（GetError 前置已拦）
+- `FirstOrUpdate` 在 DataRule 生效时：u 侧 ctx 规则不匹配目标行 → UPDATE affected=0、返回未变更行；更新将行改出权限可见范围（如改 tenant_id）→ 返回 `gorm.ErrRecordNotFound` 且**事务整体回滚**（禁止经本方法把行移出自身权限范围）
+
 ## [0.11.0] - 2026-06-10
 
 本版新增类型化投影表达式（`Expr`/`Col`/`Lit`/`Add` + `Query.SelectExpr`）、规范单例导出 `Model[T]()` 与成对列映射 `InsertSelectMap`，让 `INSERT...SELECT...JOIN` 写操作做到零手写 SQL 字符串。向后兼容，MINOR 版本。

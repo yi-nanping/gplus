@@ -11,14 +11,10 @@ import (
 )
 
 type Query[T any] struct {
-	ScopeBuilder
-	ctx context.Context
-	// errs 是错误列表，用于存储执行过程中出现的错误
-	errs []error
+	ScopeBuilder // errs（本体错误桶）与 core（alias 链级状态）已下沉至此，双轨规则见 ScopeBuilder 字段注释
+	ctx          context.Context
 	// dataRuleApplied 防止 DataRuleBuilder 对同一 Query 重复追加数据权限条件
 	dataRuleApplied bool
-	// core 承载 alias 体系状态（v0.8.0）；懒惰初始化
-	core *queryCore
 }
 
 // NewQuery 创建泛型查询构建器，同时返回类型 T 的规范实例指针。
@@ -28,11 +24,11 @@ func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 	// 确保模型已注册
 	model := getModelInstance[T]()
 	return &Query[T]{
-		ctx:  ctx,
-		core: newQueryCore(ctx),
-		errs: make([]error, 0, 8),
+		ctx: ctx,
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
+			core:       newQueryCore(ctx),
+			errs:       make([]error, 0, 8),
 		},
 	}, model
 }
@@ -45,11 +41,11 @@ func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 // alias 必须满足 ^[a-zA-Z_][a-zA-Z0-9_]{0,31}$，否则累积 ErrAliasInvalidName。
 func NewQueryAs[T any](ctx context.Context, alias string) (*Query[T], *T) {
 	q := &Query[T]{
-		ctx:  ctx,
-		core: newQueryCore(ctx),
-		errs: make([]error, 0, 8),
+		ctx: ctx,
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
+			core:       newQueryCore(ctx),
+			errs:       make([]error, 0, 8),
 		},
 	}
 	// 复用 As 的全部校验逻辑（name 正则 / 链查重 / 创建独立实例）
@@ -99,29 +95,12 @@ func (q *Query[T]) GetError() error {
 	return errors.Join(append([]error{summary}, all...)...)
 }
 
-// BuildQuery 覆盖 ScopeBuilder.BuildQuery（promoted method），在闭包入口添加 v0.8.0 决策 1B errs 短路。
-//
-// 行为：
-//   - 若 q.core.errs 非空（含 As 重名/Clear 后用残骸等错误）：返回的 closure 调用时
-//     直接 db.AddError 返回，不生成 SQL
-//   - 若 q.core.errs 为空：与 ScopeBuilder.BuildQuery 既有行为一致（DataRule + 条件构建）
-//
-// 这确保所有 .Scopes(q.BuildQuery()) 生产路径（repo.GetById/List/Page/FindAs 等）
-// 在 As 重名 / Clear 残骸 / 字段地址未注册等错误下自动短路，不依赖调用方先调 GetError。
-func (q *Query[T]) BuildQuery() func(db *gorm.DB) *gorm.DB {
-	innerScope := q.ScopeBuilder.BuildQuery()
-	return func(db *gorm.DB) *gorm.DB {
-		if q.core != nil && len(q.core.errs) > 0 {
-			session := db.Session(&gorm.Session{})
-			_ = session.AddError(errors.Join(q.core.errs...))
-			return session
-		}
-		return innerScope(db)
-	}
-}
+// 注：v0.8.0 决策 1B 的 BuildQuery override（仅 core.errs 短路）已删除——
+// 短路统一收敛到 ScopeBuilder 四条 Build* 闭包入口（trackedErr，覆盖 errs + core.errs 双桶），
+// 所有 .Scopes(q.Build*()) 路径在任意 builder 错误下自动短路，不依赖调用方先调 GetError。
 
 // BuildQueryDB 将当前 Query 的条件应用到 db 并返回带条件的 *gorm.DB。
-// v0.8.0 决策 1B：若 q.core.errs 非空（含 As 重名等错误），直接返回带聚合错误的 db，不生成 SQL。
+// 若任一错误桶非空（含 As 重名等错误），返回带聚合错误的 db，不生成 SQL（基类 Build* 统一短路）。
 // 防止重名 alias / Clear 后用 alias 等错误被快乐路径 SQL 静默掩盖。
 //
 // 与 BuildQuery()（返回闭包供 Scopes 使用）互补；
@@ -142,8 +121,7 @@ func (q *Query[T]) Clear() {
 		q.core.outerQueryRef = nil
 		q.core.errs = nil
 	}
-	q.ScopeBuilder.Clear()
-	q.errs = q.errs[:0:0]
+	q.ScopeBuilder.Clear() // 含本体 errs 清空
 	q.dataRuleApplied = false
 }
 
