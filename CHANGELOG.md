@@ -2,7 +2,9 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.12.0] - 2026-06-10
+
+本版聚焦 2026-06-10 全项目审计的修复闭环：数据权限缺口、错误累积双轨制统一（Build* 窄腰 fail-closed）、死代码移除与文档债清理。含行为变更（见下方 ⚠️），按 v0.x 惯例记 MINOR 版本。
 
 ### 修复（安全/一致性）
 
@@ -14,6 +16,15 @@
 
 - 直接 `.Scopes(q.Build*())` / `.Scopes(u.Build*())` 且不自查 `GetError()` 的调用方：builder 带错时从"执行条件残缺的 SQL"（fail-open，错误条件被静默丢弃）变为"`db.Error` 返回聚合错误、不执行"（fail-closed）。Repository / `ToDB` / debug 路径无变化（GetError 前置已拦）
 - `FirstOrUpdate` 在 DataRule 生效时：u 侧 ctx 规则不匹配目标行 → UPDATE affected=0、返回未变更行；更新将行改出权限可见范围（如改 tenant_id）→ 返回 `gorm.ErrRecordNotFound` 且**事务整体回滚**（禁止经本方法把行移出自身权限范围）
+
+### 移除
+
+- 删除死代码导出符号 `ColumnInfo`（utils.go）与 `KeyAnd`/`KeyOr`（consts.go）——全库及已知下游（gvs-server）零引用。若有外部代码引用，迁移：`KeyAnd`/`KeyOr` 用字面量 `"AND"`/`"OR"`，`ColumnInfo` 无替代（从未被任何 API 消费）
+
+### 文档
+
+- README：DataRule `Condition` 操作符支持表（LIKE 自动双侧包 `%`、LEFT_LIKE/RIGHT_LIKE 补单侧）；`NewQueryAs` 主别名 First 路径/写路径限制警示（原仅在 CHANGELOG v0.9.0）；FindAs × SelectExpr 组合限制（表达式列无 AS 别名不可按名映射）；InsertSelectMap 成功后 q 被追加投影的约束警示与 InsertSelect 选型指南；修复 DataRule 示例废弃字段 `Op`/`Val` → `Condition`/`Value`；版本历史补 v0.7~v0.11 索引
+- CLAUDE.md：错误处理双轨规则文档化；`DeleteByCondTX(ctx, q, tx)` 笔误修正为实际签名 `DeleteByCondTx(q, tx)`
 
 ## [0.11.0] - 2026-06-10
 

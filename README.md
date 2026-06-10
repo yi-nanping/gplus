@@ -397,6 +397,8 @@ err := db.Transaction(func(tx *gorm.DB) error {
 - `Dest` 仅决定 SELECT 列 → struct 字段映射（GORM 默认 snake_case）
 - 跨表 JOIN 列必须 SQL alias，否则字段名冲突 GORM 无法定位
 
+> ⚠️ `SelectExpr`（v0.11.0+）的表达式列**无 AS 别名**，FindAs/FindOneAs 按名映射不可用。需读取表达式结果时改用 `SelectRaw("expr AS col_name", args...)` 配合 Dest 字段，或单列场景用 `RawScan`。
+
 ### PageAs / PageAsTx — 投影分页（Query-chain-safe）
 
 等价于 `repo.Page`，但把分页结果投影到自定义 `Dest`（JOIN 多表 + VO 场景），走 GORM Query callback chain，下游挂在 Query chain 上的隔离/审计 callback 会触发（与 FindAs 一致）。
@@ -462,9 +464,9 @@ q.SelectExpr(gplus.Add(gplus.Col(&m.Depth), gplus.Lit(1))).Eq(&m.DescendantID, 5
 **要点**：
 - `Col(&model.Field)` 字段引用（地址在 SelectExpr/InsertSelectMap **调用期**解析，改列名构建期即报错）；`Lit(val)` 字面量走参数化绑定（防注入）；`Add(...)` 变长加法（YAGNI：当前仅 `+`）
 - `InsertSelectMap` 的 src **不得有手动投影**（Select/SelectRaw/SelectExpr），否则返回 `ErrInsertSelectMapConflict`（投影由映射 API 独占设置）
-- 成功后 `q` 被追加投影，构成天然防重入（二次调用撞 `ErrInsertSelectMapConflict`）；失败路径对 `q.selects` 零副作用
+- ⚠️ **成功后 `q` 被永久追加投影**——同一 `q` 二次调用必撞 `ErrInsertSelectMapConflict`（天然防重入）。需多次 INSERT 时每次 `NewQuery` 新建独立 Query；失败路径对 `q.selects` 零副作用
 - Target 解析失败（包级解析）返回 `ErrColumnNotFound` 且 `q` 可复用；Src 的 Col 失败（alias 链）返回 `ErrFieldAddrUnregistered` 且 `q` 不可复用须新建
-- 比 `InsertSelect`（字符串/指针 targetCols 版）更强：成对声明消除列对位整类错误；两者并存，按需选用
+- **选型**：新代码一律用 `InsertSelectMap`（成对声明，列对位由结构保证）；仅当目标列名来自动态来源（运行期字符串）或维护既有调用时用 `InsertSelect`
 
 ### 数据权限（DataRule）
 
@@ -486,6 +488,17 @@ users, err := repo.List(q)
 ```
 
 > **注意**：`DataRule.Column` 仅支持字母/数字/下划线/点，含括号或运算符的表达式会被拒绝以防注入。
+
+`Condition` 支持的操作符（大小写不敏感，其余值返回错误；`SQL`/`USE_SQL_RULES` 显式拒绝防注入）：
+
+| Condition | 说明 | 值来源 |
+|---|---|---|
+| `=` `<>` `>` `>=` `<` `<=` | 比较 | `Value` |
+| `IN` / `NOT IN` | 多值包含 | `Values`（优先）或 `Value` 逗号分隔 |
+| `LIKE` | 模糊匹配，自动双侧包 `%值%` | `Value` |
+| `LEFT_LIKE` / `RIGHT_LIKE` | 自动补为 `%值` / `值%` | `Value` |
+| `IS NULL` / `IS NOT NULL` | 空判断（无需值） | — |
+| `BETWEEN` | 区间（恰好 2 个值） | `Values`（优先）或 `Value` 逗号分隔 |
 
 #### 跨表数据权限：`DataRule.Table`
 
@@ -1213,6 +1226,10 @@ q, u := gplus.NewQueryAs[User](ctx, "u")
 boss := gplus.As[User](q, "boss")
 q.LeftJoinAs(boss, &u.BossID, &boss.ID, "")
 ```
+
+> ⚠️ **`NewQueryAs` 主别名已知限制**（详见 CHANGELOG v0.9.0）：
+> - **First 路径不可用**：`GetOne` / `Last` / `GetByLock` / `FirstOrCreate` / `FirstOrUpdate` 下 GORM 自动追加 `ORDER BY <裸表名>.id`，裸表名被别名遮蔽报错（如 `no such column: users.id`）。改用 `List` / `Page` / `Count` / `FindAs` / `ToDB` 等 SELECT 路径
+> - **写路径不可用**：主别名 Query 传入 Delete / Update 真实执行会失败（BuildUpdate/BuildDelete 结构性不物化别名）
 
 ### Correlated EXISTS
 

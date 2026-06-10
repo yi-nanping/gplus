@@ -16,8 +16,6 @@ const (
 	OpBetween    = "BETWEEN"
 	OpNotBetween = "NOT BETWEEN"
 
-	KeyAnd  = "AND"
-	KeyOr   = "OR"
 	KeyDesc = "DESC"
 	KeyAsc  = "ASC"
 

@@ -96,7 +96,7 @@ repo.IncrBy(updater, col, delta)               // 原子自增，返回 (affecte
 repo.DecrBy(updater, col, delta)               // 原子自减，返回 (affected, err)
 repo.DeleteById(ctx, id)                       // 按主键删除，返回 (affected, err)
 repo.DeleteByIds(ctx, ids)                     // 按主键列表批量删除，返回 (affected, err)
-repo.DeleteByCondTX(ctx, q, tx)               // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
+repo.DeleteByCondTx(q, tx)                     // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
 repo.InsertOnConflict(ctx, &user, oc)          // 单条带冲突处理插入（DoNothing/DoUpdates/DoUpdateAll/UpdateExprs）
 repo.InsertBatchOnConflict(ctx, users, oc)     // 批量带冲突处理插入，空切片无操作
 repo.Restore(ctx, id)                          // 按主键恢复软删除，返回 (affected, err)
@@ -153,7 +153,7 @@ q.SelectExpr(e Expr)                          // 类型化投影表达式（Col/
 |---|---|
 | `ErrQueryNil` | 传入了 nil 的 Query/Updater |
 | `ErrRawSQLEmpty` | 传入 `RawQuery`/`RawExec`/`RawScan` 的字符串为空 |
-| `ErrDeleteEmpty` | `DeleteByCondTX` 在无条件且非 Unscoped 时被调用 |
+| `ErrDeleteEmpty` | `DeleteByCondTx` 在无条件且非 Unscoped 时被调用 |
 | `ErrUpdateEmpty` | `Update` 被调用时 `setMap` 中没有字段 |
 | `ErrUpdateNoCondition` | `Update` 有字段但没有 WHERE 条件时被调用 |
 | `ErrTransactionReq` | `GetByLock` 在没有事务的情况下被调用 |

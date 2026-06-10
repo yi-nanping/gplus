@@ -30,12 +30,6 @@ var columnCache sync.Map
 // schemaCacheKey 作为 columnCache 的复合 key，避免字符串拼接碰撞
 type schemaCacheKey struct{ typeName, tag, label string }
 
-// ColumnInfo 存储字段偏移量和列名的关系
-type ColumnInfo struct {
-	Offset     uintptr
-	ColumnName string
-}
-
 // reflectStructSchema 通过类型缓存列名映射
 func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 	t := reflect.TypeOf(model)
