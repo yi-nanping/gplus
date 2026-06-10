@@ -673,6 +673,12 @@ func (r *Repository[D, T]) FirstOrCreate(q *Query[T], defaults *T) (data T, crea
 // 返回值：(record, created, error)，created=true 表示本次新建。
 // defaults 不可为 nil，否则返回 ErrDefaultsNil。
 // 内部使用事务保证查找与更新/创建的原子性。
+//
+// 数据权限（DataRule）：q 的 ctx 规则作用于查找与重读阶段，u 的 ctx 规则作用于更新阶段
+// （与 UpdateByCond 对称）。若更新将行改出 DataRule 可见范围（如修改 tenant_id），
+// 按主键重读查不到 → 返回 gorm.ErrRecordNotFound 并回滚整个事务（更新被撤销），
+// 即 DataRule 生效时禁止经本方法将行移出自身权限范围。创建路径不校验 defaults
+// 是否满足 DataRule（与 Save/InsertSelect 结构性写入不被隔离过滤的设计一致）。
 func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T) (data T, created bool, err error) {
 	if q == nil {
 		return data, false, ErrQueryNil
@@ -692,10 +698,14 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 	if err = q.DataRuleBuilder().GetError(); err != nil {
 		return data, false, err
 	}
+	if err = u.DataRuleBuilder().GetError(); err != nil {
+		return data, false, err
+	}
 	err = r.db.WithContext(q.Context()).Transaction(func(tx *gorm.DB) error {
 		// BuildCount 路径：WHERE/JOIN，不含 SELECT/ORDER/LIMIT，确保 First 返回完整记录
 		if e := tx.Scopes(q.BuildCount()).First(&data).Error; e == nil {
-			// 找到记录，执行更新
+			// 找到记录，执行更新。不检查 RowsAffected：u 侧 DataRule 拦截
+			// （affected=0）不视为错误，后续重读返回未变更行
 			if ue := tx.Model(&data).Scopes(u.BuildUpdate()).Updates(u.setMap).Error; ue != nil {
 				return ue
 			}
@@ -704,7 +714,10 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 			if pe := reloadStmt.Parse(new(T)); pe == nil && reloadStmt.Schema.PrioritizedPrimaryField != nil {
 				if pkVal, isZero := reloadStmt.Schema.PrioritizedPrimaryField.ValueOf(q.Context(), reflect.ValueOf(data)); !isZero {
 					var fresh T
-					if re := tx.First(&fresh, pkVal).Error; re != nil {
+					// 重读带 DataRule（与查找阶段同源 q.Context()；规则已在事务前
+					// 经 q.DataRuleBuilder().GetError() 校验，此处必无新错误）
+					rq, _ := NewQuery[T](q.Context())
+					if re := tx.Scopes(rq.DataRuleBuilder().BuildCount()).First(&fresh, pkVal).Error; re != nil {
 						return re
 					}
 					data = fresh
@@ -787,8 +800,12 @@ func (r *Repository[D, T]) UpdateByIdsTx(ctx context.Context, ids []D, u *Update
 	return result.RowsAffected, result.Error
 }
 
-// IncrBy 原子自增指定列。col 须为 NewUpdater 返回的 *T 实例的字段指针。
+// IncrBy 原子自增指定列。col 须为 NewUpdater 返回的 *T 实例的字段指针，或字符串列名。
 // u 用于指定 WHERE 条件；未设置条件时返回 ErrUpdateNoCondition 以防全表更新。
+//
+// 注意：col 仅支持主表字段，不走 alias 链——传入 As[X] 注册的 alias 实例字段指针
+// 会返回错误（与 Set/Eq 不同）。这是有意限制：带别名前缀的 SET（如 ext.age = ext.age + 1）
+// 仅 MySQL 多表 UPDATE 语法支持，放行只会把构建期错误推迟为方言相关的执行期错误。
 func (r *Repository[D, T]) IncrBy(u *Updater[T], col any, delta int64) (int64, error) {
 	return r.IncrByTx(u, col, delta, nil)
 }
