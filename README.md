@@ -430,6 +430,42 @@ err := db.Transaction(func(tx *gorm.DB) error {
 - 与 `FindOneAs` 的区别：内部用 `Find` 不追加 `LIMIT 1`，正是要与 `q.Page()` 设的 `LIMIT/OFFSET` 协同
 - **副作用**：调用后 `q` 会永久追加 DataRule 条件（`dataRuleApplied` 保护幂等），不应再跨不同 `ctx` 复用，与 `FindAs` 行为一致
 
+### 类型化投影表达式 + InsertSelectMap（v0.11.0）
+
+`INSERT ... SELECT ... JOIN` 这类跨表写操作可做到**零手写 SQL 字符串**：表达式列用类型化算子树（`Col`/`Lit`/`Add`）表达，目标列用字段指针（`Model[T]()`），target/source 成对声明，列数不匹配与顺序错位从「运行时数据错」提升为「结构上不可能」。
+
+```go
+// Model[T]() 返回规范单例指针，用于取目标表字段地址（⚠️ 只读，禁写字段值）
+m := gplus.Model[Closure]()
+
+// 闭包表自连接搬移：INSERT INTO closure(ancestor_id, descendant_id, depth)
+//                    SELECT ext.ancestor_id, sub.descendant_id, ext.depth + sub.depth + 1 ...
+q, ext := repo.NewQueryAs(ctx, "ext")
+sub := gplus.As[Closure](q, "sub")
+q.CrossJoinAs(sub).Eq(&sub.AncestorID, 5).Eq(&ext.DescendantID, 5)
+
+affected, err := gplus.InsertSelectMap(repo, ctx, []gplus.InsertCol{
+    {Target: &m.AncestorID,   Src: gplus.Col(&ext.AncestorID)},
+    {Target: &m.DescendantID, Src: gplus.Col(&sub.DescendantID)},
+    {Target: &m.Depth,        Src: gplus.Add(gplus.Col(&ext.Depth), gplus.Col(&sub.Depth), gplus.Lit(1))},
+}, q)
+// 事务版：gplus.InsertSelectMapTx(repo, ctx, tx, cols, q)
+```
+
+也可单独用 `q.SelectExpr` 追加类型化投影列：
+
+```go
+q, m := repo.NewQuery(ctx)
+q.SelectExpr(gplus.Add(gplus.Col(&m.Depth), gplus.Lit(1))).Eq(&m.DescendantID, 5)
+```
+
+**要点**：
+- `Col(&model.Field)` 字段引用（地址在 SelectExpr/InsertSelectMap **调用期**解析，改列名构建期即报错）；`Lit(val)` 字面量走参数化绑定（防注入）；`Add(...)` 变长加法（YAGNI：当前仅 `+`）
+- `InsertSelectMap` 的 src **不得有手动投影**（Select/SelectRaw/SelectExpr），否则返回 `ErrInsertSelectMapConflict`（投影由映射 API 独占设置）
+- 成功后 `q` 被追加投影，构成天然防重入（二次调用撞 `ErrInsertSelectMapConflict`）；失败路径对 `q.selects` 零副作用
+- Target 解析失败（包级解析）返回 `ErrColumnNotFound` 且 `q` 可复用；Src 的 Col 失败（alias 链）返回 `ErrFieldAddrUnregistered` 且 `q` 不可复用须新建
+- 比 `InsertSelect`（字符串/指针 targetCols 版）更强：成对声明消除列对位整类错误；两者并存，按需选用
+
 ### 数据权限（DataRule）
 
 `DataRule` 通过 `context.Context` 传入，由 Repository 方法自动应用到所有查询和写操作，无需在每处手动添加条件。适合多租户、行级权限等场景。
@@ -606,6 +642,8 @@ query.NaturalJoin("user_settings")
 | `ErrTransactionReq` | `GetByLock` 未在事务中调用 |
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 无条件 |
+| `ErrInsertSelectMapConflict` | `InsertSelectMap` 的 src 已有手动投影（Select/SelectRaw/SelectExpr） |
+| `ErrExprEmpty` | `Add()` 无操作数（表达式至少需一个操作数） |
 
 ## 集成方式
 
