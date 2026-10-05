@@ -119,6 +119,7 @@ go.work
 !go.mod
 
 !README.md
+!/AGENTS.md
 !LICENSE
 !CHANGELOG.md
 !*.yml
