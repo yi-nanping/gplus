@@ -399,6 +399,29 @@ err := db.Transaction(func(tx *gorm.DB) error {
 
 > ⚠️ `SelectExpr`（v0.11.0+）的表达式列**无 AS 别名**，FindAs/FindOneAs 按名映射不可用。需读取表达式结果时改用 `SelectRaw("expr AS col_name", args...)` 配合 Dest 字段，或单列场景用 `RawScan`。
 
+**执行契约与规则范围**：
+
+| 入口 | 执行 Context | 主模型 | callback | 自动应用 DataRule |
+|---|---|---|---|---|
+| `FindAs` / `FindOneAs`（含 Tx 版） | `q.Context()`，覆盖 DB / tx 原有 Context | `T`，Dest 只决定结果映射 | Query chain | 是 |
+| `PageAs`（含 Tx 版） | COUNT 和列表均用 `q.Context()` | 两者均为 `T` | 两者均走 Query chain | 是 |
+| `q.ToDB(db)` | 保留传入 DB 的 Context 和连接 | 已设置为 `T` | 仅构建，不执行 callback | 否 |
+
+`ToDB` 创建干净的查询会话，用于子查询或需要应用明确规则范围的低层调用。它不绑定 Query Context；后续 `.Find` 走 Query chain，`.Scan/.Row/.Rows` 走 Row chain。重复 `.Model(&T{})` 通常没有必要。
+
+普通业务投影使用 `FindAs` / `PageAs`。角色、权限元数据等有意不承受当前页面动态 DataRule 的查询，应由应用以有业务含义的方法明确授权范围，保留以下现有 API 调用：
+
+```go
+// metaQuery 是该规则范围专用的新 Query；其主模型已由 ToDB 设置。
+err := metaQuery.ToDB(repo.GetDB()).
+    WithContext(metaQuery.Context()).
+    Find(&rows).Error
+```
+
+这里显式绑定请求 Context，仍触发应用的 Query callback，但不自动追加页面 DataRule。机构隔离 callback 与 gplus DataRule 是独立机制；gplus 不自动为 JOIN 副表添加软删除或数据权限条件。应用 callback 的隔离行为由应用负责。
+
+`ToDB` 不会移除已追加的规则。`FindAs` / `PageAs` 会永久追加 DataRule（幂等），同一个 Query 不应跨规则范围复用。子查询默认也不自动应用 DataRule；确实需要其 Context 中的规则时，显式调用 `sub.DataRuleBuilder()` 后再构建。
+
 ### PageAs / PageAsTx — 投影分页（Query-chain-safe）
 
 等价于 `repo.Page`，但把分页结果投影到自定义 `Dest`（JOIN 多表 + VO 场景），走 GORM Query callback chain，下游挂在 Query chain 上的隔离/审计 callback 会触发（与 FindAs 一致）。
@@ -427,8 +450,11 @@ err := db.Transaction(func(tx *gorm.DB) error {
 ```
 
 **要点**：
+
 - 返回 `(total int64, err error)`；`skipCount=true` 跳过 COUNT（`total` 恒为 0），适合不需要总数的场景
 - `skipCount=false` 时先执行 COUNT；若总数为 0 则提前返回，不执行投影 Find
+- COUNT 和列表使用同一请求 Context、主模型和 DataRule，均应用 WHERE / JOIN / GROUP / HAVING / Distinct / 自定义 scopes；COUNT 构建不附加 Query 本身的排序和分页
+- 应用隔离 callback 应一致地处理 COUNT 和列表；两次 SQL 不自动保证同一数据快照
 - 与 `FindOneAs` 的区别：内部用 `Find` 不追加 `LIMIT 1`，正是要与 `q.Page()` 设的 `LIMIT/OFFSET` 协同
 - **副作用**：调用后 `q` 会永久追加 DataRule 条件（`dataRuleApplied` 保护幂等），不应再跨不同 `ctx` 复用，与 `FindAs` 行为一致
 
@@ -1162,12 +1188,14 @@ repo.UpdateByCond(u)
 
 GORM v1.31.1 中 `db.Scan` / `db.Row` / `db.Rows` 内部走 Row callback chain，**不会触发**挂在 Query chain 上的下游 callback（数据隔离 / 审计 / 查询日志）。在依赖这些 callback 的项目中，使用上述三种调用**会导致跨租户数据泄露 / 审计日志缺失**。
 
-**必须改用** `FindAs` / `FindOneAs`：
+普通业务投影可改用 `FindAs` / `FindOneAs`；迁移前应确认自动 DataRule 与原查询范围一致：
 
-| 旧写法（漏洞） | 新写法（安全） |
+| 旧写法（绕过 Query callback） | 普通业务投影写法（自动 DataRule） |
 |---|---|
 | `q.ToDB(db).Model(&T{}).Scan(&rows)` | `gplus.FindAs(repo, q, &rows)` |
 | `q.ToDB(db).Model(&T{}).Limit(1).Scan(&one)` | `gplus.FindOneAs(repo, q, &one)` |
+
+特殊规则范围的查询可保留 `ToDB(...).WithContext(q.Context()).Find(...)`，由应用明确授权范围；不能仅为统一 API 将其替换为自动应用页面 DataRule 的入口。参见上文「执行契约与规则范围」。
 
 **排查老代码**：见 CHANGELOG v0.7.0 行为约束段（含两条互补 grep 命令）
 

@@ -346,6 +346,14 @@ func (q *Query[T]) OrWhereRaw(sql string, args ...any) *Query[T] {
 
 // ToDB 将当前 Query 的条件转换为 GORM 的 DB 对象
 // 注意：这不会执行查询，只会生成带有条件的 DB 实例，常用于子查询
+//
+// 会话保留传入 db 的 Context 和连接，清除已有查询条件，并设置主模型为 T。
+// 不会绑定 q.Context()，也不会自动调用 DataRuleBuilder；已追加的规则条件仍会保留。
+// 普通业务投影使用 FindAs / PageAs。特殊规则范围的查询可在应用明确授权范围后，
+// 用 q.ToDB(db).WithContext(q.Context()).Find(&rows) 执行，无需重复设置 Model。
+// Find 触发 Query callback；Scan / Row / Rows 走 Row callback，二者不可等同。
+// 子查询是否应用其 Context 中的 DataRule，应由调用方显式选择 DataRuleBuilder。
+//
 // 1. 构建子查询 (查部门 ID)
 // subQuery, _ := gplus.NewQuery[Dept](ctx)
 // subQuery.Eq(&Dept.Name, "IT").Select(&Dept.Id)

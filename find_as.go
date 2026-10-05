@@ -33,10 +33,14 @@ var ErrFindOneAsConflict = errors.New("gplus: FindOneAs 不可与 q.Limit() / q.
 // FindAs 投影查询（多行）。dest 必须是 *[]Element 切片指针。
 //
 // 走 GORM Query callback chain，下游挂在 Query chain 上的隔离/审计 callback 会触发。
+// 执行时使用 q.Context()（覆盖 DB / tx 原有 Context），将主模型设为 T；
+// Dest 只决定结果映射。自动应用 Query Context 中的 DataRule；应用注册的 callback
+// 是独立机制。JOIN 副表的隔离和软删除由调用方或应用 callback 明确，gplus 不自动追加。
 //
 // 【迁移提示】若现有代码用 q.ToDB(db).Model(&T{}).Scan(&rows) / .Rows() / .Row()，
-// 必须改用 gplus.FindAs。前者绕过 Query callback chain，会导致下游隔离/审计 callback
-// 不触发，可能引发跨租户数据泄露 / 审计日志缺失（详见 README "已知陷阱"）。
+// 前者绕过 Query callback chain。普通业务投影可改用 FindAs；迁移前应确认自动
+// DataRule 与原查询范围一致。特殊规则范围保留 ToDB + WithContext + Find，
+// 由应用明确授权范围（详见 README "已知陷阱"）。
 //
 // 【副作用】调用 FindAs 后 q.conditions 会被永久追加 DataRule 条件
 // （dataRuleApplied 保护幂等），q 不应再跨不同 ctx 复用。与 List/Sum 等行为一致。
@@ -74,8 +78,8 @@ func FindAsTx[T any, Dest any, D comparable](
 //
 // 走 GORM Query callback chain，下游挂在 Query chain 上的隔离/审计 callback 会触发。
 //
-// 【迁移提示】若现有代码用 q.ToDB(db).Model(&T{}).Limit(1).Scan(&one)，必须改用
-// gplus.FindOneAs。前者绕过 Query chain，可能引发跨租户数据泄露 / 审计日志缺失。
+// 【迁移提示】q.ToDB(db).Model(&T{}).Limit(1).Scan(&one) 绕过 Query chain。
+// 改用 FindOneAs 前应确认自动 DataRule 与原查询范围一致，特殊规则范围由应用明确。
 //
 // 【约束】FindOneAs 不可与 q.Limit() / q.Page() 组合 —— 内部 First 会追加 LIMIT 1，
 // 与已有 LIMIT 叠加部分 DB 行为未定义。组合调用会立即返回 ErrFindOneAsConflict。
@@ -114,6 +118,9 @@ func FindOneAsTx[T any, Dest any, D comparable](
 //
 // 等价于 repo.Page，但把结果投影到自定义 Dest（JOIN 多表 + VO 场景），
 // 走 GORM Query callback chain，下游隔离/审计 callback 会触发（与 FindAs 一致）。
+// COUNT 和列表均使用 q.Context()、主模型 T 和同一组 DataRule / 查询筛选条件，
+// 分别触发 Query callback；COUNT 构建不附加 Query 本身的排序和分页限制。
+// 应用 callback 需对两条路径一致地处理隔离条件；两次 SQL 不自动保证同一数据快照。
 //
 // skipCount 语义同 Page：true 跳过 COUNT（total 恒为 0），适合不需要总数的场景；
 // false 时先 COUNT，若总数为 0 则提前返回、不执行投影 Find。
