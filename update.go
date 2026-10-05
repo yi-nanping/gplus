@@ -281,7 +281,10 @@ func (u *Updater[T]) resolveColumnNameAny(col any) (string, error) {
 }
 
 // Set 设置更新值
-// 示例: u.Set(&User.Name, "NewName")
+// 指定的值包括 0 / false / 空串 / nil，不按结构体非零字段更新规则过滤。
+// 字段指针须来自 NewUpdater 返回的模型；Select / Omit 可以进一步限制实际更新字段。
+// Set 只构建字段赋值，不自动执行更新或启用乐观锁。
+// 示例: u.Set(&m.Name, "NewName")
 func (u *Updater[T]) Set(col any, val any) *Updater[T] {
 	name, err := u.resolveColumnNameAny(col)
 	if err != nil {

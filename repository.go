@@ -377,6 +377,7 @@ func (r *Repository[D, T]) CountTx(q *Query[T], tx *gorm.DB) (int64, error) {
 // Save 纯 INSERT（非 upsert）。
 // 警告：无论 entity 是否携带主键，均执行 INSERT，不会更新已有记录。
 // 若需 insert-or-update 语义，请使用 Upsert。
+// 不自动注入 gplus DataRule，插入数据的授权范围由应用负责。
 func (r *Repository[D, T]) Save(ctx context.Context, entity *T) error {
 	return r.SaveTx(ctx, entity, nil)
 }
@@ -400,18 +401,21 @@ func (r *Repository[D, T]) SaveBatchTx(ctx context.Context, entities []T, tx *go
 
 // Upsert 保存或更新单条记录（insert-or-update）。
 // 底层调用 GORM db.Save()：有主键时执行 UPDATE 全字段，无主键时执行 INSERT。
-// 注意：UPDATE 会覆盖所有字段（包括零值），如需只更新部分字段请使用 UpdateById/UpdateByCond。
+// 默认 UPDATE 包括零值；影响零行时可回退 INSERT，不提供“只更新”保证。
+// 不自动注入 gplus DataRule，也不启用 gplus:"version" 乐观锁；应用 callback 是独立机制。
+// 非零字段更新用 UpdateById；指定字段含零值且只 UPDATE 用 Updater.Set + UpdateByCond。
 func (r *Repository[D, T]) Upsert(ctx context.Context, entity *T) error {
 	return r.UpsertTx(ctx, entity, nil)
 }
 
-// UpsertTx 事务保存或更新单条记录（insert-or-update）。
+// UpsertTx 事务保存或更新单条记录，零值、插入回退及规则契约同 Upsert。
 func (r *Repository[D, T]) UpsertTx(ctx context.Context, entity *T, tx *gorm.DB) error {
 	return r.dbResolver(ctx, tx).Save(entity).Error
 }
 
 // UpsertBatch 批量保存或更新（insert-or-update，一次性执行）。
-// 底层调用 GORM db.Save()，每条记录按主键决定 INSERT 或 UPDATE。
+// 底层调用 GORM db.Save() 的切片路径：批量 INSERT，冲突时更新全部可更新字段（含零值）。
+// 与 Upsert 一样允许插入，不自动注入 gplus DataRule 或启用乐观锁。
 func (r *Repository[D, T]) UpsertBatch(ctx context.Context, entities []T) error {
 	return r.UpsertBatchTx(ctx, entities, nil)
 }
@@ -435,12 +439,16 @@ func (r *Repository[D, T]) CreateBatchTx(ctx context.Context, entities []*T, bat
 	return r.dbResolver(ctx, tx).CreateInBatches(entities, batchSize).Error
 }
 
-// UpdateById 根据 ID 更新
+// UpdateById 根据 ID 更新非零字段，自动应用 ctx 中的 DataRule，只执行 UPDATE。
+// 有无 gplus:"version" 字段的两条路径均忽略普通字段的零值；含 version 时自动乐观锁。
+// 仅返回 error；无 version 且目标不存在或不可见时可返回 nil，不表示实际更新了记录。
+// 指定字段含零值并检查影响行数时，使用 Updater.Set + UpdateByCond。
 func (r *Repository[D, T]) UpdateById(ctx context.Context, entity *T) error {
 	return r.UpdateByIdTx(ctx, entity, nil)
 }
 
-// UpdateByIdTx 事务更新。若模型含 `gplus:"version"` 字段则启用乐观锁：
+// UpdateByIdTx 事务更新，非零字段、DataRule 及只 UPDATE 契约同 UpdateById。
+// 若模型含 `gplus:"version"` 字段则启用乐观锁：
 // WHERE id=? AND version=oldVer，SET ..., version=version+1；
 // affected==0 时返回 ErrOptimisticLock（版本冲突或记录不存在）。
 // 成功后 entity.Version 自动递增，可直接再次调用。
@@ -510,12 +518,15 @@ func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 	return &entity, nil
 }
 
-// UpdateByCond 执行条件更新（不带事务）
+// UpdateByCond 按 Updater 条件执行 UPDATE，写入 Set / SetExpr / SetMap 指定的值（含零值）。
+// 使用 u.Context() 并自动应用其 DataRule；不自动比较或递增 gplus:"version" 字段。
+// 返回影响行数和错误；目标不存在或不可见时可为 (0, nil)，不会回退 INSERT。
+// 需要版本比较时显式构造版本条件与新版本值；影响行数的细节遵循数据库 / 驱动语义。
 func (r *Repository[D, T]) UpdateByCond(u *Updater[T]) (int64, error) {
 	return r.UpdateByCondTx(u, nil)
 }
 
-// UpdateByCondTx 执行条件更新（支持事务）
+// UpdateByCondTx 执行条件更新（支持事务），零值、DataRule 和影响行数契约同 UpdateByCond。
 func (r *Repository[D, T]) UpdateByCondTx(u *Updater[T], tx *gorm.DB) (int64, error) {
 	if u == nil || u.IsEmpty() {
 		return 0, ErrUpdateEmpty
@@ -777,6 +788,8 @@ func (r *Repository[D, T]) UpdateByIds(ctx context.Context, ids []D, u *Updater[
 }
 
 // UpdateByIdsTx 支持事务的批量主键更新。
+// 使用 setMap 显式更新字段（含零值），自动应用 ctx 的 DataRule，只执行 UPDATE。
+// 不自动比较或递增 gplus:"version" 字段。
 //
 // 注意：启用 DataRule 时，记录存在但跨租户会返回 affected==0，此时不应无条件重试
 // （重试无法绕过权限）。调用方需通过其他途径区分权限拦截与实际无匹配行。

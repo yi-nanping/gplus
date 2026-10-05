@@ -183,17 +183,46 @@ results, err := repo.List(query)
 updater, model := gplus.NewUpdater[User](ctx)
 
 // 设置更新字段
-updater.Set(&model.Name, "新名字")
-       .Set(&model.Age, 30)
-       .SetExpr(&model.Version, "version + ?", 1)
+updater.Set(&model.Name, "新名字").
+    Set(&model.Age, 30).
+    SetExpr(&model.Version, "version + ?", 1)
 
 // 设置条件
-updater.Eq(&model.ID, 1)
-       .Gt(&model.Status, 0)
+updater.Eq(&model.ID, 1).
+    Gt(&model.Status, 0)
 
 // 执行更新
-affected, err := repo.UpdateByCond(updater) // 第二个参数是事务，传nil表示不用事务
+affected, err := repo.UpdateByCond(updater)
+// 事务版本：repo.UpdateByCondTx(updater, tx)
 ```
+
+**更新契约与零值**（Tx 版遵循相同契约）：
+
+| 入口 | 更新字段 | 自动 DataRule | 自动乐观锁 | 返回影响行数 | 允许插入 |
+|---|---|---|---|---|---|
+| `UpdateById`，无 version | 非零字段 | 是，来自 ctx | 否 | 否，仅 error | 否 |
+| `UpdateById`，有 `gplus:"version"` | 普通非零字段，版本递增 | 是，来自 ctx | 是 | 内部检查，零行返回 `ErrOptimisticLock` | 否 |
+| `Updater.Set` + `UpdateByCond` | 显式字段，包含零值 | 是，来自 Updater Context | 否 | 是 | 否 |
+| `Upsert` | 默认全字段，包含零值 | 否 | 否 | 否，仅 error | 是 |
+| `Save` | 纯 INSERT | 否 | 否 | 否，仅 error | 是 |
+
+`UpdateById` 两个分支都忽略普通字段的 `0/false/空串`。无 version 时，不存在或不可见目标也可能返回 nil；有 version 时，零行返回 `ErrOptimisticLock`，原因可能是不匹配版本、不存在或 DataRule 不可见，不能据此无条件重试。
+
+需要指定字段、包含零值、只 UPDATE 并检查结果时，用现有 Updater。以下以含 Weight、Enabled 和 Version 的配置模型为例，字段指针来自 Repository 的构建器：
+
+```go
+u, m := repo.NewUpdater(ctx)
+u.Eq(&m.ID, id).Set(&m.Weight, 0).Set(&m.Enabled, false)
+affected, err := repo.UpdateByCond(u)
+
+// 需要版本比较时显式表达；Updater 不自动比较、递增版本或回写实体。
+u, m = repo.NewUpdater(ctx)
+u.Eq(&m.ID, id).Eq(&m.Version, oldVersion).
+    Set(&m.Weight, 0).Set(&m.Version, oldVersion+1)
+affected, err = repo.UpdateByCond(u)
+```
+
+`UpdateByCond` 的零行结果不会回退 INSERT，也不会自动返回 `ErrOptimisticLock`；不存在、不可见及版本不匹配不能仅凭零行区分。影响行数的细节遵循数据库 / 驱动语义。`Updater.Select/Omit` 只限制已指定的字段，不会从实体自动提取字段值。
 
 ### 事务支持
 
@@ -231,13 +260,15 @@ query.Order(&model.CreatedAt, false).OrderRaw("FIELD(priority, 1, 2, 3)")
 
 ```go
 // 无主键：执行 INSERT
-// 有主键：执行 UPDATE（覆盖所有字段）
+// 有主键：默认执行全字段 UPDATE（含零值），零行时可回退 INSERT
 repo.Upsert(ctx, &user)
 repo.UpsertBatch(ctx, users)
 
 // 注意：Save/SaveBatch 是纯 INSERT，不会更新已有记录
 // 如需只更新部分字段，使用 UpdateById 或 UpdateByCond
 ```
+
+`Upsert` 允许插入，不能作为“包含零值的只更新”入口。它不自动注入 gplus DataRule 或启用 `gplus:"version"` 乐观锁；应用注册的 GORM callback 是独立机制。`UpsertBatch` 使用批量 INSERT + 冲突更新路径，同样允许插入。需要只更新时，按上表选择 `UpdateById` 或 Updater。
 
 ### 聚合函数
 
@@ -496,7 +527,7 @@ q.SelectExpr(gplus.Add(gplus.Col(&m.Depth), gplus.Lit(1))).Eq(&m.DescendantID, 5
 
 ### 数据权限（DataRule）
 
-`DataRule` 通过 `context.Context` 传入，由 Repository 方法自动应用到所有查询和写操作，无需在每处手动添加条件。适合多租户、行级权限等场景。
+`DataRule` 通过 `context.Context` 传入，由支持规则的 Repository 读取、更新、删除入口自动追加筛选条件，例如 `List`、`UpdateById`、`UpdateByCond`。`Save/Upsert` 和原生 SQL 入口不自动注入规则；具体以各 API 的契约为准。适合多租户、行级权限等场景。
 
 ```go
 // 定义数据权限规则（通常在中间件中设置）
@@ -506,7 +537,7 @@ rules := []gplus.DataRule{
 }
 ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
 
-// 之后所有使用该 ctx 的查询都会自动附加上述条件
+// List 执行时自动附加上述条件
 q, m := gplus.NewQuery[User](ctx)
 q.Eq(&m.IsVip, true)
 // 实际执行：WHERE is_vip = true AND tenant_id = 'tenant-abc' AND deleted_at IS NULL
