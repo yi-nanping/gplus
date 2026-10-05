@@ -227,7 +227,7 @@ affected, err = repo.UpdateByCond(u)
 ### 事务支持
 
 ```go
-err := repo.Transaction(func(tx *gorm.DB) error {
+err := repo.Transaction(ctx, func(tx *gorm.DB) error {
     // 在事务中执行操作
     user1 := &User{Name: "用户1", Age: 20}
     if err := repo.SaveTx(ctx, user1, tx); err != nil {
@@ -242,6 +242,31 @@ err := repo.Transaction(func(tx *gorm.DB) error {
     return nil
 })
 ```
+
+需要在调用边界校验事务句柄时，使用 `RequireTx` 绑定一次，再调用普通仓库方法：
+
+```go
+err := repo.Transaction(ctx, func(tx *gorm.DB) error {
+    txRepo, err := repo.RequireTx(tx)
+    if err != nil {
+        return err
+    }
+    user := &User{Name: "用户", Age: 20}
+    if err := txRepo.Save(ctx, user); err != nil {
+        return err
+    }
+    u, m := txRepo.NewUpdater(ctx)
+    u.Eq(&m.ID, user.ID).Set(&m.Age, 0)
+    _, err = txRepo.UpdateByCond(u)
+    return err
+})
+```
+
+`RequireTx` 拒绝 nil、无有效 Statement、普通连接及接口内的 nil 事务连接，返回 `gorm.ErrInvalidTransaction`；句柄已有 `tx.Error` 时原样返回该错误。它按 GORM 的 `Statement.ConnPool` 是否具备 `TxCommitter` 能力校验，支持 GORM 预处理事务包装，不执行 SQL，也不开启、提交或回滚事务。
+
+成功后返回绑定原句柄的新仓库，原仓库保持原样。普通方法及 `*Tx(..., nil)` 使用绑定连接，Context 和 DataRule 继续按各方法的契约生效；显式传入其他事务参数或再次绑定仍可以覆盖该连接。旧 `WithTx` 仍是未经校验的绑定入口，旧可选事务接口继续接受 nil。
+
+这只是绑定时的事务能力校验，不能判断事务是否仍活跃，也不保证所有业务调用均参与同一事务。已提交或回滚的连接执行时返回底层错误，不会回退默认 DB。业务事务范围、跨模块参与和提交后副作用仍由应用负责。
 
 ### 原生条件与排序
 
@@ -574,13 +599,13 @@ ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
 
 ### 悲观锁查询（GetByLock）
 
-`GetByLock` 必须在事务中使用，否则返回 `ErrTransactionReq`。
+`GetByLock` 应在事务中使用；现有入口只在 tx 为 nil 时返回 `ErrTransactionReq`，不校验普通 DB 是否为事务。需要入口校验时可先调用 `RequireTx(tx)`，再将该句柄传给 `GetByLock`。
 
 ```go
-err := repo.Transaction(func(tx *gorm.DB) error {
+err := repo.Transaction(ctx, func(tx *gorm.DB) error {
     q, m := gplus.NewQuery[User](ctx)
-    q.Eq(&m.ID, 1).LockForUpdate() // FOR UPDATE
-    user, err := repo.GetByLock(ctx, q, tx)
+    q.Eq(&m.ID, 1).LockWrite() // FOR UPDATE
+    user, err := repo.GetByLock(q, tx)
     if err != nil {
         return err
     }
@@ -709,7 +734,8 @@ query.NaturalJoin("user_settings")
 | `ErrDeleteEmpty` | `DeleteByCondTx` 无条件且未调用 `Unscoped()` |
 | `ErrUpdateEmpty` | `UpdateByCond` 没有设置任何字段 |
 | `ErrUpdateNoCondition` | `UpdateByCond` 有字段但没有 WHERE 条件 |
-| `ErrTransactionReq` | `GetByLock` 未在事务中调用 |
+| `ErrTransactionReq` | `GetByLock` 的 tx 参数为 nil |
+| `gorm.ErrInvalidTransaction` | `RequireTx` 的句柄为空或不具备事务连接能力 |
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 无条件 |
 | `ErrInsertSelectMapConflict` | `InsertSelectMap` 的 src 已有手动投影（Select/SelectRaw/SelectExpr） |

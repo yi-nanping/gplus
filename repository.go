@@ -155,10 +155,43 @@ func (r *Repository[D, T]) dbResolver(ctx context.Context, tx *gorm.DB) *gorm.DB
 
 // WithTx 返回一个新的 Repository 实例，该实例绑定了传入的事务对象
 // 这是一个轻量级的浅拷贝，性能消耗极小
+// 本方法不校验句柄；需要绑定时校验事务能力请使用 RequireTx。
 func (r *Repository[D, T]) WithTx(tx *gorm.DB) *Repository[D, T] {
 	return &Repository[D, T]{
 		db: tx, // 新实例使用事务连接
 	}
+}
+
+// RequireTx 校验事务句柄后返回绑定该句柄的新仓库，不修改原仓库。
+// nil、无有效 Statement 或连接不具备 GORM TxCommitter 能力时返回 gorm.ErrInvalidTransaction；
+// tx.Error 非空时原样返回该错误。检查不执行 SQL，也不开启、提交或回滚事务。
+//
+// 仅校验绑定时的事务能力，不能确认事务仍活跃或所有业务操作均参与其中。
+// 普通方法及 *Tx(nil) 使用绑定连接；显式传入其他 *Tx 句柄仍会覆盖绑定。
+// Context、DataRule 和执行行为沿用现有方法；业务事务范围和提交后副作用由应用负责。
+func (r *Repository[D, T]) RequireTx(tx *gorm.DB) (*Repository[D, T], error) {
+	if tx == nil {
+		return nil, gorm.ErrInvalidTransaction
+	}
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.Statement == nil {
+		return nil, gorm.ErrInvalidTransaction
+	}
+	pool, ok := tx.Statement.ConnPool.(gorm.TxCommitter)
+	if !ok {
+		return nil, gorm.ErrInvalidTransaction
+	}
+	// 自定义连接包装可能是值类型；只对可为 nil 的类型调用 IsNil。
+	v := reflect.ValueOf(pool)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		if v.IsNil() {
+			return nil, gorm.ErrInvalidTransaction
+		}
+	}
+	return r.WithTx(tx), nil
 }
 
 // Transaction 封装 GORM 的事务闭包模式
@@ -490,6 +523,7 @@ func (r *Repository[D, T]) UpdateByIdTx(ctx context.Context, entity *T, tx *gorm
 
 // GetByLock 专门的带锁查询方法
 // 强制要求传入 tx，因为不在事务里的锁是没有意义的
+// 当前仅检查 tx 非 nil；需要事务能力校验时，可先调用 RequireTx。
 func (r *Repository[D, T]) GetByLock(q *Query[T], tx *gorm.DB) (*T, error) {
 	if tx == nil {
 		// 也可以选择自动开启事务，但最好强制要求外部控制事务范围

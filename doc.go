@@ -43,8 +43,11 @@
 // # 事务
 //
 //	err := db.Transaction(func(tx *gorm.DB) error {
-//	    _, err := repo.SaveTx(ctx, &user, tx)
-//	    return err
+//	    txRepo, err := repo.RequireTx(tx)
+//	    if err != nil {
+//	        return err
+//	    }
+//	    return txRepo.Save(ctx, &user)
 //	})
 //
 // # 数据权限
