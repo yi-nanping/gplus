@@ -65,7 +65,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 ### `DataRuleBuilder`（query.go）
 
-从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule` 并将条件追加到查询中。由 `dataRuleApplied bool` 保护——对同一 `Query` 多次调用是安全的（幂等）。始终以 `q.DataRuleBuilder().BuildQuery()` 方式调用，在 repository 方法中不要直接调用 `q.BuildQuery()`。
+从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule` 并将条件追加到查询中。由 `dataRuleApplied bool` 保护——对同一 `Query` 多次调用是安全的（幂等）。支持规则的 Repository 执行入口先调用 `DataRuleBuilder`，再调用相应 `Build*`；同一个 Query 不跨规则范围复用。`ToDB` 只构建，不自动绑定 Query Context 或追加规则；`Save/Upsert` 和原生 SQL 也不自动注入规则。
 
 `DataRule.Column` 须匹配白名单正则（字母/数字/下划线/点），含括号或运算符的表达式会被拒绝。`DataRule.Table` 非空时走 `resolveDataRuleColumn` 新路径：`Table` 单段校验（拒 `schema.table`）+ 拼接结果防御性复校验，`Table` 非空时 `Column` 不得含点；旧路径（`Table` 空）向后兼容点前缀写法。
 
@@ -112,10 +112,11 @@ repo.ListMap(q, keyFn)                         // 查列表并转换为 map[D]T
 repo.Page(q, skipCount)                        // 分页：返回 (list, total, err)，skipCount=true 跳过 COUNT
 repo.Count(q)                                  // 按条件计数
 repo.Exists(q)                                 // 按条件判断是否存在
-repo.GetByLock(ctx, q, tx)                     // 加锁查询，需在事务中调用
+repo.GetByLock(q, tx)                          // 加锁查询；当前只拒绝 nil，调用者负责提供事务
 repo.FirstOrCreate(q, defaults)               // 查找或创建，返回 (data, created, err)
 repo.FirstOrUpdate(q, updater, defaults)      // 查找或创建并更新，返回 (data, created, err)
 repo.Chunk(q, batchSize, fn)                   // 主键游标分批处理
+repo.RequireTx(tx)                            // 校验事务能力后返回绑定仓库；不能确认事务仍活跃
 
 // 包级泛型函数（需显式传 repo）
 gplus.Pluck[T, R, D](r, q, col)               // 查询单列，返回 []R
@@ -156,7 +157,8 @@ q.SelectExpr(e Expr)                          // 类型化投影表达式（Col/
 | `ErrDeleteEmpty` | `DeleteByCondTx` 在无条件且非 Unscoped 时被调用 |
 | `ErrUpdateEmpty` | `Update` 被调用时 `setMap` 中没有字段 |
 | `ErrUpdateNoCondition` | `Update` 有字段但没有 WHERE 条件时被调用 |
-| `ErrTransactionReq` | `GetByLock` 在没有事务的情况下被调用 |
+| `ErrTransactionReq` | `GetByLock` 的 tx 参数为 nil |
+| `gorm.ErrInvalidTransaction` | `RequireTx` 的句柄为空或不具备事务连接能力 |
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 在无条件时被调用 |
 | `ErrOnConflictInvalid` | `OnConflict` 中 DoNothing/DoUpdateAll/DoUpdates 互斥策略同时设置 |

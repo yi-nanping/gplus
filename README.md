@@ -1119,8 +1119,9 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 ## 版本历史
 
-> 最新版本 **v0.11.1**（2026-06-10），完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。v0.7 起的要点：
+> 当前仓库的版本基线为 **v0.12.0**（2026-06-10）；基线之后的改动见 [CHANGELOG.md 的 Unreleased](CHANGELOG.md#unreleased)。`RequireTx` 属于未发布改动，不包含在 v0.12.0 标签中。v0.7 起的要点：
 >
+> - **v0.12**：DataRule 缺口修复与 Build* 构建错误统一短路
 > - **v0.11**：typed-expr 类型化投影表达式（`Model[T]`/`Col`/`Lit`/`Add` + `SelectExpr`）+ `InsertSelectMap` 成对列映射
 > - **v0.10**：`DataRule.Table` 跨表数据权限 + `PageAs` 投影分页
 > - **v0.9**：`SelectRaw` 参数绑定 + `InsertSelect`/`InsertSelectTx` + `NewQueryAs` 主别名 FROM 物化

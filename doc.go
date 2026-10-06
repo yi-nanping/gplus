@@ -55,7 +55,7 @@
 // 通过 Context 注入 DataRule，由支持规则的读取、更新、删除入口应用。
 // Save / Upsert 和原生 SQL 入口不自动注入规则；具体以各 API 契约为准：
 //
-//	rules := []gplus.DataRule{{Column: "tenant_id", Value: 42}}
+//	rules := []gplus.DataRule{{Column: "tenant_id", Condition: "=", Value: "42"}}
 //	ctx = context.WithValue(ctx, gplus.DataRuleKey, rules)
 //
 // # 调试

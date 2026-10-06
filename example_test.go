@@ -136,3 +136,50 @@ func ExamplePluck() {
 	// Output:
 	// [A B]
 }
+
+func ExampleRepository_RequireTx() {
+	db := openExampleDB()
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer sqlDB.Close()
+	repo := gplus.NewRepository[uint, Article](db)
+	_, err = repo.RequireTx(db)
+	fmt.Println("ordinary DB rejected:", err == gorm.ErrInvalidTransaction)
+
+	ctx := context.WithValue(context.Background(), gplus.DataRuleKey, []gplus.DataRule{
+		{Column: "author", Condition: "=", Value: "Alice"},
+	})
+	article := &Article{Title: "Bound transaction", Author: "Alice", Views: 100}
+	err = repo.Transaction(ctx, func(tx *gorm.DB) error {
+		txRepo, err := repo.RequireTx(tx)
+		if err != nil {
+			return err
+		}
+		if err := txRepo.Save(ctx, article); err != nil {
+			return err
+		}
+		// 使用构建器返回的字段指针，显式写入零值并沿用请求 DataRule。
+		u, m := txRepo.NewUpdater(ctx)
+		u.Eq(&m.ID, article.ID).Set(&m.Views, 0)
+		affected, err := txRepo.UpdateByCond(u)
+		if err != nil {
+			return err
+		}
+		fmt.Println("affected:", affected)
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	got, err := repo.GetById(ctx, article.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("views:", got.Views)
+	// Output:
+	// ordinary DB rejected: true
+	// affected: 1
+	// views: 0
+}

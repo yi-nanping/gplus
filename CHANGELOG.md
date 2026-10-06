@@ -2,6 +2,20 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+
+- `Repository.RequireTx(tx)`：绑定前检查事务句柄及 GORM `TxCommitter` 能力，支持预处理事务包装；检查不执行 SQL 或事务控制操作。不能确认事务仍活跃，业务事务范围仍由应用负责。
+- 可执行的 `RequireTx` 示例，展示公开 API 下的事务绑定、显式零值更新和 DataRule。
+
+### 文档与测试
+
+- 明确投影的 Context、主模型、callback 和 DataRule 契约，保留特殊元查询与子查询的既有规则范围。
+- 明确更新的零值、只 UPDATE、乐观锁、影响行数和 Upsert 插入回退契约；沿用现有 Updater，不新增字段更新接口。
+- 固定 LEFT JOIN 的 ON / WHERE 差异、副表规则选择、NULL 投影、分页筛选和参数绑定行为；不新增 ON DSL。
+- 补齐上述行为回归测试。旧 `WithTx`、可选 `*Tx(nil)`、`GetByLock` 和默认查询范围保持兼容。
+
 ## [0.12.0] - 2026-06-10
 
 本版聚焦 2026-06-10 全项目审计的修复闭环：数据权限缺口、错误累积双轨制统一（Build* 窄腰 fail-closed）、死代码移除与文档债清理。含行为变更（见下方 ⚠️），按 v0.x 惯例记 MINOR 版本。
