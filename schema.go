@@ -9,7 +9,7 @@ import (
 var (
 	// 缓存字段指针地址 -> 列名
 	columnNameCache sync.Map
-	// 缓存类型名 -> 实例 (用于获取空结构体指针)
+	// 缓存真实类型 -> 实例 (用于获取空结构体指针)
 	modelInstanceCache sync.Map
 	// 保护 getModelInstance 慢路径的初始化，确保 columnNameCache 全部写入后才对外暴露指针
 	modelInitMu sync.Mutex
@@ -22,10 +22,10 @@ var (
 // unregisterModel 从缓存中移除指定模型的注册信息（仅供包内测试使用）。
 // 适用场景：测试隔离，避免全局缓存在子测试间产生残留状态。
 func unregisterModel[T any]() {
-	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
+	typ := reflect.TypeOf((*T)(nil)).Elem()
 	modelInitMu.Lock()
 	defer modelInitMu.Unlock()
-	v, ok := modelInstanceCache.LoadAndDelete(typeStr)
+	v, ok := modelInstanceCache.LoadAndDelete(typ)
 	if !ok {
 		return
 	}
@@ -41,7 +41,7 @@ func unregisterModel[T any]() {
 		unregisterPtrEmbedFields(val.Elem(), "gorm", "COLUMN")
 	}
 	// 清理 reflectStructSchema 的 schema 级缓存（须在 reflectStructSchema 调用之后）
-	columnCache.Delete(schemaCacheKey{typeStr, "gorm", "COLUMN"})
+	columnCache.Delete(schemaCacheKey{typ, "gorm", "COLUMN"})
 }
 
 // registerPtrEmbedFields 运行时注册指针嵌入字段的绝对地址到列名映射。
@@ -149,11 +149,9 @@ func RegisterModel(models ...any) {
 			continue
 		}
 
-		modelName := t.String()
-
 		// LoadOrStore 保证只有第一个写入者继续执行字段注册，
 		// 后续并发调用直接返回，不会产生第二个规范指针。
-		if _, loaded := modelInstanceCache.LoadOrStore(modelName, model); loaded {
+		if _, loaded := modelInstanceCache.LoadOrStore(t, model); loaded {
 			continue
 		}
 
@@ -172,10 +170,10 @@ func RegisterModel(models ...any) {
 // 并发安全：快速路径无锁；慢路径通过 modelInitMu 互斥，确保 columnNameCache
 // 全部写入完成后才将指针写入 modelInstanceCache，消除半初始化竞态窗口。
 func getModelInstance[T any]() *T {
-	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
+	typ := reflect.TypeOf((*T)(nil)).Elem()
 
 	// 快速路径：已注册直接返回，无锁
-	if v, ok := modelInstanceCache.Load(typeStr); ok {
+	if v, ok := modelInstanceCache.Load(typ); ok {
 		return v.(*T)
 	}
 
@@ -184,7 +182,7 @@ func getModelInstance[T any]() *T {
 	defer modelInitMu.Unlock()
 
 	// 双重检查：加锁后再确认一次，防止重复初始化
-	if v, ok := modelInstanceCache.Load(typeStr); ok {
+	if v, ok := modelInstanceCache.Load(typ); ok {
 		return v.(*T)
 	}
 
@@ -202,7 +200,7 @@ func getModelInstance[T any]() *T {
 	registerPtrEmbedFields(ptrVal, "gorm", "COLUMN")
 
 	// 所有 columnNameCache 条目写入完成后，才对外暴露指针
-	modelInstanceCache.Store(typeStr, ptr)
+	modelInstanceCache.Store(typ, ptr)
 	return ptr
 }
 

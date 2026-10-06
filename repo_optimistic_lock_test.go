@@ -56,7 +56,7 @@ func TestOptimisticLock_NoVersionField(t *testing.T) {
 func TestOptimisticLock_BasicUpdate(t *testing.T) {
 	unregisterModel[UserWithVersion]()
 	defer unregisterModel[UserWithVersion]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem())
 
 	repo, db := setupTestDB[UserWithVersion](t)
 	ctx := context.Background()
@@ -92,7 +92,7 @@ func TestOptimisticLock_BasicUpdate(t *testing.T) {
 func TestOptimisticLock_ConflictOnUpdate(t *testing.T) {
 	unregisterModel[UserWithVersion]()
 	defer unregisterModel[UserWithVersion]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem())
 
 	repo, db := setupTestDB[UserWithVersion](t)
 	ctx := context.Background()
@@ -123,7 +123,7 @@ func TestOptimisticLock_ConflictOnUpdate(t *testing.T) {
 func TestOptimisticLock_RowNotFound(t *testing.T) {
 	unregisterModel[UserWithVersion]()
 	defer unregisterModel[UserWithVersion]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem())
 
 	repo, _ := setupTestDB[UserWithVersion](t)
 	ctx := context.Background()
@@ -139,7 +139,7 @@ func TestOptimisticLock_RowNotFound(t *testing.T) {
 func TestOptimisticLock_SuccessiveUpdates(t *testing.T) {
 	unregisterModel[UserWithVersion]()
 	defer unregisterModel[UserWithVersion]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem())
 
 	repo, db := setupTestDB[UserWithVersion](t)
 	ctx := context.Background()
@@ -163,7 +163,7 @@ func TestOptimisticLock_SuccessiveUpdates(t *testing.T) {
 func TestOptimisticLock_Uint32Version(t *testing.T) {
 	unregisterModel[UserWithVersionUint32]()
 	defer unregisterModel[UserWithVersionUint32]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersionUint32)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersionUint32)(nil)).Elem())
 
 	repo, db := setupTestDB[UserWithVersionUint32](t)
 	ctx := context.Background()
@@ -185,7 +185,7 @@ func TestOptimisticLock_Uint32Version(t *testing.T) {
 func TestOptimisticLock_EmbedVersion(t *testing.T) {
 	unregisterModel[UserWithEmbedVersion]()
 	defer unregisterModel[UserWithEmbedVersion]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithEmbedVersion)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithEmbedVersion)(nil)).Elem())
 
 	repo, db := setupTestDB[UserWithEmbedVersion](t)
 	ctx := context.Background()
@@ -207,7 +207,7 @@ func TestOptimisticLock_EmbedVersion(t *testing.T) {
 func TestOptimisticLock_TxVariant(t *testing.T) {
 	unregisterModel[UserWithVersion]()
 	defer unregisterModel[UserWithVersion]()
-	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem().String())
+	versionFieldCache.Delete(reflect.TypeOf((*UserWithVersion)(nil)).Elem())
 
 	repo, db := setupTestDB[UserWithVersion](t)
 	ctx := context.Background()

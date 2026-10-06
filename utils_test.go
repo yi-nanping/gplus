@@ -90,7 +90,7 @@ func TestNsColumnName(t *testing.T) {
 func TestReflectStructSchema(t *testing.T) {
 	t.Run("简单结构体tag列名", func(t *testing.T) {
 		ty := reflect.TypeOf(utilsSimple{})
-		key := schemaCacheKey{ty.String(), "gorm", "column"}
+		key := schemaCacheKey{ty, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsSimple{}, "gorm", "column")
@@ -101,7 +101,7 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("无tag驼峰转蛇形", func(t *testing.T) {
 		ty := reflect.TypeOf(utilsNoTag{})
-		key := schemaCacheKey{ty.String(), "gorm", "column"}
+		key := schemaCacheKey{ty, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsNoTag{}, "gorm", "column")
@@ -112,7 +112,7 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("忽略gorm减号字段", func(t *testing.T) {
 		ty := reflect.TypeOf(utilsIgnore{})
-		key := schemaCacheKey{ty.String(), "gorm", "column"}
+		key := schemaCacheKey{ty, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsIgnore{}, "gorm", "column")
@@ -125,7 +125,7 @@ func TestReflectStructSchema(t *testing.T) {
 	t.Run("嵌入结构体偏移量累加", func(t *testing.T) {
 		outerTy := reflect.TypeOf(utilsEmbedded{})
 		baseTy := reflect.TypeOf(UtilsEmbedBase{})
-		key := schemaCacheKey{outerTy.String(), "gorm", "column"}
+		key := schemaCacheKey{outerTy, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsEmbedded{}, "gorm", "column")
@@ -138,7 +138,7 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("指针嵌入结构体", func(t *testing.T) {
 		outerTy := reflect.TypeOf(utilsPtrEmbed{})
-		key := schemaCacheKey{outerTy.String(), "gorm", "column"}
+		key := schemaCacheKey{outerTy, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsPtrEmbed{}, "gorm", "column")
@@ -153,7 +153,7 @@ func TestReflectStructSchema(t *testing.T) {
 	t.Run("EMBEDDED标签嵌入", func(t *testing.T) {
 		outerTy := reflect.TypeOf(utilsTagEmbed{})
 		baseTy := reflect.TypeOf(UtilsEmbedBase{})
-		key := schemaCacheKey{outerTy.String(), "gorm", "column"}
+		key := schemaCacheKey{outerTy, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m := reflectStructSchema(utilsTagEmbed{}, "gorm", "column")
@@ -166,7 +166,7 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("缓存命中返回相同实例", func(t *testing.T) {
 		ty := reflect.TypeOf(utilsSimple{})
-		key := schemaCacheKey{ty.String(), "gorm", "column"}
+		key := schemaCacheKey{ty, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		m1 := reflectStructSchema(utilsSimple{}, "gorm", "column")
@@ -178,7 +178,7 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("指针传入与值传入结果一致", func(t *testing.T) {
 		ty := reflect.TypeOf(utilsSimple{})
-		key := schemaCacheKey{ty.String(), "gorm", "column"}
+		key := schemaCacheKey{ty, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		mVal := reflectStructSchema(utilsSimple{}, "gorm", "column")
@@ -190,7 +190,7 @@ func TestReflectStructSchema(t *testing.T) {
 
 	t.Run("并发调用无竞态", func(t *testing.T) {
 		ty := reflect.TypeOf(utilsSimple{})
-		key := schemaCacheKey{ty.String(), "gorm", "column"}
+		key := schemaCacheKey{ty, "gorm", "column"}
 		t.Cleanup(func() { columnCache.Delete(key) })
 
 		const goroutines = 20

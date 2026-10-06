@@ -27,8 +27,11 @@ func init() {
 // 增加全局缓存，减少反射开销
 var columnCache sync.Map
 
-// schemaCacheKey 作为 columnCache 的复合 key，避免字符串拼接碰撞
-type schemaCacheKey struct{ typeName, tag, label string }
+// schemaCacheKey 使用真实类型身份，避免不同导入路径的同名模型发生碰撞。
+type schemaCacheKey struct {
+	modelType  reflect.Type
+	tag, label string
+}
 
 // reflectStructSchema 通过类型缓存列名映射
 func reflectStructSchema(model any, tag, label string) map[uintptr]string {
@@ -38,7 +41,7 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 	}
 
 	// 1. 尝试从缓存读取，使用结构体 key 避免字符串拼接碰撞
-	cacheKey := schemaCacheKey{t.String(), tag, label}
+	cacheKey := schemaCacheKey{t, tag, label}
 	if val, ok := columnCache.Load(cacheKey); ok {
 		return val.(map[uintptr]string)
 	}
@@ -184,21 +187,20 @@ func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
 
 // getVersionField 返回类型 T 的乐观锁字段信息，无 version 字段时返回 nil。结果缓存，并发安全。
 func getVersionField[T any]() *versionFieldInfo {
-	typeStr := reflect.TypeOf((*T)(nil)).Elem().String()
-	if v, ok := versionFieldCache.Load(typeStr); ok {
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	if v, ok := versionFieldCache.Load(t); ok {
 		info := v.(*versionFieldInfo)
 		if info == noVersionSentinel {
 			return nil
 		}
 		return info
 	}
-	t := reflect.TypeOf((*T)(nil)).Elem()
 	info := findVersionField(t, 0)
 	if info == nil {
-		versionFieldCache.Store(typeStr, noVersionSentinel)
+		versionFieldCache.Store(t, noVersionSentinel)
 		return nil
 	}
-	versionFieldCache.Store(typeStr, info)
+	versionFieldCache.Store(t, info)
 	return info
 }
 

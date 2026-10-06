@@ -46,7 +46,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 这是实现类型安全字段指针的核心机制：
 
-1. `utils.go / reflectStructSchema` — 通过反射解析结构体类型 → `map[字段偏移量 → 列名]`，以类型字符串为键缓存在 `columnCache` 中
+1. `utils.go / reflectStructSchema` — 通过反射解析结构体类型 → `map[字段偏移量 → 列名]`，以 `reflect.Type`、tag、label 为复合键缓存在 `columnCache` 中；模型实例和版本字段缓存也使用 `reflect.Type`，隔离不同导入路径的同名模型
 2. `schema.go / registerModel` — 接收具体的 `*T` 实例，遍历 `reflectStructSchema`，将 `基地址 + 偏移量 → 绝对字段地址`，存入 `columnNameCache (sync.Map)`
 3. `schema.go / getModelInstance[T]` — 返回类型 `T` 的**规范缓存指针**。该指针正是步骤 2 中使用其基地址的实例。**传递给查询方法的字段指针必须来自该实例。**
 4. `schema.go / resolveColumnName` — 在 `columnNameCache` 中查找绝对字段地址。也接受普通 `string` 作为原始列名。
