@@ -572,6 +572,8 @@ q.SelectExpr(gplus.Add(gplus.Col(&m.Depth), gplus.Lit(1))).Eq(&m.DescendantID, 5
 
 `DataRule` 通过 `context.Context` 传入，由支持规则的 Repository 读取、更新、删除入口自动追加筛选条件，例如 `List`、`UpdateById`、`UpdateByCond`。`Save/Upsert` 和原生 SQL 入口不自动注入规则；具体以各 API 的契约为准。适合多租户、行级权限等场景。
 
+业务条件整体与数据规则通过 AND 组合，例如 `(A OR B) AND tenant_id = ?`。在同一构建器中追加 OR 或通过 `WithScope` 添加 OR 条件，仍须满足已应用的数据规则。
+
 ```go
 // 定义数据权限规则（通常在中间件中设置）
 rules := []gplus.DataRule{

@@ -18,6 +18,8 @@ type condition struct {
 	value    any
 	isOr     bool // true 为 OR，false 为 AND
 	isRaw    bool // 是否为原生 SQL
+	// isDataRule 标记权限条件，构建时独立于业务 OR 条件进行 AND 组合。
+	isDataRule bool
 	// 用于存储嵌套的子条件块
 	group []condition
 	// subExpr 存储 EXISTS / NOT EXISTS 子查询（v0.8.0）；非空时 existsOp 为 "EXISTS" 或 "NOT EXISTS"
@@ -508,6 +510,86 @@ func buildLeafSQL(cond condition, qL, qR string) (sqlStr string, args []any, ok 
 
 // applyWhere where
 func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
+	var rules []condition
+	for _, cond := range b.conditions {
+		if cond.isDataRule {
+			rules = append(rules, cond)
+		}
+	}
+	if len(rules) == 0 {
+		return applyConditions(db, b.conditions, qL, qR)
+	}
+	business := make([]condition, 0, len(b.conditions)-len(rules))
+	for _, cond := range b.conditions {
+		if !cond.isDataRule {
+			business = append(business, cond)
+		}
+	}
+	db = applyConditions(db, business, qL, qR)
+	ruleDB := applyConditions(db.Session(&gorm.Session{NewDB: true}), rules, qL, qR)
+	if ruleDB.Error != nil {
+		return shortCircuit(db, ruleDB.Error)
+	}
+	ruleWhere := ruleDB.Statement.Clauses["WHERE"].Expression.(clause.Where)
+	where := db.Statement.Clauses["WHERE"]
+	where.Name = "WHERE"
+	if where.Expression == nil {
+		where.Expression = clause.Where{}
+	}
+	previous := where.Builder
+	// Statement.Build 优先使用方言的 ClauseBuilders；存在自定义 WHERE 时只隔离本会话。
+	if custom, ok := db.ClauseBuilders["WHERE"]; ok {
+		if previous == nil {
+			previous = custom
+		}
+		db = db.Session(&gorm.Session{})
+		builders := make(map[string]clause.ClauseBuilder, len(db.ClauseBuilders))
+		for name, fn := range db.ClauseBuilders {
+			builders[name] = fn
+		}
+		// 分发器不捕获权限条件，NewDB 子查询继承 Config 时不会继承主查询的权限。
+		builders["WHERE"] = func(c clause.Clause, builder clause.Builder) {
+			if c.Builder != nil {
+				c.Build(builder)
+			} else {
+				custom(c, builder)
+			}
+		}
+		db.ClauseBuilders = builders
+	}
+	protect := func(c clause.Clause, builder clause.Builder) {
+		// SQL 构建发生在全部延迟 scope 之后，避免后续或嵌套 scope 的 OR 绕过规则。
+		exprs := make([]clause.Expression, 0, 2)
+		if existing, ok := c.Expression.(clause.Where); ok {
+			if len(existing.Exprs) > 0 {
+				exprs = append(exprs, clause.And(existing.Exprs...))
+			}
+		} else if c.Expression != nil {
+			exprs = append(exprs, c.Expression)
+		}
+		exprs = append(exprs, clause.And(ruleWhere.Exprs...))
+		c.Expression = clause.Where{Exprs: exprs}
+		// 写回最终条件，使 GORM 的全表更新保护也能识别仅包含权限规则的写操作。
+		if stmt, ok := builder.(*gorm.Statement); ok {
+			updated := stmt.Clauses["WHERE"]
+			updated.Expression = c.Expression
+			stmt.Clauses["WHERE"] = updated
+		}
+		// 自定义 builder 可以直接调用 c.Build；清除当前 builder 防止递归调用自身。
+		c.Builder = nil
+		if previous != nil {
+			previous(c, builder)
+		} else {
+			c.Build(builder)
+		}
+	}
+	where.Builder = protect
+	db.Statement.Clauses["WHERE"] = where
+	return db
+}
+
+// applyConditions 保留普通条件与嵌套条件的原有 GORM 构建语义。
+func applyConditions(db *gorm.DB, conditions []condition, qL, qR string) *gorm.DB {
 	// 抽离一个递归内部函数
 	var buildCond func(d *gorm.DB, conds []condition) *gorm.DB
 	buildCond = func(d *gorm.DB, conds []condition) *gorm.DB {
@@ -593,7 +675,7 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 		}
 		return d
 	}
-	return buildCond(db, b.conditions)
+	return buildCond(db, conditions)
 }
 
 // applyJoins join

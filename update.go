@@ -642,7 +642,11 @@ func (u *Updater[T]) DataRuleBuilder() *Updater[T] {
 		return u
 	}
 	for _, rule := range rules {
+		start := len(u.conditions)
 		u.applyDataRule(rule)
+		for i := start; i < len(u.conditions); i++ {
+			u.conditions[i].isDataRule = true
+		}
 	}
 	return u
 }

@@ -68,6 +68,8 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 从 `ctx.Value(DataRuleKey)` 读取 `[]DataRule` 并将条件追加到查询中。由 `dataRuleApplied bool` 保护——对同一 `Query` 多次调用是安全的（幂等）。支持规则的 Repository 执行入口先调用 `DataRuleBuilder`，再调用相应 `Build*`；同一个 Query 不跨规则范围复用。`ToDB` 只构建，不自动绑定 Query Context 或追加规则；`Save/Upsert` 和原生 SQL 也不自动注入规则。
 
+规则条件通过 `condition.isDataRule` 标记。`applyWhere` 在最终 WHERE 渲染时将完整业务条件分组，再独立 AND 规则，防止追加 OR 或延迟执行的 `WithScope` 绕过规则；无规则路径保持原有构建方式。
+
 `DataRule.Column` 须匹配白名单正则（字母/数字/下划线/点），含括号或运算符的表达式会被拒绝。`DataRule.Table` 非空时走 `resolveDataRuleColumn` 新路径：`Table` 单段校验（拒 `schema.table`）+ 拼接结果防御性复校验，`Table` 非空时 `Column` 不得含点；旧路径（`Table` 空）向后兼容点前缀写法。
 
 ### 错误处理模式（双轨规则）

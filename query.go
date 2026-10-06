@@ -1035,7 +1035,11 @@ func (q *Query[T]) DataRuleBuilder() *Query[T] {
 		return q
 	}
 	for _, rule := range rules {
+		start := len(q.conditions)
 		q.applyDataRule(rule)
+		for i := start; i < len(q.conditions); i++ {
+			q.conditions[i].isDataRule = true
+		}
 	}
 	return q
 }
