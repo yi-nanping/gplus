@@ -747,17 +747,19 @@ query.NaturalJoin("user_settings")
 
 | 变量 | 触发时机 |
 |------|---------|
-| `ErrQueryNil` | 传入 nil 的 Query/Updater |
+| `ErrQueryNil` | `GetOne`/`List`/`Count`/`Page` 等查询入口传入 nil Query，或 `IncrBy`/`DecrBy` 传入 nil Updater |
 | `ErrRawSQLEmpty` | `RawQuery`/`RawExec`/`RawScan` 传入空字符串 |
-| `ErrDeleteEmpty` | `DeleteByCondTx` 无条件且未调用 `Unscoped()` |
-| `ErrUpdateEmpty` | `UpdateByCond` 没有设置任何字段 |
-| `ErrUpdateNoCondition` | `UpdateByCond` 有字段但没有 WHERE 条件 |
+| `ErrDeleteEmpty` | `DeleteByCond`/`DeleteByCondTx` 传入 nil Query 或没有构建条件；`Unscoped()` 不绕过此保护 |
+| `ErrUpdateEmpty` | `UpdateByCond`/`UpdateByCondTx` 传入 nil Updater 或没有设置任何字段 |
+| `ErrUpdateNoCondition` | `UpdateByCond`/`UpdateByCondTx` 有字段但没有 WHERE 条件 |
 | `ErrTransactionReq` | `GetByLock` 的 tx 参数为 nil |
 | `gorm.ErrInvalidTransaction` | `RequireTx` 的句柄为空或不具备事务连接能力 |
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
 | `ErrRestoreEmpty` | `RestoreByCond`/`RestoreByCondTx` 无条件 |
 | `ErrInsertSelectMapConflict` | `InsertSelectMap` 的 src 已有手动投影（Select/SelectRaw/SelectExpr） |
 | `ErrExprEmpty` | `Add()` 无操作数（表达式至少需一个操作数） |
+
+`WithScope` 内添加的 WHERE 不计入构建条件，不能单独满足条件删除/更新的保护检查；需使用 `Eq`、`WhereRaw` 等构建条件。
 
 ## 集成方式
 

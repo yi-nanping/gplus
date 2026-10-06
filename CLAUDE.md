@@ -35,8 +35,9 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
   → NewQuery[T](ctx) / NewUpdater[T](ctx)    (query.go / update.go)
       → getModelInstance[T]()                  (schema.go)  ← 首次调用时触发 registerModel
   → q.Eq(&model.Field, val).Order(...)        (query.go / update.go)
-  → repo.List(q) / repo.Update(u, tx)         (repository.go)
-      → q.DataRuleBuilder().BuildQuery()       (query.go → builder.go)
+  → repo.List(q) / repo.UpdateByCondTx(u, tx) (repository.go)
+      → 查询：q.DataRuleBuilder().BuildQuery()  (query.go → builder.go)
+      → 更新：u.DataRuleBuilder().BuildUpdate() (update.go → builder.go)
           → ScopeBuilder.applyWhere/Joins/...  (builder.go)
       → GORM 执行
 ```
@@ -96,7 +97,7 @@ repo.IncrBy(updater, col, delta)               // 原子自增，返回 (affecte
 repo.DecrBy(updater, col, delta)               // 原子自减，返回 (affected, err)
 repo.DeleteById(ctx, id)                       // 按主键删除，返回 (affected, err)
 repo.DeleteByIds(ctx, ids)                     // 按主键列表批量删除，返回 (affected, err)
-repo.DeleteByCondTx(q, tx)                     // 按条件删除（无条件时需 q.Unscoped()，否则返回 ErrDeleteEmpty）
+repo.DeleteByCondTx(q, tx)                     // 按条件删除（nil 或无构建条件返回 ErrDeleteEmpty；Unscoped 不绕过保护）
 repo.InsertOnConflict(ctx, &user, oc)          // 单条带冲突处理插入（DoNothing/DoUpdates/DoUpdateAll/UpdateExprs）
 repo.InsertBatchOnConflict(ctx, users, oc)     // 批量带冲突处理插入，空切片无操作
 repo.Restore(ctx, id)                          // 按主键恢复软删除，返回 (affected, err)
@@ -152,11 +153,11 @@ q.SelectExpr(e Expr)                          // 类型化投影表达式（Col/
 
 | 变量 | 含义 |
 |---|---|
-| `ErrQueryNil` | 传入了 nil 的 Query/Updater |
+| `ErrQueryNil` | `GetOne`/`List`/`Count`/`Page` 等查询入口传入 nil Query，或 `IncrBy`/`DecrBy` 传入 nil Updater |
 | `ErrRawSQLEmpty` | 传入 `RawQuery`/`RawExec`/`RawScan` 的字符串为空 |
-| `ErrDeleteEmpty` | `DeleteByCondTx` 在无条件且非 Unscoped 时被调用 |
-| `ErrUpdateEmpty` | `Update` 被调用时 `setMap` 中没有字段 |
-| `ErrUpdateNoCondition` | `Update` 有字段但没有 WHERE 条件时被调用 |
+| `ErrDeleteEmpty` | `DeleteByCond`/`DeleteByCondTx` 传入 nil Query 或没有构建条件；`Unscoped()` 不绕过此保护 |
+| `ErrUpdateEmpty` | `UpdateByCond`/`UpdateByCondTx` 传入 nil Updater 或 `setMap` 中没有字段 |
+| `ErrUpdateNoCondition` | `UpdateByCond`/`UpdateByCondTx` 有字段但没有 WHERE 条件时被调用 |
 | `ErrTransactionReq` | `GetByLock` 的 tx 参数为 nil |
 | `gorm.ErrInvalidTransaction` | `RequireTx` 的句柄为空或不具备事务连接能力 |
 | `ErrDefaultsNil` | `FirstOrCreate`/`FirstOrUpdate` 传入 nil defaults |
