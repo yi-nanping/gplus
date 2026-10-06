@@ -1119,8 +1119,9 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 ## 版本历史
 
-> 当前仓库的版本基线为 **v0.12.0**（2026-06-10）；基线之后的改动见 [CHANGELOG.md 的 Unreleased](CHANGELOG.md#unreleased)。`RequireTx` 属于未发布改动，不包含在 v0.12.0 标签中。v0.7 起的要点：
+> 当前版本为 **v0.13.0**（2026-10-06），完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。`RequireTx` 自 v0.13.0 新增，不包含在 v0.12.0 标签中。v0.7 起的要点：
 >
+> - **v0.13**：`RequireTx` 事务能力校验入口，投影 / 更新 / JOIN 契约说明与行为回归
 > - **v0.12**：DataRule 缺口修复与 Build* 构建错误统一短路
 > - **v0.11**：typed-expr 类型化投影表达式（`Model[T]`/`Col`/`Lit`/`Add` + `SelectExpr`）+ `InsertSelectMap` 成对列映射
 > - **v0.10**：`DataRule.Table` 跨表数据权限 + `PageAs` 投影分页
