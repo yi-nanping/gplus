@@ -218,7 +218,7 @@ func (r *Repository[D, T]) GetByIdTx(ctx context.Context, id D, tx *gorm.DB) (da
 	if err = q.DataRuleBuilder().GetError(); err != nil {
 		return
 	}
-	err = r.dbResolver(ctx, tx).Scopes(q.BuildQuery()).First(&data, id).Error
+	err = r.dbResolver(ctx, tx).Scopes(q.BuildQuery()).First(&data, clause.Eq{Column: clause.PrimaryColumn, Value: id}).Error
 	return
 }
 
@@ -603,7 +603,7 @@ func (r *Repository[D, T]) DeleteByIdTx(ctx context.Context, id D, tx *gorm.DB) 
 	if err := q.DataRuleBuilder().GetError(); err != nil {
 		return 0, err
 	}
-	result := r.dbResolver(ctx, tx).Scopes(q.BuildDelete()).Delete(new(T), id)
+	result := r.dbResolver(ctx, tx).Scopes(q.BuildDelete()).Delete(new(T), clause.Eq{Column: clause.PrimaryColumn, Value: id})
 	return result.RowsAffected, result.Error
 }
 
@@ -765,7 +765,7 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 					// 重读带 DataRule（与查找阶段同源 q.Context()；规则已在事务前
 					// 经 q.DataRuleBuilder().GetError() 校验，此处必无新错误）
 					rq, _ := NewQuery[T](q.Context())
-					if re := tx.Scopes(rq.DataRuleBuilder().BuildCount()).First(&fresh, pkVal).Error; re != nil {
+					if re := tx.Scopes(rq.DataRuleBuilder().BuildCount()).First(&fresh, clause.Eq{Column: clause.PrimaryColumn, Value: pkVal}).Error; re != nil {
 						return re
 					}
 					data = fresh
@@ -1080,7 +1080,7 @@ func (r *Repository[D, T]) RestoreTx(ctx context.Context, id D, tx *gorm.DB) (in
 			}
 		}
 	}
-	result := baseDB.Unscoped().Model(new(T)).Where(id).
+	result := baseDB.Unscoped().Model(new(T)).Where(clause.Eq{Column: clause.PrimaryColumn, Value: id}).
 		Where(col+" IS NOT NULL").
 		Update(col, nil)
 	return result.RowsAffected, result.Error
