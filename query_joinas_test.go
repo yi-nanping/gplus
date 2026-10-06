@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 // Order 类型在 advanced_test.go 中已定义，含 ID/UserID/Amount/Remark 字段。
@@ -65,16 +67,22 @@ func TestLeftJoinAs_ExtraSQLParameterized_C1(t *testing.T) {
 	_, db := setupTestDB[TestUser](t)
 	q, u := NewQuery[TestUser](context.Background())
 	o := As[Order](q, "o")
-	// extraSQL 含 ?，参数 "paid" 走 GORM 参数化（绝不拼字面 SQL）
-	q.LeftJoinAs(o, &o.UserID, &u.ID, "AND o.remark = ?", "paid")
+	// 保留未内联的 SQL 和 Vars，检查引号输入及多个参数的绑定顺序。
+	remark := "paid' OR 1=1 --"
+	q.LeftJoinAs(o, &o.UserID, &u.ID, "AND o.remark = ? AND o.amount > ?", remark, 10)
 
-	sql, err := q.ToSQL(db)
-	if err != nil {
-		t.Fatalf("ToSQL failed: %v", err)
+	var rows []TestUser
+	result := q.ToDB(db.Session(&gorm.Session{DryRun: true})).Find(&rows)
+	if result.Error != nil {
+		t.Fatal(result.Error)
 	}
-	// DryRun 会内联参数；断言 remark 关键词存在即可
-	if !strings.Contains(sql, "remark") {
-		t.Errorf("expected remark keyword in SQL, got %s", sql)
+	sqlText := result.Statement.SQL.String()
+	if !strings.Contains(sqlText, "remark") || strings.Contains(sqlText, remark) {
+		t.Fatalf("SQL 应保留列名且不内联输入: %s", sqlText)
+	}
+	vars := result.Statement.Vars
+	if len(vars) != 2 || vars[0] != remark || vars[1] != 10 {
+		t.Fatalf("Vars=%#v，期望按顺序绑定 remark 和 10", vars)
 	}
 }
 

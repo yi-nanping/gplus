@@ -1138,6 +1138,9 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 // extraSQL 为额外的 ON 条件 SQL 片段，仅含 ? 占位符（如 "AND o.status = ?"）——
 // 绝不直接拼接用户输入，extraSQL 本身不经 fmt.Sprintf 处理；
 // extraArgs 对应占位符参数，走 GORM 参数化预编译，与 db.Joins(sql, args...) 同语义。
+// 参数化只保护值；extraSQL 的列名、别名和 SQL 结构由调用方负责。
+// 不从主模型自动推断副表软删除或数据权限；需要保留主对象时，在 ON 中显式添加条件。
+// Query 条件和 DataRule.Table 指定的副表条件进入 WHERE，可能过滤 LEFT JOIN 的主对象。
 //
 // 错误处理：alias 不属于 q 链时累积 ErrAliasNotInChain 并跳过该 JOIN（保持链式）。
 func (q *Query[T]) LeftJoinAs(alias any, leftCol any, rightCol any, extraSQL string, extraArgs ...any) *Query[T] {

@@ -1334,7 +1334,18 @@ q.LeftJoinAs(o, &o.UserID, &u.ID,
     "AND o.tenant_id = ?", tenantID) // ← 显式 + 参数化
 ```
 
-**禁止**用 fmt.Sprintf 拼接用户输入到 extraSQL（SQL 注入）。跨表数据权限请使用 `DataRule.Table` 字段（见上方「跨表数据权限」章节），在 `DataRule.Column` 直接写 alias 前缀（如 `"o.tenant_id"`）的旧写法仍向后兼容，但新代码建议用 `Table`。
+副表软删除也需要显式选择。若要求保留 LEFT JOIN 主对象，将副表条件放在 ON 中：
+
+```go
+q.LeftJoinAs(o, &o.UserID, &u.ID,
+    "AND o.deleted_at IS NULL AND o.tenant_id = ?", tenantID)
+```
+
+此时没有副表、只有软删除副表或副表不满足机构条件的主对象仍会返回，副表投影列为 NULL。DTO 可用指针或 `sql.NullString` 等类型区分 NULL。未显式添加上述条件时，gplus 不自动过滤副表软删除或机构范围。
+
+`q.IsNull(&o.DeletedAt)`、`q.Eq(&o.TenantID, tenantID)` 写入 WHERE，可能排除主对象；不能为统一字段指针写法而把 ON 条件移到 WHERE。`DataRule.Table` 指定副表别名时也生成 WHERE 条件：它适合明确要求筛选主结果的规则，不替代保留主对象的 ON 过滤。Count 和列表都复用 JOIN 的 ON 条件；总数仍按实际查询的行 / 分组语义计算，不能把任意多对多 JOIN 当成主对象计数。
+
+**禁止**用 fmt.Sprintf 拼接用户输入到 extraSQL（SQL 注入）。`extraArgs` 按占位符顺序绑定值；extraSQL 中的列名、别名和 SQL 结构由调用方负责，不会获得字段指针同等的校验。需要 WHERE 范围的跨表权限时使用 `DataRule.Table`（见上方「跨表数据权限」章节）；`DataRule.Column` 直接写别名前缀的旧写法仍兼容，新代码建议用 `Table`。
 
 ## 许可证
 
