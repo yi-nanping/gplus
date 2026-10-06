@@ -61,6 +61,9 @@ type joinInfo struct {
 	args      []any  // 条件参数
 	aliasName string // v0.8.0：alias join 的别名（空字符串表示走旧 Join 路径）
 	rawSQL    bool   // v0.8.0：true 时 table 字段存储完整 JOIN SQL 片段，method/on 忽略
+	// 结构化 ON 路径在构建时按方言转义列名。
+	leftColumn, rightColumn string
+	onConditions            []condition
 }
 
 // DataRule 对外开放的核心规则字段
@@ -176,7 +179,7 @@ type ScopeBuilder struct {
 	// 链式 API 无法逐调用报错，错误累积到执行前统一拦截）。
 	errs []error
 	// core alias 体系状态（v0.8.0），跨对象共享（子查询/alias 实例共用同一 core）；
-	// 懒初始化可为 nil（And/Or 闭包的临时 sub 无 core）。
+	// 懒初始化可为 nil；And/Or 分组共享父对象的 core。
 	// 链级错误（alias 重名/撤销/字段未注册）经 core.appendErr 累积到 core.errs。
 	// 双轨规则：本体错误 → errs；链级错误 → core.errs；唯一强制拦截点为四条 Build* 闭包
 	// 入口的 trackedErr 短路（终端方法/ToDB 的 GetError 前置检查仅为报错体验优化）。
@@ -597,7 +600,18 @@ func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
 func (b *ScopeBuilder) applyJoins(db *gorm.DB) *gorm.DB {
 	for _, j := range b.joins {
 		var query string
-		if j.rawSQL {
+		args := j.args
+		if j.leftColumn != "" {
+			qL, qR := getQuoteChar(db)
+			query = fmt.Sprintf("%s %s AS %s ON %s = %s", j.method,
+				quoteColumn(j.table, qL, qR), quoteColumn(j.aliasName, qL, qR),
+				quoteColumn(j.leftColumn, qL, qR), quoteColumn(j.rightColumn, qL, qR))
+			if len(j.onConditions) > 0 {
+				extra, values := renderJoinOn(j.onConditions, qL, qR)
+				query += " AND (" + extra + ")"
+				args = values
+			}
+		} else if j.rawSQL {
 			// v0.8.0 alias join：table 字段存储完整 JOIN SQL 片段（含 AS alias ON ...）
 			query = j.table
 		} else if j.on != "" {
@@ -607,8 +621,8 @@ func (b *ScopeBuilder) applyJoins(db *gorm.DB) *gorm.DB {
 			// 无条件连接（如 Cross Join / Natural Join）
 			query = fmt.Sprintf("%s %s", j.method, j.table)
 		}
-		if len(j.args) > 0 {
-			db = db.Joins(query, j.args...)
+		if len(args) > 0 {
+			db = db.Joins(query, args...)
 		} else {
 			db = db.Joins(query)
 		}

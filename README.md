@@ -176,6 +176,22 @@ query.LeftJoin("profiles", "users.id = profiles.user_id")
 results, err := repo.List(query)
 ```
 
+### 字段和值的编译期类型约束
+
+包级 `Eq`、`In`、`Set` 在现有构建器方法上增加值类型约束，无需代码生成：
+
+```go
+q, m := gplus.NewQuery[User](ctx)
+gplus.Eq(q, &m.Age, 18)
+gplus.In(q, &m.Age, []int{18, 20})
+// gplus.Eq(q, &m.Age, "18") // 编译失败：Age 是 int
+
+u, um := gplus.NewUpdater[User](ctx)
+gplus.Set(u, &um.Name, "").Eq(&um.ID, 1) // 空字符串照常写入
+```
+
+`Eq` / `In` 可用于 Query、Updater 和 OnBuilder，并返回原构建器。字段指针仍须来自对应构建器的模型实例或同链 alias；泛型辅助函数不在编译期判断模型归属，也不改变 DataRule 和错误拦截契约。原有方法继续可用；后续直接调用 `.Eq(any, any)` 等方法仍遵循原方法的类型约束。
+
 ### 更新构建器
 
 ```go
@@ -371,6 +387,8 @@ err := repo.Chunk(q, 100, func(batch []User) error {
     return nil
 })
 ```
+
+`Query.Limit` 限制 Chunk 处理的总量，`Offset` 仅应用于首批；例如 `q.Limit(5)` 配合批次大小 2，最多返回 `[2, 2, 1]` 三批。`batchSize <= 0` 或回调为 nil 时返回错误，不执行查询。WithScope 内不要覆盖 Limit / Offset；复合主键和自定义排序仍遵循 Chunk 原有边界。
 
 ### 查找或创建 / 查找或更新
 
@@ -1113,6 +1131,10 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 > **注**：spec 早期版本曾假设 godoes/gorm-dameng 通过 transitive 引入 `gitee.com/chunanyong/dm`，故强调 GOPRIVATE fallback。**plan 阶段 Task 0 实测推翻此假设**——godoes/gorm-dameng v0.7.2 driver 实现自带在子包 `dm8/i18n/parser/security/util`，所有依赖在 github.com 与 golang.org 上，标准 GOPROXY 即可。
 
+## 开发测试
+
+默认 `go test ./...` 使用内存 SQLite，未配置 `TEST_MYSQL_DSN` / `TEST_PG_DSN` 的专项测试会跳过。使用一次性测试库设置 DSN 后，可通过 `TEST_DB=mysql` 或 `TEST_DB=pg` 运行共享测试；`TEST_DB=sqlite` 始终选择 SQLite。显式选择数据库却缺少对应 DSN、或已配置 DSN 但连接失败时，测试失败。CI 分别运行 SQLite、MySQL、PostgreSQL 的 race 测试；部分固定 SQLite 的测试仍只验证 SQLite。
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
@@ -1305,6 +1327,25 @@ q.LeftJoinAs(o, &o.UserID, &u.ID, "").
 //      LEFT JOIN orders AS o ON o.user_id = users.id
 //      WHERE o.amount = 100
 ```
+
+### 结构化 JOIN ON 条件
+
+`LeftJoinAsOn` / `InnerJoinAsOn` 为 Query 提供额外 ON 条件，支持 `Eq`、`In`、`IsNull`、`IsNotNull` 和嵌套 `And` / `Or`：
+
+```go
+q, u := gplus.NewQuery[User](ctx)
+o := gplus.As[Order](q, "o")
+q.LeftJoinAsOn(o, &u.ID, &o.UserID, func(on *gplus.OnBuilder) {
+    gplus.Eq(on, &o.TenantID, tenantID)
+    on.IsNull(&o.DeletedAt).And(func(group *gplus.OnBuilder) {
+        group.In(&o.Status, []string{"paid", "pending"})
+    })
+})
+```
+
+字段均使用当前查询链的指针，字符串列名和 nil 回调会被拒绝。列名在构建时按方言转义，值保持参数绑定。过滤条件留在 ON 中，LEFT JOIN 因而保留没有匹配副表的主记录；Count 和列表复用同一 ON 条件。副表 DataRule、软删除条件仍由调用方显式指定。
+
+这两个入口用于 Query 读取路径；Updater 沿用原有接口及方言限制。需要纯列等值连接或手写 SQL 时，继续使用现有 JoinAs 接口。
 
 ### 同表自连接
 
