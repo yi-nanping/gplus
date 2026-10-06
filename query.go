@@ -28,7 +28,6 @@ func NewQuery[T any](ctx context.Context) (*Query[T], *T) {
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
 			core:       newQueryCore(ctx),
-			errs:       make([]error, 0, 8),
 		},
 	}, model
 }
@@ -45,7 +44,6 @@ func NewQueryAs[T any](ctx context.Context, alias string) (*Query[T], *T) {
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
 			core:       newQueryCore(ctx),
-			errs:       make([]error, 0, 8),
 		},
 	}
 	// 复用 As 的全部校验逻辑（name 正则 / 链查重 / 创建独立实例）

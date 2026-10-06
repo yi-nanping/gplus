@@ -32,7 +32,6 @@ func NewUpdater[T any](ctx context.Context) (*Updater[T], *T) {
 		ScopeBuilder: ScopeBuilder{
 			conditions: make([]condition, 0, 8),
 			core:       newQueryCore(ctx),
-			errs:       make([]error, 0, 8),
 		},
 		setMap: make(map[string]any),
 	}, model
