@@ -5,29 +5,16 @@ import (
 	"os"
 	"testing"
 
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupPGDB 连接 PostgreSQL 并迁移表，返回 Repository。本地无 PG 时 Skip，CI 必跑。
+// setupPGDB 连接 PostgreSQL 并迁移表，返回 Repository。未配置 DSN 时 Skip，CI 必跑。
 //
 // 复用 MySQLUser struct（名字带 MySQL 但 GORM 反射方言无关，三方言均可）；
 // 表名 my_sql_users 在 PG 下也合法（lowercase snake_case）。
 func setupPGDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
 	t.Helper()
-	dsn := os.Getenv("TEST_PG_DSN")
-	if dsn == "" {
-		dsn = defaultPGDSN
-	}
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
-	if err != nil {
-		t.Skipf("PostgreSQL 不可用，跳过集成测试: %v", err)
-	}
-	applyDBPoolLimits(t, db)
+	db := openPG(t, os.Getenv("TEST_PG_DSN"))
 
 	if err := db.AutoMigrate(&MySQLUser{}); err != nil {
 		t.Fatalf("迁移 PG 表失败: %v", err)
@@ -264,16 +251,7 @@ func TestPG_JoinQuery(t *testing.T) {
 
 // TestPG_QuoteColumn 直接验证 PG 方言下转义符和 quoteColumn 输出
 func TestPG_QuoteColumn(t *testing.T) {
-	dsn := os.Getenv("TEST_PG_DSN")
-	if dsn == "" {
-		dsn = defaultPGDSN
-	}
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Skipf("PostgreSQL 不可用，跳过集成测试: %v", err)
-	}
-	applyDBPoolLimits(t, db)
+	db := openPG(t, os.Getenv("TEST_PG_DSN"))
 
 	t.Run("getQuoteChar_返回双引号", func(t *testing.T) {
 		qL, qR := getQuoteChar(db)

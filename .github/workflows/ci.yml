@@ -51,8 +51,19 @@ jobs:
       - name: 静态检查
         run: go vet ./...
 
-      - name: 运行测试
+      - name: 运行 SQLite 测试
         env:
+          TEST_DB: sqlite
+        run: go test -v -race ./...
+
+      - name: 运行 MySQL 测试
+        env:
+          TEST_DB: mysql
           TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local
+        run: go test -v -race ./...
+
+      - name: 运行 PostgreSQL 测试
+        env:
+          TEST_DB: pg
           TEST_PG_DSN: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=test sslmode=disable
         run: go test -v -race ./...

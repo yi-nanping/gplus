@@ -9,14 +9,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// openPGOrSkip 测试入口：连 PG 服务，本地无 PG 时跳过。CI 必走。
+// openPGOrSkip 测试入口：连 PG 服务，未配置 DSN 时跳过。CI 必走。
 func openPGOrSkip(t *testing.T) *gorm.DB {
 	t.Helper()
-	dsn := os.Getenv("TEST_PG_DSN")
-	if dsn == "" {
-		dsn = defaultPGDSN
-	}
-	return openPG(t, dsn)
+	return openPG(t, os.Getenv("TEST_PG_DSN"))
 }
 
 // TestPG_AliasSelfJoin_LeftJoinAs 验证 v0.8.0 alias 体系自连接在 PG 方言下生成正确 SQL。

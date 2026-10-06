@@ -12,12 +12,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// defaultMySQLDSN 本地开发默认 DSN，CI 通过 TEST_MYSQL_DSN 覆盖
-const defaultMySQLDSN = "root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
-
-// defaultPGDSN 本地开发默认 PostgreSQL DSN，CI 通过 TEST_PG_DSN 覆盖
-const defaultPGDSN = "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=test sslmode=disable"
-
 // applyDBPoolLimits 限制连接池规模并在测试结束时关闭底层 *sql.DB。
 // 解决多测试 case 反复 gorm.Open 导致连接数耗尽（如 MySQL 8.0 默认 max_connections=151
 // 或 PostgreSQL 默认 100）的问题。
@@ -34,28 +28,26 @@ func applyDBPoolLimits(t *testing.T, db *gorm.DB) {
 }
 
 // openDB 根据环境变量选择驱动：
-//   - TEST_DB=pg 或 TEST_PG_DSN 非空 → PostgreSQL
-//   - TEST_DB=mysql 或 TEST_MYSQL_DSN 非空 → MySQL
-//   - 否则 → SQLite (:memory:)
+//   - TEST_DB=sqlite → SQLite (:memory:)，忽略其他驱动 DSN
+//   - TEST_DB=pg/postgres → PostgreSQL；TEST_DB=mysql → MySQL
+//   - 未设置 TEST_DB 时，按 TEST_PG_DSN > TEST_MYSQL_DSN > SQLite 选择
 //
-// CI 同时设置 TEST_MYSQL_DSN 和 TEST_PG_DSN 时，TEST_DB 决定优先级；未设置 TEST_DB
-// 则按 PG > MySQL > SQLite 排查（PG 优先因为方言适配更"严格"，先暴露问题）。
+// 显式选择 MySQL/PG 但未配置对应 DSN，或已配置 DSN 的连接失败，均终止测试。
 func openDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
 	pgDSN := os.Getenv("TEST_PG_DSN")
 	mysqlDSN := os.Getenv("TEST_MYSQL_DSN")
 	switch os.Getenv("TEST_DB") {
+	case "sqlite":
+		return openSQLite(t)
 	case "pg", "postgres":
-		if pgDSN == "" {
-			pgDSN = defaultPGDSN
-		}
 		return openPG(t, pgDSN)
 	case "mysql":
-		if mysqlDSN == "" {
-			mysqlDSN = defaultMySQLDSN
-		}
 		return openMySQL(t, mysqlDSN)
+	case "":
+	default:
+		t.Fatalf("不支持的 TEST_DB: %q", os.Getenv("TEST_DB"))
 	}
 
 	if pgDSN != "" {
@@ -69,11 +61,17 @@ func openDB(t *testing.T) *gorm.DB {
 
 func openMySQL(t *testing.T, dsn string) *gorm.DB {
 	t.Helper()
+	if dsn == "" {
+		if os.Getenv("TEST_DB") == "mysql" {
+			t.Fatal("TEST_DB=mysql 必须配置 TEST_MYSQL_DSN")
+		}
+		t.Skip("未设置 TEST_MYSQL_DSN，跳过 MySQL 集成测试")
+	}
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
-		t.Skipf("MySQL 不可用，跳过: %v", err)
+		t.Fatalf("连接已配置的 MySQL 测试数据库失败: %v", err)
 	}
 	applyDBPoolLimits(t, db)
 	return db
@@ -81,11 +79,17 @@ func openMySQL(t *testing.T, dsn string) *gorm.DB {
 
 func openPG(t *testing.T, dsn string) *gorm.DB {
 	t.Helper()
+	if dsn == "" {
+		if selected := os.Getenv("TEST_DB"); selected == "pg" || selected == "postgres" {
+			t.Fatal("TEST_DB=pg/postgres 必须配置 TEST_PG_DSN")
+		}
+		t.Skip("未设置 TEST_PG_DSN，跳过 PostgreSQL 集成测试")
+	}
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
-		t.Skipf("PostgreSQL 不可用，跳过: %v", err)
+		t.Fatalf("连接已配置的 PostgreSQL 测试数据库失败: %v", err)
 	}
 	applyDBPoolLimits(t, db)
 	return db

@@ -6,9 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // MySQLUser 用于 MySQL 集成测试的实体
@@ -22,18 +20,7 @@ type MySQLUser struct {
 // setupMySQLDB 连接 MySQL 并迁移表，返回 Repository
 func setupMySQLDB(t *testing.T) (*Repository[int64, MySQLUser], *gorm.DB) {
 	t.Helper()
-	dsn := os.Getenv("TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = defaultMySQLDSN
-	}
-
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
-	if err != nil {
-		t.Skipf("MySQL 不可用，跳过集成测试: %v", err)
-	}
-	applyDBPoolLimits(t, db)
+	db := openMySQL(t, os.Getenv("TEST_MYSQL_DSN"))
 
 	if err := db.AutoMigrate(&MySQLUser{}); err != nil {
 		t.Fatalf("迁移 MySQL 表失败: %v", err)
@@ -292,9 +279,9 @@ func TestIntegration_SelfJoin_BothDialects(t *testing.T) {
 		}
 	})
 
-	// mysql：依赖 TEST_MYSQL_DSN 环境变量，不可用时跳过
+	// mysql：依赖 TEST_MYSQL_DSN 环境变量，未配置时跳过
 	t.Run("mysql", func(t *testing.T) {
-		_, db := setupMySQLDB(t) // 连不到 MySQL 时内部 Skipf
+		_, db := setupMySQLDB(t) // 未配置 DSN 时跳过，已配置但连接失败则终止测试
 
 		q, u := NewQueryAs[MySQLUser](context.Background(), "u")
 		boss := As[MySQLUser](q, "boss")
@@ -312,16 +299,7 @@ func TestIntegration_SelfJoin_BothDialects(t *testing.T) {
 
 // TestMySQL_QuoteColumn 直接验证 MySQL 方言下转义符和 quoteColumn 输出
 func TestMySQL_QuoteColumn(t *testing.T) {
-	dsn := os.Getenv("TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = defaultMySQLDSN
-	}
-
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Skipf("MySQL 不可用，跳过集成测试: %v", err)
-	}
-	applyDBPoolLimits(t, db)
+	db := openMySQL(t, os.Getenv("TEST_MYSQL_DSN"))
 
 	t.Run("getQuoteChar_返回反引号", func(t *testing.T) {
 		qL, qR := getQuoteChar(db)
