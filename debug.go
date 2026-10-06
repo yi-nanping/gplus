@@ -20,10 +20,12 @@ func (q *Query[T]) ToSQL(db *gorm.DB) (string, error) {
 		return "", err
 	}
 	var dest []T
-	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
-		return tx.WithContext(q.Context()).Model(new(T)).Scopes(q.BuildQuery()).Find(&dest)
-	})
-	return sql, nil
+	tx := db.Session(&gorm.Session{DryRun: true, SkipDefaultTransaction: true}).
+		WithContext(q.Context()).Model(new(T)).Scopes(q.BuildQuery()).Find(&dest)
+	if tx.Error != nil {
+		return "", tx.Error
+	}
+	return db.Dialector.Explain(tx.Statement.SQL.String(), tx.Statement.Vars...), nil
 }
 
 // ToCountSQL 将当前查询转换为 COUNT SQL 字符串，不执行实际查询。
@@ -39,10 +41,12 @@ func (q *Query[T]) ToCountSQL(db *gorm.DB) (string, error) {
 		return "", err
 	}
 	var count int64
-	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
-		return tx.WithContext(q.Context()).Model(new(T)).Scopes(q.BuildCount()).Count(&count)
-	})
-	return sql, nil
+	tx := db.Session(&gorm.Session{DryRun: true, SkipDefaultTransaction: true}).
+		WithContext(q.Context()).Model(new(T)).Scopes(q.BuildCount()).Count(&count)
+	if tx.Error != nil {
+		return "", tx.Error
+	}
+	return db.Dialector.Explain(tx.Statement.SQL.String(), tx.Statement.Vars...), nil
 }
 
 // ToSQL 将当前更新操作转换为 UPDATE SQL 字符串，不执行实际更新。
@@ -61,10 +65,12 @@ func (u *Updater[T]) ToSQL(db *gorm.DB) (string, error) {
 		return "", ErrUpdateNoCondition
 	}
 	var model T
-	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
-		return tx.WithContext(u.Context()).Model(&model).Scopes(u.BuildUpdate()).Updates(u.setMap)
-	})
-	return sql, nil
+	tx := db.Session(&gorm.Session{DryRun: true, SkipDefaultTransaction: true}).
+		WithContext(u.Context()).Model(&model).Scopes(u.BuildUpdate()).Updates(u.setMap)
+	if tx.Error != nil {
+		return "", tx.Error
+	}
+	return db.Dialector.Explain(tx.Statement.SQL.String(), tx.Statement.Vars...), nil
 }
 
 // ToSQL 将查询转换为 SELECT SQL 字符串，使用 Repository 内部的 DB，不执行实际查询。

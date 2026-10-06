@@ -152,6 +152,10 @@ func (q *Query[T]) Page(page, pageSize int) *Query[T] {
 		pageSize = 10
 	}
 	// limit 和 offset 是分页查询的关键参数
+	if page-1 > int(^uint(0)>>1)/pageSize {
+		q.errs = append(q.errs, errors.New("gplus: pagination offset overflows int"))
+		return q
+	}
 	limit := pageSize
 	offset := pageSize * (page - 1)
 	q.limit = limit
@@ -172,7 +176,7 @@ func (q *Query[T]) Table(name string) *Query[T] {
 // col 可能是字符串（直接列名）或字段指针（地址解析）：
 //   - 字符串：直接返回（保持 v0.6.0 字符串列名行为）
 //   - 指针且 q.core 已初始化：走 method resolveColumnName（alias 链 + 全局 cache）
-//   - q.core == nil（And/Or 内部子 Query）或非指针：回退包级 resolveColumnName（全局 cache）
+//   - q.core == nil 或非指针：回退包级 resolveColumnName（全局 cache）
 func (q *Query[T]) resolveColumnNameAny(col any) (string, error) {
 	if s, ok := col.(string); ok {
 		// 字符串列名直接校验并返回（与包级函数行为一致）
@@ -184,7 +188,7 @@ func (q *Query[T]) resolveColumnNameAny(col any) (string, error) {
 	if col == nil {
 		return "", ErrInvalidPointer
 	}
-	// q.core == nil 时（如 And/Or 嵌套块的临时子 Query），回退包级路径（全局 cache）
+	// 未初始化 core 的临时对象回退包级路径（全局 cache）
 	// 这等价于 v0.7.x 既有行为，不影响无 alias 场景
 	if q.core == nil {
 		return resolveColumnName(col)
@@ -910,7 +914,8 @@ func (q *Query[T]) And(fn func(sub *Query[T])) *Query[T] {
 		return q
 	}
 	sub := &Query[T]{
-		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
+		ctx:          q.ctx,
+		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0), core: q.core, tableName: q.tableName},
 	}
 	fn(sub)
 	if len(sub.errs) > 0 {
@@ -1001,7 +1006,8 @@ func (q *Query[T]) Or(fn func(sub *Query[T])) *Query[T] {
 		return q
 	}
 	sub := &Query[T]{
-		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
+		ctx:          q.ctx,
+		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0), core: q.core, tableName: q.tableName},
 	}
 	fn(sub)
 	if len(sub.errs) > 0 {

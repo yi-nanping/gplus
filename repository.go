@@ -281,8 +281,11 @@ func (r *Repository[D, T]) ExistsTx(q *Query[T], tx *gorm.DB) (bool, error) {
 	if err := q.DataRuleBuilder().GetError(); err != nil {
 		return false, err
 	}
+	// 仅调整执行用副本，避免 BuildQuery 的延迟 scope 覆盖单行限制。
+	query := *q
+	query.limit = 1
 	var tmp []T
-	err := r.dbResolver(q.Context(), tx).Scopes(q.BuildQuery()).Limit(1).Find(&tmp).Error
+	err := r.dbResolver(q.Context(), tx).Scopes(query.BuildQuery()).Limit(1).Find(&tmp).Error
 	if err != nil {
 		return false, err
 	}
@@ -787,6 +790,7 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 
 // Chunk 分批处理查询结果，每批调用 fn 一次。fn 返回非 nil 错误时立即终止并返回该错误。
 // batchSize 建议在 100-1000 之间，过小会增加 DB 往返次数，过大会占用大量内存。
+// Query.Limit 限制处理总量，Offset 仅应用于第一批；不修改 Query 的分页参数。
 //
 // 内部基于 GORM FindInBatches，使用主键游标分页（WHERE id > lastID），性能优于 OFFSET 分页。
 // 主键类型说明：
@@ -803,14 +807,30 @@ func (r *Repository[D, T]) ChunkTx(q *Query[T], batchSize int, tx *gorm.DB, fn f
 	if q == nil {
 		return ErrQueryNil
 	}
+	if batchSize <= 0 {
+		return fmt.Errorf("gplus: batchSize must be greater than 0, got %d", batchSize)
+	}
+	if fn == nil {
+		return errors.New("gplus: Chunk fn cannot be nil")
+	}
 	if err := q.GetError(); err != nil {
 		return err
 	}
 	if err := q.DataRuleBuilder().GetError(); err != nil {
 		return err
 	}
+	// FindInBatches 需要在执行 scope 前读取总量和初始偏移；后续由其控制每批分页。
+	query := *q
+	query.limit, query.offset = 0, 0
+	db := r.dbResolver(q.Context(), tx).Model(new(T))
+	if q.limit > 0 {
+		db = db.Limit(q.limit)
+	}
+	if q.offset > 0 {
+		db = db.Offset(q.offset)
+	}
 	var batch []T
-	result := r.dbResolver(q.Context(), tx).Model(new(T)).Scopes(q.BuildQuery()).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
+	result := db.Scopes(query.BuildQuery()).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
 		return fn(batch)
 	})
 	return result.Error

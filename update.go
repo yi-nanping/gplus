@@ -527,7 +527,8 @@ func (u *Updater[T]) And(fn func(sub *Updater[T])) *Updater[T] {
 	}
 	// 创建一个临时的子 Updater，共享泛型类型 T
 	sub := &Updater[T]{
-		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
+		ctx:          u.ctx,
+		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0), core: u.core, tableName: u.tableName},
 	}
 	fn(sub)
 	if len(sub.errs) > 0 {
@@ -549,7 +550,8 @@ func (u *Updater[T]) Or(fn func(sub *Updater[T])) *Updater[T] {
 		return u
 	}
 	sub := &Updater[T]{
-		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0)},
+		ctx:          u.ctx,
+		ScopeBuilder: ScopeBuilder{conditions: make([]condition, 0), core: u.core, tableName: u.tableName},
 	}
 	fn(sub)
 	if len(sub.errs) > 0 {

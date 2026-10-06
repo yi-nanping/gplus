@@ -3,10 +3,78 @@ package gplus
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+func TestExists_QueryLimitReadsOneRow(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	for i := 0; i < 7; i++ {
+		if err := db.Create(&TestUser{Age: i}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var queryRows int64
+	var sql string
+	var sqlLimit int
+	if err := db.Callback().Query().After("gorm:query").Register("contract:exists", func(tx *gorm.DB) {
+		queryRows += tx.RowsAffected
+		sql = tx.Statement.SQL.String()
+		limit := tx.Statement.Clauses["LIMIT"].Expression.(clause.Limit)
+		sqlLimit = *limit.Limit
+	}); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := NewQuery[TestUser](context.Background())
+	q.Limit(5)
+	exists, err := repo.Exists(q)
+	if err != nil || !exists {
+		t.Fatalf("Exists=%v err=%v", exists, err)
+	}
+	if queryRows != 1 || sqlLimit != 1 || !strings.Contains(strings.ToUpper(sql), "LIMIT") {
+		t.Fatalf("读取行数=%d SQL LIMIT=%d SQL=%q，期望只读取一行", queryRows, sqlLimit, sql)
+	}
+	if q.limit != 5 {
+		t.Fatal("Exists 修改了 Query Limit")
+	}
+}
+
+func TestExists_QueryShapeAndDataRulePreserved(t *testing.T) {
+	repo, db := setupTestDB[TestUser](t)
+	for _, age := range []int{10, 10, 20, 20, 30, 30} {
+		if err := db.Create(&TestUser{Age: age}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{{Column: "age", Condition: OpLe, Value: "20"}})
+	var got []TestUser
+	if err := db.Callback().Query().After("gorm:query").Register("contract:exists_shape", func(tx *gorm.DB) {
+		if tx.Statement.Context != ctx {
+			t.Error("Exists 丢失 Query Context")
+		}
+		if tx.Statement.Schema == nil || tx.Statement.Schema.ModelType != reflect.TypeOf(TestUser{}) {
+			t.Error("Exists 丢失模型类型")
+		}
+		got = append(got, (*tx.Statement.Dest.(*[]TestUser))...)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	q, m := NewQuery[TestUser](ctx)
+	q.Select(&m.Age).Group(&m.Age).Having("COUNT(*)", OpGt, 1).Order(&m.Age, true).Offset(1).Limit(5)
+	exists, err := repo.Exists(q)
+	if err != nil || !exists || len(got) != 1 || got[0].Age != 20 {
+		t.Fatalf("Exists=%v err=%v rows=%v，期望分组过滤后第二组 age=20", exists, err, got)
+	}
+	q.Offset(2)
+	exists, err = repo.Exists(q)
+	if err != nil || exists {
+		t.Fatalf("DataRule 应过滤第三组 age=30，Exists=%v err=%v", exists, err)
+	}
+}
 
 func TestExists_NilQuery(t *testing.T) {
 	repo, _ := setupTestDB[TestUser](t)
