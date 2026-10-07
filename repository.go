@@ -791,6 +791,8 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 // Chunk 分批处理查询结果，每批调用 fn 一次。fn 返回非 nil 错误时立即终止并返回该错误。
 // batchSize 建议在 100-1000 之间，过小会增加 DB 往返次数，过大会占用大量内存。
 // Query.Limit 限制处理总量，Offset 仅应用于第一批；不修改 Query 的分页参数。
+// 回调可在内存中重排批次或修改标量、字节切片主键；游标使用回调前的末行主键。
+// 后续查询不复用回调批次切片；含可变引用的自定义主键须保持其内部状态不变。
 //
 // 内部基于 GORM FindInBatches，使用主键游标分页（WHERE id > lastID），性能优于 OFFSET 分页。
 // 主键类型说明：
@@ -830,8 +832,35 @@ func (r *Repository[D, T]) ChunkTx(q *Query[T], batchSize int, tx *gorm.DB, fn f
 		db = db.Offset(q.offset)
 	}
 	var batch []T
-	result := db.Scopes(query.BuildQuery()).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
-		return fn(batch)
+	processed := 0
+	result := db.Scopes(query.BuildQuery()).FindInBatches(&batch, batchSize, func(batchDB *gorm.DB, _ int) error {
+		processed += len(batch)
+		var cursor T
+		var cursorErr error
+		// FindInBatches 在回调后读取末行主键；仅在还需翻页时保存独立游标记录。
+		if len(batch) == batchSize && (q.limit <= 0 || processed < q.limit) && batchDB.Statement.Schema.PrioritizedPrimaryField != nil {
+			field := batchDB.Statement.Schema.PrioritizedPrimaryField
+			last := reflect.ValueOf(batch[len(batch)-1])
+			if _, zero := field.ValueOf(q.Context(), last); !zero {
+				value := field.ReflectValueOf(q.Context(), last)
+				// 解引用标量主键，避免复制嵌入指针或主键指针后仍共享回调的数据。
+				for value.Kind() == reflect.Ptr && !value.IsNil() {
+					value = value.Elem()
+				}
+				if value.Kind() == reflect.Slice {
+					copyValue := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+					reflect.Copy(copyValue, value)
+					value = copyValue
+				}
+				cursorErr = field.Set(q.Context(), reflect.ValueOf(&cursor).Elem(), value.Interface())
+			}
+		}
+		if err := fn(batch); err != nil {
+			return err
+		}
+		// 替换内部切片，而非回写回调保留的数据；GORM 下一批查询只复用游标记录。
+		batch = []T{cursor}
+		return cursorErr
 	})
 	return result.Error
 }
