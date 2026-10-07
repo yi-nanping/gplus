@@ -37,7 +37,7 @@ func TestNewQueryAs_ConflictsWithSideAlias(t *testing.T) {
 }
 
 func TestRepository_NewQueryAs(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q, u := repo.NewQueryAs(context.Background(), "u")
 	col, err := q.resolveColumnName(uintptrOf(&u.Name))
 	if err != nil {

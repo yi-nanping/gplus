@@ -3,8 +3,6 @@ package gplus
 import (
 	"context"
 	"testing"
-
-	"gorm.io/gorm"
 )
 
 // invalidDataRuleCtx 返回含非法列名 DataRule 的 context，
@@ -21,10 +19,8 @@ func builderErrQuery[T any]() *Query[T] {
 	return q
 }
 
-// --- repo.NewQuery / repo.NewUpdater (0%) ---
-
 func TestRepository_NewQuery_NewUpdater(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := context.Background()
 
 	t.Run("NewQuery 与 gplus.NewQuery 等价", func(t *testing.T) {
@@ -50,10 +46,8 @@ func TestRepository_NewQuery_NewUpdater(t *testing.T) {
 	})
 }
 
-// --- GetOneTx / LastTx / CountTx：builder error 路径 ---
-
 func TestGetOneTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	_, err := repo.GetOne(q)
 	if err == nil {
@@ -62,7 +56,7 @@ func TestGetOneTx_BuilderError(t *testing.T) {
 }
 
 func TestLastTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	_, err := repo.Last(q)
 	if err == nil {
@@ -71,7 +65,7 @@ func TestLastTx_BuilderError(t *testing.T) {
 }
 
 func TestCountTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	_, err := repo.Count(q)
 	if err == nil {
@@ -79,10 +73,8 @@ func TestCountTx_BuilderError(t *testing.T) {
 	}
 }
 
-// --- ExistsTx：builder error + DataRule error ---
-
 func TestExistsTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	_, err := repo.Exists(q)
 	if err == nil {
@@ -91,7 +83,7 @@ func TestExistsTx_BuilderError(t *testing.T) {
 }
 
 func TestExistsTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, _ := NewQuery[TestUser](ctx)
 	_, err := repo.Exists(q)
@@ -100,10 +92,8 @@ func TestExistsTx_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- PluckTx：builder error + DataRule error ---
-
 func TestPluckTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	m := getModelInstance[TestUser]()
 	_, err := Pluck[TestUser, string, int64](repo, q, &m.Name)
@@ -113,7 +103,7 @@ func TestPluckTx_BuilderError(t *testing.T) {
 }
 
 func TestPluckTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, _ := NewQuery[TestUser](ctx)
 	m := getModelInstance[TestUser]()
@@ -123,10 +113,8 @@ func TestPluckTx_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- PageTx：builder error ---
-
 func TestPageTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	_, _, err := repo.Page(q, false)
 	if err == nil {
@@ -134,10 +122,8 @@ func TestPageTx_BuilderError(t *testing.T) {
 	}
 }
 
-// --- ChunkTx：DataRule error ---
-
 func TestChunkTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, _ := NewQuery[TestUser](ctx)
 	err := repo.Chunk(q, 10, func([]TestUser) error { return nil })
@@ -146,10 +132,8 @@ func TestChunkTx_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- IncrByTx：DataRule error ---
-
 func TestIncrByTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	u, m := NewUpdater[TestUser](ctx)
 	u.Eq(&m.ID, 1)
@@ -159,10 +143,8 @@ func TestIncrByTx_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- RestoreByCondTx：DataRule error ---
-
 func TestRestoreByCondTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, m := NewQuery[TestUser](ctx)
 	q.Eq(&m.ID, 1)
@@ -172,10 +154,8 @@ func TestRestoreByCondTx_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- aggregate：builder error + resolveColumnName error ---
-
 func TestAggregate_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q := builderErrQuery[TestUser]()
 	_, err := Sum[TestUser, int64, int64](repo, q, "score")
 	if err == nil {
@@ -184,7 +164,7 @@ func TestAggregate_BuilderError(t *testing.T) {
 }
 
 func TestAggregate_InvalidColumn(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q, _ := NewQuery[TestUser](context.Background())
 	// 传入空字符串触发 resolveColumnName 的 ErrColumnEmpty 路径
 	_, err := Sum[TestUser, int64, int64](repo, q, "")
@@ -193,10 +173,8 @@ func TestAggregate_InvalidColumn(t *testing.T) {
 	}
 }
 
-// --- UpdateByCondTx：DataRule error ---
-
 func TestUpdateByCondTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	u, m := NewUpdater[TestUser](ctx)
 	u.Set(&m.Name, "x").Eq(&m.ID, 1)
@@ -205,8 +183,6 @@ func TestUpdateByCondTx_DataRuleError(t *testing.T) {
 		t.Error("UpdateByCond 非法 DataRule 应返回错误")
 	}
 }
-
-// --- toDBName：三连大写字母触发 lastCase && nextCase 分支 ---
 
 func TestToDBName_ConsecutiveUppercase(t *testing.T) {
 	cases := []struct {
@@ -228,45 +204,21 @@ func TestToDBName_ConsecutiveUppercase(t *testing.T) {
 	}
 }
 
-// --- applyPreloads：空 query 字符串的 continue 分支 ---
-
 func TestApplyPreloads_EmptyQuery(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "PreloadUser", Age: 20})
-
-	q, _ := NewQuery[TestUser](ctx)
-	// 直接注入空 query 的 preload 项，触发 applyPreloads 的 continue 分支
+	db := newDryRunDB(t)
+	q, _ := NewQuery[TestUser](context.Background())
+	// 直接注入空 preload，保留公共接口无法构造的防御分支。
 	q.preloads = append(q.preloads, preloadInfo{query: ""})
-	// 再注入一个合法的（无关联表，但覆盖非空路径不报 SQL 错误）
-	list, err := repo.List(q)
-	if err != nil {
-		t.Errorf("空 preload query 应被跳过，不应报错: %v", err)
+	result := db.Model(new(TestUser)).Scopes(q.BuildQuery()).Find(&[]TestUser{})
+	if result.Error != nil || result.Statement.SQL.Len() == 0 || len(result.Statement.Preloads) != 0 {
+		t.Fatalf("empty preload should be skipped: error=%v SQL=%s preloads=%v", result.Error, result.Statement.SQL.String(), result.Statement.Preloads)
 	}
-	if len(list) != 1 {
-		t.Errorf("期望 1 条记录，实际 %d", len(list))
-	}
-}
-
-// --- applySelects Omit 路径：Query.Omit + repo.List ---
-
-func TestApplySelects_OmitPath(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "OmitUser", Age: 30})
-
-	q, m := NewQuery[TestUser](ctx)
-	q.Omit(&m.Email) // 触发 applySelects 的 len(b.omits)>0 分支
-	list, err := repo.List(q)
-	if err != nil {
-		t.Errorf("Omit 不应报错: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("期望 1 条，实际 %d", len(list))
+	plain, _ := NewQuery[TestUser](context.Background())
+	baseline := newDryRunDB(t).Model(new(TestUser)).Scopes(plain.BuildQuery()).Find(&[]TestUser{})
+	if baseline.Error != nil || baseline.Statement.SQL.String() != result.Statement.SQL.String() {
+		t.Fatalf("空 preload 应与未配置 preload 构建相同 SQL: baseline=%s actual=%s err=%v", baseline.Statement.SQL.String(), result.Statement.SQL.String(), baseline.Error)
 	}
 }
-
-// --- quoteColumns：空切片早返回分支 ---
 
 func TestQuoteColumns_EmptySlice(t *testing.T) {
 	result := quoteColumns([]string{}, "`", "`")
@@ -280,28 +232,8 @@ func TestQuoteColumns_EmptySlice(t *testing.T) {
 	}
 }
 
-// --- GetByLock：DataRule error ---
-
-func TestGetByLock_DataRuleError(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := invalidDataRuleCtx()
-
-	var err error
-	_ = db.Transaction(func(tx *gorm.DB) error {
-		q, m := NewQuery[TestUser](ctx)
-		q.Eq(&m.ID, 1)
-		_, err = repo.GetByLock(q, tx)
-		return err
-	})
-	if err == nil {
-		t.Error("GetByLock 非法 DataRule 应返回错误")
-	}
-}
-
-// --- LastTx：DataRule error ---
-
 func TestLastTx_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, _ := NewQuery[TestUser](ctx)
 	_, err := repo.Last(q)
@@ -310,10 +242,8 @@ func TestLastTx_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- DeleteByCondTx：q.GetError() 路径（有条件+有错误）---
-
 func TestDeleteByCondTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := context.Background()
 	// 先添加有效条件（不触发 IsEmpty），再添加无效 Select 写入 errs
 	q, m := NewQuery[TestUser](ctx)
@@ -325,10 +255,8 @@ func TestDeleteByCondTx_BuilderError(t *testing.T) {
 	}
 }
 
-// --- UpdateByCondTx：u.GetError() 路径（有 setMap+有错误）---
-
 func TestUpdateByCondTx_BuilderError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := context.Background()
 	u, m := NewUpdater[TestUser](ctx)
 	u.Set(&m.Name, "x") // setMap 非空
@@ -340,10 +268,8 @@ func TestUpdateByCondTx_BuilderError(t *testing.T) {
 	}
 }
 
-// --- FirstOrCreate：DataRule error ---
-
 func TestFirstOrCreate_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, _ := NewQuery[TestUser](ctx)
 	_, _, err := repo.FirstOrCreate(q, &TestUser{Name: "x"})
@@ -352,10 +278,8 @@ func TestFirstOrCreate_DataRuleError(t *testing.T) {
 	}
 }
 
-// --- FirstOrUpdate：DataRule error ---
-
 func TestFirstOrUpdate_DataRuleError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	ctx := invalidDataRuleCtx()
 	q, _ := NewQuery[TestUser](ctx)
 	u, um := NewUpdater[TestUser](context.Background())

@@ -11,7 +11,7 @@ import (
 // 注意：SQLite 不支持 UPDATE ... JOIN 语法，GORM 在 Updates 路径下会忽略 JOIN。
 // 因此本测试直接检查 Updater 内部的 joins 字段，确保 JOIN SQL 片段正确生成。
 func TestUpdater_LeftJoinAs_BasicSQL(t *testing.T) {
-	_, db := setupTestDB[TestUser](t)
+	db := newDryRunDB(t)
 	u, ut := NewUpdater[TestUser](context.Background())
 	o := As[Order](u, "o")
 	u.LeftJoinAs(o, &o.UserID, &ut.ID, "")
@@ -47,7 +47,7 @@ func TestUpdater_LeftJoinAs_BasicSQL(t *testing.T) {
 
 // TestUpdater_InnerJoinAs 验证 InnerJoinAs 正确构建 join 片段。
 func TestUpdater_InnerJoinAs(t *testing.T) {
-	_, db := setupTestDB[TestUser](t)
+	db := newDryRunDB(t)
 	u, ut := NewUpdater[TestUser](context.Background())
 	o := As[Order](u, "o")
 	u.InnerJoinAs(o, &o.UserID, &ut.ID, "")
@@ -127,7 +127,7 @@ func TestUpdater_Clear_AliasUseAfterClear_N4(t *testing.T) {
 
 // TestUpdater_Set_AliasFieldResolves 验证 Updater.Set 在 alias 字段下正确解析为 alias.col
 func TestUpdater_Set_AliasFieldResolves(t *testing.T) {
-	_, db := setupTestDB[TestUser](t)
+	db := newDryRunDB(t)
 	u, ut := NewUpdater[TestUser](context.Background())
 	o := As[Order](u, "o")
 	u.LeftJoinAs(o, &o.UserID, &ut.ID, "")

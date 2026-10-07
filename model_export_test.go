@@ -18,7 +18,7 @@ func (round1FreshModel) TableName() string { return "round1_fresh_model" }
 // AC-1：Model[T]() 返回与 NewQuery 同一规范单例指针，字段地址可解析为列名；并发安全。
 func TestModel_返回规范单例且与NewQuery指针一致并发安全(t *testing.T) {
 	// Arrange
-	repo, _ := setupTestDB[Closure](t)
+	repo := NewRepository[int64, Closure](nil)
 	ctx := context.Background()
 
 	// Act

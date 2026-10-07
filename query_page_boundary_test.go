@@ -2,13 +2,12 @@ package gplus
 
 import (
 	"context"
-	"testing"
-
 	"gorm.io/gorm"
+	"testing"
 )
 
 func TestPagination_OffsetOverflow(t *testing.T) {
-	_, db := setupTestDB[TestUser](t)
+	db := newDryRunDB(t)
 	maxInt := int(^uint(0) >> 1)
 	q, _ := NewQuery[TestUser](context.Background())
 	q.Page(maxInt, 2)

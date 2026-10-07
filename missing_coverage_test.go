@@ -3,17 +3,13 @@ package gplus
 import (
 	"context"
 	"errors"
-	"strings"
-	"sync"
-	"testing"
-
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
+	"strings"
+	"sync"
+	"testing"
 )
-
-// --- BETWEEN nil 参数写入 errs ---
 
 func TestQuery_Between_NilArgs(t *testing.T) {
 	ctx := context.Background()
@@ -71,8 +67,6 @@ func TestUpdater_Between_NilArgs(t *testing.T) {
 	}
 }
 
-// --- DataRule NOT IN / BETWEEN 格式错误 ---
-
 func TestDataRule_NotIn(t *testing.T) {
 	ctx := context.Background()
 
@@ -128,8 +122,6 @@ func TestDataRule_Between_InvalidFormat(t *testing.T) {
 	})
 }
 
-// --- getModelInstance 并发初始化安全 ---
-
 func TestGetModelInstance_Concurrent(t *testing.T) {
 	// 先清理缓存，确保触发慢路径
 	unregisterModel[TestUser]()
@@ -161,38 +153,6 @@ func TestGetModelInstance_Concurrent(t *testing.T) {
 		t.Errorf("并发初始化后字段应可解析，得到错误: %v", err)
 	}
 }
-
-// --- DeleteByCondTx Unscoped + 空条件保护 ---
-
-func TestDeleteByCondTx_UnscopedEmptyReturnsError(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
-	ctx := context.Background()
-
-	t.Run("Unscoped + 空条件返回 ErrDeleteEmpty", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.Unscoped()
-		_, err := repo.DeleteByCondTx(q, nil)
-		if err != ErrDeleteEmpty {
-			t.Errorf("期望 ErrDeleteEmpty，实际: %v", err)
-		}
-	})
-
-	t.Run("Unscoped + 有条件正常执行", func(t *testing.T) {
-		repo2, db := setupTestDB[TestUser](t)
-		db.Create(&TestUser{Name: "PhysDelete", Age: 99})
-		q, m := NewQuery[TestUser](ctx)
-		q.Eq(&m.Name, "PhysDelete").Unscoped()
-		affected, err := repo2.DeleteByCondTx(q, nil)
-		if err != nil {
-			t.Errorf("Unscoped + 有条件不应报错: %v", err)
-		}
-		if affected != 1 {
-			t.Errorf("期望删除 1 条，实际 %d", affected)
-		}
-	})
-}
-
-// --- Updater Select/Omit 无效列指针写入 errs ---
 
 func TestUpdater_Select_InvalidPointer(t *testing.T) {
 	ctx := context.Background()
@@ -238,10 +198,8 @@ func TestUpdater_Omit_InvalidPointer(t *testing.T) {
 	})
 }
 
-// --- 非法 DataRule 通过 Repository 方法应返回错误（回归测试）---
-
 func TestDataRule_InvalidCondition_Repository(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 
 	invalidRules := []DataRule{{Column: "age", Condition: "INVALID_OP", Value: "18"}}
 	ctx := context.WithValue(context.Background(), DataRuleKey, invalidRules)
@@ -297,224 +255,7 @@ func TestDataRule_InvalidCondition_Repository(t *testing.T) {
 	})
 }
 
-// TestDataRule_UpdateByCond_Applied 验证 DataRule 条件正确追加到 UPDATE WHERE 子句
-func TestDataRule_UpdateByCond_Applied(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
-	ctx := context.Background()
-
-	// 插入两条数据
-	_ = repo.SaveBatch(ctx, []TestUser{{Name: "Alice", Age: 20}, {Name: "Bob", Age: 30}})
-
-	// 注入 DataRule：只允许操作 age >= 25 的记录
-	rules := []DataRule{{Column: "age", Condition: ">=", Value: "25"}}
-	ctxWithRule := context.WithValue(ctx, DataRuleKey, rules)
-
-	u, model := NewUpdater[TestUser](ctxWithRule)
-	u.Set(&model.Name, "Updated").
-		Ge(&model.Age, 1) // 宽泛条件，DataRule 会追加 age >= 25
-
-	affected, err := repo.UpdateByCond(u)
-	if err != nil {
-		t.Fatalf("UpdateByCond 不应报错: %v", err)
-	}
-	// DataRule age >= 25 只命中 Bob(30)，Alice(20) 不受影响
-	if affected != 1 {
-		t.Errorf("期望影响 1 行，实际 %d", affected)
-	}
-
-	// 验证 Alice 未被更新
-	q, qModel := NewQuery[TestUser](ctx)
-	q.Eq(&qModel.Name, "Alice")
-	list, _ := repo.List(q)
-	if len(list) != 1 {
-		t.Errorf("Alice 应仍存在，实际找到 %d 条", len(list))
-	}
-}
-
-// --- Upsert / UpsertBatch ---
-
-func TestRepository_Upsert(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
-	ctx := context.Background()
-
-	t.Run("Upsert 无主键执行 INSERT", func(t *testing.T) {
-		u := &TestUser{Name: "UpsertNew", Age: 10}
-		if err := repo.Upsert(ctx, u); err != nil {
-			t.Fatalf("Upsert 不应报错: %v", err)
-		}
-		if u.ID == 0 {
-			t.Error("Upsert 后应分配主键")
-		}
-	})
-
-	t.Run("Upsert 有主键执行 UPDATE", func(t *testing.T) {
-		// 先插入
-		u := &TestUser{Name: "Before", Age: 1}
-		_ = repo.Save(ctx, u)
-		// 再 upsert 更新
-		u.Name = "After"
-		if err := repo.Upsert(ctx, u); err != nil {
-			t.Fatalf("Upsert 更新不应报错: %v", err)
-		}
-		got, err := repo.GetById(ctx, u.ID)
-		if err != nil {
-			t.Fatalf("GetById 失败: %v", err)
-		}
-		if got.Name != "After" {
-			t.Errorf("期望 Name=After，实际 %s", got.Name)
-		}
-	})
-
-	t.Run("UpsertTx 事务", func(t *testing.T) {
-		repo2, db := setupTestDB[TestUser](t)
-		u := &TestUser{Name: "UpsertTx", Age: 5}
-		if err := repo2.UpsertTx(ctx, u, db); err != nil {
-			t.Fatalf("UpsertTx 不应报错: %v", err)
-		}
-	})
-
-	t.Run("UpsertBatch 批量", func(t *testing.T) {
-		repo3, _ := setupTestDB[TestUser](t)
-		users := []TestUser{{Name: "UB1", Age: 1}, {Name: "UB2", Age: 2}}
-		if err := repo3.UpsertBatch(ctx, users); err != nil {
-			t.Fatalf("UpsertBatch 不应报错: %v", err)
-		}
-		q, _ := NewQuery[TestUser](ctx)
-		list, _ := repo3.List(q)
-		if len(list) != 2 {
-			t.Errorf("期望 2 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("UpsertBatchTx 事务批量", func(t *testing.T) {
-		repo4, db := setupTestDB[TestUser](t)
-		users := []TestUser{{Name: "UBTx", Age: 99}}
-		if err := repo4.UpsertBatchTx(ctx, users, db); err != nil {
-			t.Fatalf("UpsertBatchTx 不应报错: %v", err)
-		}
-	})
-}
-
-// --- SaveBatch / CreateBatch 批量写 ---
-
-func TestRepository_SaveBatch(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
-	ctx := context.Background()
-
-	t.Run("SaveBatch 正常插入", func(t *testing.T) {
-		users := []TestUser{{Name: "Batch1", Age: 10}, {Name: "Batch2", Age: 20}}
-		if err := repo.SaveBatch(ctx, users); err != nil {
-			t.Fatalf("SaveBatch 不应报错: %v", err)
-		}
-		q, _ := NewQuery[TestUser](ctx)
-		list, _ := repo.List(q)
-		if len(list) != 2 {
-			t.Errorf("期望 2 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("SaveBatchTx 事务插入", func(t *testing.T) {
-		repo2, db := setupTestDB[TestUser](t)
-		more := []TestUser{{Name: "TxBatch", Age: 99}}
-		if err := repo2.SaveBatchTx(ctx, more, db); err != nil {
-			t.Fatalf("SaveBatchTx 不应报错: %v", err)
-		}
-	})
-}
-
-func TestRepository_CreateBatch(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
-	ctx := context.Background()
-
-	t.Run("CreateBatch 分批插入", func(t *testing.T) {
-		users := []*TestUser{{Name: "CB1", Age: 11}, {Name: "CB2", Age: 22}, {Name: "CB3", Age: 33}}
-		if err := repo.CreateBatch(ctx, users, 2); err != nil {
-			t.Fatalf("CreateBatch 不应报错: %v", err)
-		}
-		q, _ := NewQuery[TestUser](ctx)
-		list, _ := repo.List(q)
-		if len(list) != 3 {
-			t.Errorf("期望 3 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("CreateBatchTx 事务分批插入", func(t *testing.T) {
-		repo2, db := setupTestDB[TestUser](t)
-		more := []*TestUser{{Name: "CBTx", Age: 55}}
-		if err := repo2.CreateBatchTx(ctx, more, 1, db); err != nil {
-			t.Fatalf("CreateBatchTx 不应报错: %v", err)
-		}
-	})
-
-	t.Run("CreateBatch batchSize<=0 应返回错误", func(t *testing.T) {
-		users := []*TestUser{{Name: "X", Age: 1}}
-		if err := repo.CreateBatch(ctx, users, 0); err == nil {
-			t.Error("batchSize=0 应返回错误")
-		}
-		if err := repo.CreateBatch(ctx, users, -1); err == nil {
-			t.Error("batchSize=-1 应返回错误")
-		}
-		if err := repo.CreateBatchTx(ctx, users, 0, nil); err == nil {
-			t.Error("CreateBatchTx batchSize=0 应返回错误")
-		}
-	})
-}
-
-// --- GetByLock 悲观锁 ---
-
 var errTestSentinel = errors.New("test error")
-
-func TestRepository_GetByLock(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("tx 为 nil 返回 ErrTransactionReq", func(t *testing.T) {
-		repo, _ := setupTestDB[TestUser](t)
-		q, _ := NewQuery[TestUser](ctx)
-		_, err := repo.GetByLock(q, nil)
-		if err != ErrTransactionReq {
-			t.Errorf("期望 ErrTransactionReq，实际: %v", err)
-		}
-	})
-
-	t.Run("q 为 nil 返回 ErrQueryNil", func(t *testing.T) {
-		repo, db := setupTestDB[TestUser](t)
-		_, err := repo.GetByLock(nil, db)
-		if err != ErrQueryNil {
-			t.Errorf("期望 ErrQueryNil，实际: %v", err)
-		}
-	})
-
-	t.Run("q 有错误返回 builder 错误", func(t *testing.T) {
-		repo, db := setupTestDB[TestUser](t)
-		q, _ := NewQuery[TestUser](ctx)
-		q.errs = append(q.errs, errTestSentinel)
-		_, err := repo.GetByLock(q, db)
-		if err == nil {
-			t.Error("builder 有错误时应返回错误")
-		}
-	})
-
-	t.Run("正常带锁查询（自动补 LockWrite）", func(t *testing.T) {
-		repo, db := setupTestDB[TestUser](t)
-		db.Create(&TestUser{Name: "LockUser", Age: 30})
-		var found *TestUser
-		var lockErr error
-		_ = db.Transaction(func(tx *gorm.DB) error {
-			q, m := NewQuery[TestUser](ctx)
-			q.Eq(&m.Name, "LockUser")
-			found, lockErr = repo.GetByLock(q, tx)
-			return lockErr
-		})
-		if lockErr != nil {
-			t.Fatalf("GetByLock 不应报错: %v", lockErr)
-		}
-		if found == nil || found.Name != "LockUser" {
-			t.Error("GetByLock 应返回正确记录")
-		}
-	})
-}
-
-// --- LeftJoin / RightJoin / LockWithOpt ---
 
 func TestQuery_LeftRightJoin(t *testing.T) {
 	ctx := context.Background()
@@ -556,8 +297,6 @@ func TestQuery_LockWithOpt(t *testing.T) {
 	})
 }
 
-// --- applyDataRule 未覆盖分支 ---
-
 func TestDataRule_LeftRightLike_IsNull(t *testing.T) {
 	ctx := context.Background()
 
@@ -585,8 +324,6 @@ func TestDataRule_LeftRightLike_IsNull(t *testing.T) {
 	}
 }
 
-// --- quoteColumn 方言转义 ---
-
 func TestQuoteColumn_Dialects(t *testing.T) {
 	cases := []struct {
 		name string
@@ -611,10 +348,8 @@ func TestQuoteColumn_Dialects(t *testing.T) {
 	}
 }
 
-// --- Repository nil q 分支 ---
-
 func TestRepository_NilQuery(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 
 	t.Run("GetOne nil q", func(t *testing.T) {
 		_, err := repo.GetOne(nil)
@@ -651,8 +386,6 @@ func TestRepository_NilQuery(t *testing.T) {
 		}
 	})
 }
-
-// --- Query/Updater 无效列指针分支（Select/Omit/Group/Order/Distinct/join）---
 
 func TestQuery_InvalidPointer_Branches(t *testing.T) {
 	ctx := context.Background()
@@ -691,8 +424,6 @@ func TestQuery_InvalidPointer_Branches(t *testing.T) {
 	})
 }
 
-// --- Updater.Context nil ctx 分支 / SetExpr 无效指针 ---
-
 func TestUpdater_Context_NilCtx(t *testing.T) {
 	u := &Updater[TestUser]{}
 	if u.Context() == nil {
@@ -711,8 +442,6 @@ func TestUpdater_SetExpr_InvalidPointer(t *testing.T) {
 		t.Errorf("SetExpr nil 不应写入 setMap，实际 %d", len(u.setMap))
 	}
 }
-
-// --- applyDataRule 未覆盖分支 ---
 
 func TestDataRule_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
@@ -786,10 +515,8 @@ func TestDataRule_AdditionalBranches(t *testing.T) {
 	})
 }
 
-// --- UpdateByCondTx nil updater 分支 ---
-
 func TestRepository_UpdateByCondTx_NilUpdater(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 
 	t.Run("nil updater 返回 ErrUpdateEmpty", func(t *testing.T) {
 		_, err := repo.UpdateByCond(nil)
@@ -803,36 +530,6 @@ func TestRepository_UpdateByCondTx_NilUpdater(t *testing.T) {
 		_, err := repo.UpdateByCond(u)
 		if err != ErrUpdateEmpty {
 			t.Errorf("期望 ErrUpdateEmpty，实际: %v", err)
-		}
-	})
-}
-
-// --- applyWhere isRaw 有值分支（通过内部构造触发）---
-
-func TestApplyWhere_IsRaw(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	db.Create(&TestUser{Name: "RawUser", Age: 25})
-	ctx := context.Background()
-
-	t.Run("isRaw 无参数条件", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		// 直接写入 isRaw 条件（无 value）
-		q.conditions = append(q.conditions, condition{expr: "age > 18", isRaw: true})
-		list, err := repo.List(q)
-		assertError(t, err, false, "isRaw 条件不应报错")
-		if len(list) != 1 {
-			t.Errorf("期望 1 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("isRaw 有参数条件", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		// 直接写入 isRaw 条件（有 value）
-		q.conditions = append(q.conditions, condition{expr: "age > ?", isRaw: true, value: 18})
-		list, err := repo.List(q)
-		assertError(t, err, false, "isRaw 有参数条件不应报错")
-		if len(list) != 1 {
-			t.Errorf("期望 1 条，实际 %d", len(list))
 		}
 	})
 }
@@ -889,309 +586,6 @@ func TestUpdater_applyDataRule_AllBranches(t *testing.T) {
 	}
 }
 
-// TestWhereRaw_Query 验证 Query.WhereRaw / OrWhereRaw
-func TestWhereRaw_Query(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "Alice", Age: 20})
-	db.Create(&TestUser{Name: "Bob", Age: 30})
-
-	t.Run("WhereRaw 无参数", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.WhereRaw("age > 25")
-		list, err := repo.List(q)
-		assertError(t, err, false, "WhereRaw 无参不应报错")
-		if len(list) != 1 || list[0].Name != "Bob" {
-			t.Errorf("期望 Bob，实际 %v", list)
-		}
-	})
-
-	t.Run("WhereRaw 单参数", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.WhereRaw("age > ?", 25)
-		list, err := repo.List(q)
-		assertError(t, err, false, "WhereRaw 单参不应报错")
-		if len(list) != 1 || list[0].Name != "Bob" {
-			t.Errorf("期望 Bob，实际 %v", list)
-		}
-	})
-
-	t.Run("WhereRaw 多参数", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.WhereRaw("age > ? AND age < ?", 18, 25)
-		list, err := repo.List(q)
-		assertError(t, err, false, "WhereRaw 多参不应报错")
-		if len(list) != 1 || list[0].Name != "Alice" {
-			t.Errorf("期望 Alice，实际 %v", list)
-		}
-	})
-
-	t.Run("OrWhereRaw", func(t *testing.T) {
-		q, model := NewQuery[TestUser](ctx)
-		q.Eq(&model.Name, "Alice").OrWhereRaw("age = ?", 30)
-		list, err := repo.List(q)
-		assertError(t, err, false, "OrWhereRaw 不应报错")
-		if len(list) != 2 {
-			t.Errorf("期望 2 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("WhereRaw 空 sql 写入 errs", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.WhereRaw("")
-		if q.GetError() == nil {
-			t.Error("空 sql 应写入 errs")
-		}
-	})
-
-	t.Run("OrWhereRaw 空 sql 写入 errs", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		q.OrWhereRaw("")
-		if q.GetError() == nil {
-			t.Error("空 sql 应写入 errs")
-		}
-	})
-
-	t.Run("OrWhereRaw 多参数", func(t *testing.T) {
-		q, model := NewQuery[TestUser](ctx)
-		q.Eq(&model.Name, "Alice").OrWhereRaw("age > ? AND age < ?", 25, 35)
-		list, err := repo.List(q)
-		assertError(t, err, false, "OrWhereRaw 多参不应报错")
-		if len(list) != 2 {
-			t.Errorf("期望 2 条，实际 %d", len(list))
-		}
-	})
-}
-
-// TestWhereRaw_Updater 验证 Updater.WhereRaw / OrWhereRaw
-func TestWhereRaw_Updater(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "Alice", Age: 20})
-	db.Create(&TestUser{Name: "Bob", Age: 30})
-
-	t.Run("WhereRaw 单参数更新", func(t *testing.T) {
-		u, model := NewUpdater[TestUser](ctx)
-		u.Set(&model.Name, "AliceNew").WhereRaw("age = ?", 20)
-		affected, err := repo.UpdateByCond(u)
-		assertError(t, err, false, "WhereRaw 更新不应报错")
-		if affected != 1 {
-			t.Errorf("期望影响 1 行，实际 %d", affected)
-		}
-	})
-
-	t.Run("WhereRaw 多参数更新", func(t *testing.T) {
-		u, model := NewUpdater[TestUser](ctx)
-		u.Set(&model.Name, "BobNew").WhereRaw("age > ? AND age < ?", 25, 35)
-		affected, err := repo.UpdateByCond(u)
-		assertError(t, err, false, "WhereRaw 多参更新不应报错")
-		if affected != 1 {
-			t.Errorf("期望影响 1 行，实际 %d", affected)
-		}
-	})
-
-	t.Run("Updater WhereRaw 空 sql 写入 errs", func(t *testing.T) {
-		u, model := NewUpdater[TestUser](ctx)
-		u.Set(&model.Name, "x").WhereRaw("")
-		if u.GetError() == nil {
-			t.Error("空 sql 应写入 errs")
-		}
-	})
-
-	t.Run("Updater OrWhereRaw 空 sql 写入 errs", func(t *testing.T) {
-		u, model := NewUpdater[TestUser](ctx)
-		u.Set(&model.Name, "x").OrWhereRaw("")
-		if u.GetError() == nil {
-			t.Error("空 sql 应写入 errs")
-		}
-	})
-
-	t.Run("Updater OrWhereRaw 多参数", func(t *testing.T) {
-		u, model := NewUpdater[TestUser](ctx)
-		u.Set(&model.Name, "OrRawNew").WhereRaw("age = ?", 999).OrWhereRaw("age > ? AND age < ?", 25, 35)
-		affected, err := repo.UpdateByCond(u)
-		assertError(t, err, false, "OrWhereRaw 多参更新不应报错")
-		if affected != 1 {
-			t.Errorf("期望影响 1 行，实际 %d", affected)
-		}
-	})
-}
-
-// --- OrderRaw 集成测试 ---
-
-func TestRepository_OrderRaw(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	// 插入三条记录，age 分别为 30, 18, 25
-	db.Create(&TestUser{Name: "C", Age: 30})
-	db.Create(&TestUser{Name: "A", Age: 18})
-	db.Create(&TestUser{Name: "B", Age: 25})
-
-	t.Run("OrderRaw 按指定顺序排序", func(t *testing.T) {
-		q, _ := NewQuery[TestUser](ctx)
-		// SQLite 支持 CASE WHEN 排序
-		q.OrderRaw("CASE age WHEN 18 THEN 0 WHEN 25 THEN 1 ELSE 2 END")
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("OrderRaw 不应报错: %v", err)
-		}
-		if len(list) != 3 {
-			t.Fatalf("期望 3 条，实际 %d", len(list))
-		}
-		// 第一条应为 age=18
-		if list[0].Age != 18 {
-			t.Errorf("期望第一条 age=18，实际 %d", list[0].Age)
-		}
-	})
-
-	t.Run("OrderRaw 与 Order 共存按预期生效", func(t *testing.T) {
-		q, m := NewQuery[TestUser](ctx)
-		q.OrderRaw("CASE age WHEN 18 THEN 0 ELSE 1 END").Order(&m.Age, true)
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("OrderRaw+Order 不应报错: %v", err)
-		}
-		if len(list) != 3 {
-			t.Fatalf("期望 3 条，实际 %d", len(list))
-		}
-	})
-}
-
-// --- applyGroupHaving 复杂路径 ---
-
-// TestApplyGroupHaving_ComplexPaths 覆盖 applyGroupHaving 的 OrHaving、HavingGroup、OR嵌套组执行路径
-func TestApplyGroupHaving_ComplexPaths(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "alice", Age: 25})
-	db.Create(&TestUser{Name: "alice", Age: 30})
-	db.Create(&TestUser{Name: "bob", Age: 20})
-
-	t.Run("OrHaving 叶子 OR 正确追加到 HAVING", func(t *testing.T) {
-		// HAVING (username = 'nobody' OR username = 'alice') → 只有 alice 组匹配
-		q, u := NewQuery[TestUser](ctx)
-		q.Select(&u.Name).Group("username").
-			Having("username", OpEq, "nobody").
-			OrHaving("username", OpEq, "alice")
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("OrHaving 不应报错: %v", err)
-		}
-		if len(list) != 1 {
-			t.Errorf("HAVING nobody OR alice 期望 1 组，实际 %d", len(list))
-		}
-	})
-
-	t.Run("HavingGroup 嵌套 AND 正确追加到 HAVING", func(t *testing.T) {
-		// HAVING (username = 'alice') → 只有 alice 组匹配
-		q, u := NewQuery[TestUser](ctx)
-		q.Select(&u.Name).Group("username").
-			HavingGroup(func(sub *Query[TestUser]) {
-				sub.Having("username", OpEq, "alice")
-			})
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("HavingGroup 不应报错: %v", err)
-		}
-		if len(list) != 1 {
-			t.Errorf("HAVING (username = alice) 期望 1 组，实际 %d", len(list))
-		}
-	})
-
-	t.Run("Having OR 嵌套组 isOr=true 正确合并", func(t *testing.T) {
-		// 先 Having(bob)，再注入 isOr=true 的嵌套组(alice)
-		// → HAVING (username = 'bob' OR (username = 'alice')) → bob 和 alice 两组
-		q, u := NewQuery[TestUser](ctx)
-		q.Select(&u.Name).Group("username").
-			Having("username", OpEq, "bob")
-		q.havings = append(q.havings, condition{
-			group: []condition{{expr: "username", operator: OpEq, value: "alice"}},
-			isOr:  true,
-		})
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("Having OR 嵌套组不应报错: %v", err)
-		}
-		if len(list) != 2 {
-			t.Errorf("HAVING bob OR (alice) 期望 2 组，实际 %d", len(list))
-		}
-	})
-}
-
-// --- applyWhere 复杂路径 ---
-
-// TestApplyWhere_ComplexPaths 覆盖 applyWhere 的子查询、OR嵌套组、empty expr 路径
-func TestApplyWhere_ComplexPaths(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "alice", Age: 25})
-	db.Create(&TestUser{Name: "bob", Age: 30})
-
-	t.Run("OR 嵌套组执行路径", func(t *testing.T) {
-		// 覆盖 applyWhere line 295: d = d.Or(subDb)
-		q, u := NewQuery[TestUser](ctx)
-		q.Eq(&u.Name, "nobody").Or(func(sub *Query[TestUser]) {
-			sub.Eq(&u.Name, "alice")
-		})
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("OR 嵌套组不应报错: %v", err)
-		}
-		if len(list) != 1 {
-			t.Errorf("期望 1 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("子查询 AND 路径", func(t *testing.T) {
-		// 覆盖 applyWhere line 317: d = d.Where(sqlStr, subQuery)
-		subQ, su := NewQuery[TestUser](ctx)
-		subQ.Eq(&su.Name, "alice")
-		subQ.Select(&su.Age)
-		subQ.Table("test_users")
-		q, u := NewQuery[TestUser](ctx)
-		q.In(&u.Age, subQ.ToDB(db))
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("子查询 AND 不应报错: %v", err)
-		}
-		if len(list) != 1 {
-			t.Errorf("期望 1 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("子查询 OR 路径", func(t *testing.T) {
-		// 覆盖 applyWhere line 315: d = d.Or(sqlStr, subQuery)
-		subQ, su := NewQuery[TestUser](ctx)
-		subQ.Eq(&su.Name, "alice")
-		subQ.Select(&su.Age)
-		subQ.Table("test_users")
-		q, u := NewQuery[TestUser](ctx)
-		q.Eq(&u.Age, 999).OrIn(&u.Age, subQ.ToDB(db))
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("子查询 OR 不应报错: %v", err)
-		}
-		if len(list) != 1 {
-			t.Errorf("期望 1 条，实际 %d", len(list))
-		}
-	})
-
-	t.Run("empty expr 条件跳过", func(t *testing.T) {
-		// 覆盖 applyWhere line 303-305: clauseStr == "" 跳过
-		q, _ := NewQuery[TestUser](ctx)
-		q.conditions = append(q.conditions, condition{expr: "", operator: OpEq, value: "x"})
-		list, err := repo.List(q)
-		if err != nil {
-			t.Fatalf("empty expr 条件不应报错: %v", err)
-		}
-		if len(list) != 2 {
-			t.Errorf("empty expr 跳过后期望 2 条，实际 %d", len(list))
-		}
-	})
-}
-
-// --- buildLeafSQL 防御路径 ---
-
 // TestBuildLeafSQL_BetweenDefensive 验证 BETWEEN value 不合法时返回 ok=false
 func TestBuildLeafSQL_BetweenDefensive(t *testing.T) {
 	cases := []struct {
@@ -1213,19 +607,24 @@ func TestBuildLeafSQL_BetweenDefensive(t *testing.T) {
 	}
 }
 
-// --- getQuoteChar 方言分支 ---
-
 // testMockDialector 最简 Dialector 实现，仅用于测试 getQuoteChar default 分支
 type testMockDialector struct{ dialectName string }
 
-func (d testMockDialector) Name() string                                          { return d.dialectName }
-func (d testMockDialector) Initialize(*gorm.DB) error                             { return nil }
-func (d testMockDialector) Migrator(*gorm.DB) gorm.Migrator                       { return nil }
-func (d testMockDialector) DataTypeOf(*schema.Field) string                       { return "" }
-func (d testMockDialector) DefaultValueOf(*schema.Field) clause.Expression        { return nil }
+func (d testMockDialector) Name() string { return d.dialectName }
+
+func (d testMockDialector) Initialize(*gorm.DB) error { return nil }
+
+func (d testMockDialector) Migrator(*gorm.DB) gorm.Migrator { return nil }
+
+func (d testMockDialector) DataTypeOf(*schema.Field) string { return "" }
+
+func (d testMockDialector) DefaultValueOf(*schema.Field) clause.Expression { return nil }
+
 func (d testMockDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{}) {}
-func (d testMockDialector) QuoteTo(clause.Writer, string)                         {}
-func (d testMockDialector) Explain(string, ...interface{}) string                 { return "" }
+
+func (d testMockDialector) QuoteTo(clause.Writer, string) {}
+
+func (d testMockDialector) Explain(string, ...interface{}) string { return "" }
 
 func TestGetQuoteChar_Dialects(t *testing.T) {
 	t.Run("nil Dialector 返回空字符串", func(t *testing.T) {
@@ -1237,8 +636,8 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 	})
 
 	t.Run("mysql 方言返回反引号", func(t *testing.T) {
-		// mysql.Open 仅创建 dialector，sql.Open 懒连接，无需真实 MySQL
-		db := &gorm.DB{Config: &gorm.Config{Dialector: mysql.Open("root:@tcp(127.0.0.1:3306)/test")}}
+		// 仅验证方言名称分支，不加载数据库驱动。
+		db := &gorm.DB{Config: &gorm.Config{Dialector: testMockDialector{"mysql"}}}
 		qL, qR := getQuoteChar(db)
 		if qL != "`" || qR != "`" {
 			t.Errorf("mysql 期望反引号，实际 (%q,%q)", qL, qR)
@@ -1279,82 +678,6 @@ func TestGetQuoteChar_Dialects(t *testing.T) {
 	})
 }
 
-// TestApplyJoins_CrossJoin 验证无 ON 条件的 CrossJoin 走 applyJoins 执行路径
-func TestApplyJoins_CrossJoin(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "Alice", Age: 25})
-
-	q, _ := NewQuery[TestUser](ctx)
-	q.CrossJoin("test_users AS t2")
-	// 验证 CrossJoin（无 ON 条件）能正确构建并执行 SQL，覆盖 applyJoins 无条件分支
-	list, err := repo.List(q)
-	if err != nil {
-		t.Fatalf("CrossJoin 不应报错: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("CROSS JOIN 1×1 期望 1 条，实际 %d", len(list))
-	}
-}
-
-// TestApplyJoins_WithArgs 验证 LeftJoin 带绑定参数走 applyJoins 有参数分支
-func TestApplyJoins_WithArgs(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "Bob", Age: 20})
-
-	q, _ := NewQuery[TestUser](ctx)
-	// 带参数的 JOIN：覆盖 len(j.args) > 0 路径
-	q.LeftJoin("test_users t2", "t2.id = test_users.id AND t2.age > ?", 0)
-	q.WhereRaw("test_users.username = ?", "Bob")
-	list, err := repo.List(q)
-	if err != nil {
-		t.Fatalf("LeftJoin 带参数不应报错: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("期望 1 条，实际 %d", len(list))
-	}
-}
-
-// TestHavingGroup_EmptyFn 验证 HavingGroup 空函数体走 buildHavingExprs 空嵌套路径
-func TestHavingGroup_EmptyFn(t *testing.T) {
-	repo, db := setupTestDB[TestUser](t)
-	ctx := context.Background()
-	db.Create(&TestUser{Name: "Charlie", Age: 30})
-
-	q, u := NewQuery[TestUser](ctx)
-	q.Select(&u.Age).Group(&u.Age)
-	// 空函数体：subExprs 长度为 0，触发 continue 分支
-	q.HavingGroup(func(sub *Query[TestUser]) {})
-	list, err := repo.List(q)
-	if err != nil {
-		t.Fatalf("空 HavingGroup 不应报错: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("期望 1 条，实际 %d", len(list))
-	}
-}
-
-// --- v0.10.x 覆盖补全：M-1 / M-2 / M-3 ---
-
-// M-1: Updater.OrNotExists OR 分支。共享的 appendExists 已被其他 Exists 测试覆盖，
-// 本测试补 OrNotExists wrapper（"NOT EXISTS", true）的直接调用覆盖，与 Query 侧 TestOrNotExists_OrBranchSQL 对称。
-func TestUpdater_OrNotExists_OrBranchSQL(t *testing.T) {
-	_, db := setupAdvancedDB(t)
-	u, m := NewUpdater[UserWithDelete](context.Background())
-	u.Set(&m.Name, "x").Eq(&m.Name, "alice")
-	sub, o := SubQuery[Order](u)
-	sub.Eq(&o.UserID, m.ID)
-	u.OrNotExists(sub)
-	sql, err := u.ToSQL(db)
-	if err != nil {
-		t.Fatalf("ToSQL: %v", err)
-	}
-	if !strings.Contains(sql, "OR NOT EXISTS") {
-		t.Errorf("期望 SQL 含 'OR NOT EXISTS'，实际: %s", sql)
-	}
-}
-
 // M-2: BuildQueryDB 把当前 Query 条件应用到 db 并返回带条件的 *gorm.DB（公开便捷 API，原零调用零覆盖）。
 func TestBuildQueryDB_AppliesConditions(t *testing.T) {
 	db := newDryRunDB(t)
@@ -1367,30 +690,66 @@ func TestBuildQueryDB_AppliesConditions(t *testing.T) {
 	}
 }
 
-// M-3: FindAsTx / FindOneAsTx / PageAsTx 透传 DataRuleBuilder 错误。
-// 原测试均走无 tx 包装函数，Tx 变体的 DataRuleBuilder().GetError() 分支未被直接覆盖。
-func TestFindAsTx_Variants_PropagateDataRuleError(t *testing.T) {
-	_, repo := setupPageDB(t)
-	// SQL 条件类型被 applyDataRule 拒绝 → DataRuleBuilder().GetError() 非 nil
-	badRules := []DataRule{{Column: "age", Condition: "SQL", Value: "1=1"}}
-	badCtx := context.WithValue(context.Background(), DataRuleKey, badRules)
+// 私有错误桶注入保留在核心模块；真实带锁查询位于 tests 模块。
+func TestRepository_GetByLock(t *testing.T) {
+	db := newDryRunDB(t)
+	repo := NewRepository[int64, TestUser](db)
+	q, _ := NewQuery[TestUser](context.Background())
+	q.errs = append(q.errs, errTestSentinel)
+	_, err := repo.GetByLock(q, db)
+	if !errors.Is(err, errTestSentinel) {
+		t.Fatalf("builder error=%v", err)
+	}
+}
 
-	t.Run("FindAsTx", func(t *testing.T) {
-		q, _ := NewQuery[pageUser](badCtx)
-		var rows []pageVO
-		err := FindAsTx[pageUser, pageVO, uint](repo, q, &rows, nil)
-		assertError(t, err, true, "FindAsTx 应透传 DataRule 错误")
-	})
-	t.Run("FindOneAsTx", func(t *testing.T) {
-		q, _ := NewQuery[pageUser](badCtx)
-		var one pageVO
-		err := FindOneAsTx[pageUser, pageVO, uint](repo, q, &one, nil)
-		assertError(t, err, true, "FindOneAsTx 应透传 DataRule 错误")
-	})
-	t.Run("PageAsTx", func(t *testing.T) {
-		q, _ := NewQuery[pageUser](badCtx)
-		var rows []pageVO
-		_, err := PageAsTx[pageUser, pageVO, uint](repo, q, &rows, false, nil)
-		assertError(t, err, true, "PageAsTx 应透传 DataRule 错误")
-	})
+// 直接注入私有 raw 条件，验证有值/无值两个白盒分支；真实查询位于 tests 模块。
+func TestApplyWhere_IsRaw(t *testing.T) {
+	db := newDryRunDB(t)
+	for _, tc := range []struct {
+		name string
+		cond condition
+		vars int
+	}{
+		{"isRaw 无参数条件", condition{expr: "age > 18", isRaw: true}, 0},
+		{"isRaw 有参数条件", condition{expr: "age > ?", isRaw: true, value: 18}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, _ := NewQuery[TestUser](context.Background())
+			q.conditions = append(q.conditions, tc.cond)
+			result := db.Model(new(TestUser)).Scopes(q.BuildQuery()).Find(&[]TestUser{})
+			if result.Error != nil {
+				t.Fatal(result.Error)
+			}
+			if !strings.Contains(result.Statement.SQL.String(), tc.cond.expr) || len(result.Statement.Vars) != tc.vars {
+				t.Fatalf("SQL=%s vars=%v", result.Statement.SQL.String(), result.Statement.Vars)
+			}
+		})
+	}
+}
+
+// 公共接口无法直接构造 OR 嵌套 HAVING 私有节点，保留其 SQL 构建白盒测试。
+func TestApplyGroupHaving_ComplexPaths(t *testing.T) {
+	db := newDryRunDB(t)
+	q, u := NewQuery[TestUser](context.Background())
+	q.Select(&u.Name).Group("username").Having("username", OpEq, "bob")
+	q.havings = append(q.havings, condition{group: []condition{{expr: "username", operator: OpEq, value: "alice"}}, isOr: true})
+	result := db.Model(new(TestUser)).Scopes(q.BuildQuery()).Find(&[]TestUser{})
+	sql := result.Statement.SQL.String()
+	if result.Error != nil || !strings.Contains(sql, "HAVING") || !strings.Contains(sql, " OR ") || !strings.Contains(sql, "(") {
+		t.Fatalf("error=%v SQL=%s", result.Error, sql)
+	}
+	if len(result.Statement.Vars) != 2 || result.Statement.Vars[0] != "bob" || result.Statement.Vars[1] != "alice" {
+		t.Fatalf("vars=%v", result.Statement.Vars)
+	}
+}
+
+// 公共接口拒绝空列，直接注入空叶节点以保留防御分支验证。
+func TestApplyWhere_ComplexPaths(t *testing.T) {
+	db := newDryRunDB(t)
+	q, _ := NewQuery[TestUser](context.Background())
+	q.conditions = append(q.conditions, condition{expr: "", operator: OpEq, value: "x"})
+	result := db.Model(new(TestUser)).Scopes(q.BuildQuery()).Find(&[]TestUser{})
+	if result.Error != nil || strings.Contains(result.Statement.SQL.String(), "WHERE") || len(result.Statement.Vars) != 0 {
+		t.Fatalf("error=%v SQL=%s vars=%v", result.Error, result.Statement.SQL.String(), result.Statement.Vars)
+	}
 }

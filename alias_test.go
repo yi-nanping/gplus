@@ -201,7 +201,7 @@ func TestBuildQuery_ErrsShortCircuit_DecisionB(t *testing.T) {
 	q, _ := NewQuery[TestUser](context.Background())
 	_ = As[TestUser](q, "o")
 	_ = As[TestUser](q, "o") // 重名累积 ErrAliasDuplicate
-	_, db := setupTestDB[TestUser](t)
+	db := newDryRunDB(t)
 	// 通过 BuildQuery closure 验证短路（覆盖 promoted method 的决策 1B 路径）
 	scope := q.DataRuleBuilder().BuildQuery()
 	finalDB := scope(db)
@@ -217,7 +217,7 @@ func TestBuildQuery_ErrsShortCircuit_DecisionB(t *testing.T) {
 // 验证决策 1B 真正落地到生产路径：repo.List 在 q.core.errs 非空时返回错误而非执行 SQL。
 // 覆盖 BuildQuery() wrapper 对 .Scopes(q.BuildQuery()) 的短路保护。
 func TestRepositoryList_ShortCircuitOnAliasErrs_DecisionB(t *testing.T) {
-	repo, _ := setupTestDB[TestUser](t)
+	repo := NewRepository[int64, TestUser](newDryRunDB(t))
 	q, _ := NewQuery[TestUser](context.Background())
 	_ = As[TestUser](q, "o")
 	_ = As[TestUser](q, "o") // 重名累积 ErrAliasDuplicate

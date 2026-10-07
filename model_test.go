@@ -3,6 +3,8 @@ package gplus
 import (
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // BaseUser 模拟嵌入结构体
@@ -49,6 +51,36 @@ type testOrder struct {
 }
 
 func (testOrder) TableName() string { return "test_orders" }
+
+// Order、Closure 供无驱动白盒测试使用；数据库夹具位于 tests 模块。
+type Order struct {
+	ID     int64 `gorm:"primaryKey"`
+	UserID int64 `gorm:"index"`
+	Amount int
+	Remark string
+}
+
+type Closure struct {
+	ID           int64 `gorm:"column:id;primaryKey;autoIncrement"`
+	AncestorID   uint  `gorm:"column:ancestor_id"`
+	DescendantID uint  `gorm:"column:descendant_id"`
+	Depth        uint  `gorm:"column:depth"`
+}
+
+func (Closure) TableName() string { return "closure" }
+
+type UserWithDelete struct {
+	ID        int64          `gorm:"primaryKey"`
+	Name      string         `gorm:"size:64"`
+	Age       int            `gorm:"index"`
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+	Orders    []Order        `gorm:"foreignKey:UserID"`
+}
+
+type PrefixVersionFields struct {
+	Version int64 `gorm:"column:revision" gplus:"version"`
+	Name    string
+}
 
 // Product 模型，用于 SubQuery 嵌套 3 层测试
 type Product struct {

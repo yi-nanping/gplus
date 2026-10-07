@@ -47,22 +47,42 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            tests/go.sum
 
       - name: 静态检查
-        run: go vet ./...
+        run: |
+          go vet ./...
+          cd tests
+          go vet ./...
+
+      - name: 核心模块测试与依赖检查
+        run: |
+          go mod tidy -diff
+          go build ./...
+          go test -v -race ./...
+          go run ./scripts/check-driver-deps.go
+
+      - name: 检查测试模块依赖
+        working-directory: tests
+        run: go mod tidy -diff
 
       - name: 运行 SQLite 测试
+        working-directory: tests
         env:
           TEST_DB: sqlite
         run: go test -v -race ./...
 
       - name: 运行 MySQL 测试
+        working-directory: tests
         env:
           TEST_DB: mysql
           TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local
         run: go test -v -race ./...
 
       - name: 运行 PostgreSQL 测试
+        working-directory: tests
         env:
           TEST_DB: pg
           TEST_PG_DSN: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=test sslmode=disable
