@@ -2,6 +2,34 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.14.0] - 2026-10-07
+
+### 新增
+
+- `Eq`、`In`、`Set` 泛型辅助函数，为字段和值提供编译期类型约束，沿用现有构建器的校验与执行行为。
+- `LeftJoinAsOn`、`InnerJoinAsOn` 和 `OnBuilder`：通过字段指针构建参数化 ON 条件及分组，严格限制字段属于当前查询链；副表 DataRule 和软删除过滤仍由调用方显式指定。
+
+### 修复
+
+- 将完整业务条件分组后独立 AND 数据规则，防止 OR、嵌套分组或延迟 scope 绕过数据权限。
+- 按实际主键列参数化字符串 ID，避免字符串被解释为原生 SQL 条件，保持事务和 DataRule 约束。
+- 按真实 Go 类型隔离模型和乐观锁缓存；对齐多层嵌入前缀、指针嵌入及命名值嵌入的映射与更新行为。
+- 修复 And/Or 分组的 alias 解析、Chunk 总量/首批偏移与回调修改隔离、Exists 单行探测、分页偏移溢出及调试 SQL 错误传播。
+- FirstOrUpdate 更新阶段使用 Updater Context，保留 callback、规则检查与事务回滚语义。
+
+### 依赖与测试
+
+- 核心模块不再声明 SQLite、MySQL、PostgreSQL、Oracle、DM 测试驱动，用户自行安装所选 GORM 驱动并传入 `*gorm.DB`；GORM 和驱动版本保持不变。
+- 数据库测试和示例迁入独立 `tests/` 模块，无驱动白盒测试保留根目录。根 `go test ./...` 不包含数据库测试，需另在 `tests/` 执行。
+- 保留原有 619 个测试、基准和示例入口，CI 分别覆盖核心及 SQLite/MySQL/PostgreSQL 测试模块；增加独立消费者的驱动编译依赖检查。
+- 减少构建器错误存储和数据规则构建分配，补齐完整查询与 alias 查找基准；不承诺所有场景耗时改善。
+
+### 升级注意
+
+- 核心仍依赖 GORM；GORM 上游模块图可能包含 SQLite 声明，不等于用户程序编译了该驱动。
+- 权限和字符串主键修复收紧了原先错误的读取/写入范围，应用应回归实际查询、更新和事务调用链。
+- 本地核心及 SQLite race、vet、tidy 与独立消费者检查通过；Oracle/DM 完成带 tag 编译，未验证真实数据库。发布提交的 MySQL/PostgreSQL 结果以 GitHub CI 为准。
+
 ## [0.13.0] - 2026-10-06
 
 ### 新增

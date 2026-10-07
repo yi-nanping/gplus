@@ -21,14 +21,14 @@ GPlus 是一个基于 GORM 的 Go 语言增强库，提供类型安全的查询�
 ### 安装
 
 ```bash
-go get github.com/yi-nanping/gplus@v0.8.0
+go get github.com/yi-nanping/gplus@v0.14.0
 # 自行安装所选 GORM 驱动；下面的基础示例使用 SQLite
 go get gorm.io/driver/sqlite
 ```
 
 gplus 接收用户创建的 `*gorm.DB`。驱动的选择、版本和连接配置由用户项目维护：使用 MySQL 时安装 `gorm.io/driver/mysql`，PostgreSQL 时安装 `gorm.io/driver/postgres`。本仓库的数据库测试驱动由独立 `tests/go.mod` 管理，不由核心模块声明。
 
-依赖隔离改动尚未发布到上述历史版本；对应发布后使用新版即可获得精简的核心依赖。GORM 上游仍可能声明测试用 SQLite 模块，这与用户程序是否编译该驱动是两个层面。
+自 v0.14.0 起，核心模块不再声明本仓库的数据库测试驱动；历史标签的依赖保持不变。GORM 上游仍可能声明测试用 SQLite 模块，这与用户程序是否编译该驱动是两个层面。
 
 ### 基础用法
 
@@ -1180,8 +1180,9 @@ go test -race ./...
 
 ## 版本历史
 
-> 当前版本为 **v0.13.0**（2026-10-06），完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。`RequireTx` 自 v0.13.0 新增，不包含在 v0.12.0 标签中。v0.7 起的要点：
+> 当前版本为 **v0.14.0**（2026-10-07），完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。`RequireTx` 自 v0.13.0 新增，不包含在 v0.12.0 标签中。v0.7 起的要点：
 >
+> - **v0.14**：用户自选驱动与独立数据库测试模块、类型约束辅助函数、结构化 JOIN ON，以及权限/主键/嵌入映射/分页修复
 > - **v0.13**：`RequireTx` 事务能力校验入口，投影 / 更新 / JOIN 契约说明与行为回归
 > - **v0.12**：DataRule 缺口修复与 Build* 构建错误统一短路
 > - **v0.11**：typed-expr 类型化投影表达式（`Model[T]`/`Col`/`Lit`/`Add` + `SelectExpr`）+ `InsertSelectMap` 成对列映射

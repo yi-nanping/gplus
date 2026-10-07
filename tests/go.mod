@@ -6,7 +6,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/godoes/gorm-dameng v0.7.2
 	github.com/godoes/gorm-oracle v1.6.18
-	github.com/yi-nanping/gplus v0.13.0
+	github.com/yi-nanping/gplus v0.14.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
