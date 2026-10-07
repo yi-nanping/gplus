@@ -4,17 +4,19 @@
 
 `gplus` is a Go 1.24+ library extending GORM with generic repositories and type-safe query builders. Source files live in the root package: `repository.go` provides CRUD operations; `query.go`, `update.go`, and `builder.go` build statements; `schema.go`, `alias.go`, and `subquery.go` handle model metadata and advanced queries.
 
-Tests sit beside source as `*_test.go`; `example_test.go` contains examples. Consult `README.md`, `doc.go`, and `CLAUDE.md` for guidance. Setup notes live in `docs/dev-setup/`; CI lives in `.github/workflows/ci.yml`.
+Driver-free unit tests sit beside source as `*_test.go`. Database tests and examples live in the independent `tests/` module, which owns database driver dependencies and replaces the library with local source. Consult `README.md`, `doc.go`, and `CLAUDE.md` for guidance. Setup notes live in `docs/dev-setup/`; CI lives in `.github/workflows/ci.yml`.
 
 ## Build, Test, and Development Commands
 
 Run commands from the repository root:
 
 - `go build ./...` — compile the library.
-- `go test ./...` — run the default test suite.
-- `go test -run TestRepository_CRUD_And_Errors ./...` — run a focused test.
+- `go test ./...` — run driver-free unit tests.
+- `cd tests` then `go test ./...` — run database tests (SQLite by default).
+- From `tests/`: `go test -run TestRepository_CRUD_And_Errors ./...` — run a focused database test.
 - `go vet ./...` — run static checks used by CI.
-- `go test -v -race ./...` — run verbose tests with race detection, matching CI.
+- `go test -v -race ./...` — run unit tests with race detection; also run this command in `tests/` to match both CI gates.
+- `go run ./scripts/check-driver-deps.go` — verify independent consumers compile with only their selected driver.
 - `go test -coverprofile=coverage.out ./...` followed by `go tool cover -func=coverage.out` — inspect coverage.
 
 ## Coding Style & Naming Conventions
@@ -27,7 +29,9 @@ Field pointers must come from the model instance returned by `NewQuery[T]` or `N
 
 Use Go's `testing` package, `TestFeature_Scenario` functions, and `BenchmarkFeature` benchmarks. Add regression tests for fixes, checking SQL and observable database effects where relevant.
 
-Shared tests default to in-memory SQLite when database environment variables are unset. MySQL and PostgreSQL integration tests skip unavailable databases; CI supplies both services. Oracle and DM suites require `go test -tags=oracle ./...` or `go test -tags=dm ./...`. Report skipped suites explicitly. CI has no enforced coverage percentage; maintain meaningful coverage of changed behavior.
+Database tests in `tests/` default to in-memory SQLite when database environment variables are unset. Explicit `TEST_DB=mysql|pg` requires a working DSN; unconfigured optional suites skip. CI supplies both services. From `tests/`, Oracle and DM suites require `go test -tags=oracle ./...` or `go test -tags=dm ./...`. Report skipped suites explicitly. Root SQL construction tests use a driver-free Dialector and do not prove real database behavior. CI has no enforced coverage percentage; maintain meaningful coverage of changed behavior.
+
+Do not import database drivers into the core module, including its tests. Run `go mod tidy -diff` in both modules; do not add test-module replacements to the published core module. Root `go test ./...` does not include the nested test module.
 
 ## Commit & Pull Request Guidelines
 

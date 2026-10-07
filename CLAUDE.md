@@ -8,7 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > 直接用裸 `go` 命令即可，无需指定路径。
 
 ```bash
-# 运行所有测试
+# 运行无驱动白盒单元测试
+go test ./...
+
+# 数据库测试与示例位于独立 module；默认使用内存 SQLite
+cd tests
 go test ./...
 
 # 运行指定测试函数
@@ -21,10 +25,12 @@ go test -run TestAdvanced_Features/SoftDelete_And_Unscoped ./...
 go test -v ./...
 
 # 查看测试覆盖率
-go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
+go test -coverpkg=github.com/yi-nanping/gplus -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 ```
 
-**已知的预存在测试失败**：无（所有测试均通过，覆盖率 95%+）
+核心 module 不声明数据库测试驱动。分别在根目录和 `tests/` 执行 `go vet ./...`、`go test -race ./...`、`go mod tidy -diff`；根 `./...` 不包含嵌套 module。依赖隔离验证从根目录运行 `go run ./scripts/check-driver-deps.go`。用户自行安装所选 GORM 驱动并创建 `*gorm.DB`，传入现有 `NewRepository`。
+
+**已知的预存在测试失败**：无。核心白盒与数据库测试分别运行，覆盖率需按实际执行的模块与 `-coverpkg` 范围解释。
 
 ## 架构
 

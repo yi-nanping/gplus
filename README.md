@@ -22,7 +22,13 @@ GPlus 是一个基于 GORM 的 Go 语言增强库，提供类型安全的查询�
 
 ```bash
 go get github.com/yi-nanping/gplus@v0.8.0
+# 自行安装所选 GORM 驱动；下面的基础示例使用 SQLite
+go get gorm.io/driver/sqlite
 ```
+
+gplus 接收用户创建的 `*gorm.DB`。驱动的选择、版本和连接配置由用户项目维护：使用 MySQL 时安装 `gorm.io/driver/mysql`，PostgreSQL 时安装 `gorm.io/driver/postgres`。本仓库的数据库测试驱动由独立 `tests/go.mod` 管理，不由核心模块声明。
+
+依赖隔离改动尚未发布到上述历史版本；对应发布后使用新版即可获得精简的核心依赖。GORM 上游仍可能声明测试用 SQLite 模块，这与用户程序是否编译该驱动是两个层面。
 
 ### 基础用法
 
@@ -918,7 +924,7 @@ gplus/
 1. **拉 gplus**：`go get github.com/yi-nanping/gplus@v0.8.3`
 2. **拉 Oracle 23c Free 镜像**：`docker pull container-registry.oracle.com/database/free:latest`（参见下方"启动 Oracle 23c Free 容器"）
 3. **设 DSN 环境变量**（可选，setup_test 有本地默认）：`export TEST_ORACLE_DSN="oracle://system:<密码>@127.0.0.1:1521/FREEPDB1"`
-4. **跑测试**：`go test -tags=oracle -v ./...`（强制不漏跑：`TEST_ORACLE_REQUIRED=1 go test -tags=oracle ./...` —— DSN 不通时 `t.Fatalf` 而非 `t.Skip`）
+4. **跑测试**：在 `tests/` 目录执行 `go test -tags=oracle -v ./...`（强制不漏跑：`TEST_ORACLE_REQUIRED=1 go test -tags=oracle ./...` —— DSN 不通时 `t.Fatalf` 而非 `t.Skip`）
 
 ### 2. TEST_ORACLE_DSN 格式
 
@@ -1015,7 +1021,7 @@ docker exec -it oracle-free sqlplus system/oracle@FREEPDB1
 1. **拉 gplus**：`go get github.com/yi-nanping/gplus@v0.8.3`
 2. **拉 DM 8 镜像**：从 [dameng 技术社区](https://eco.dameng.com/) 下载 DM 8 docker tar 包，`docker load` 后 `docker run` 启动（参见下方"启动 DM 8 容器"）
 3. **设 DSN 环境变量**：`export TEST_DM_DSN="dm://SYSDBA:<密码>@127.0.0.1:5236"`（密码以镜像 README 为准）
-4. **跑测试**：`go test -tags=dm -v ./...`（强制不漏跑：`TEST_DM_REQUIRED=1 go test -tags=dm ./...` —— DSN 不通时 `t.Fatalf` 而非 `t.Skip`）
+4. **跑测试**：在 `tests/` 目录执行 `go test -tags=dm -v ./...`（强制不漏跑：`TEST_DM_REQUIRED=1 go test -tags=dm ./...` —— DSN 不通时 `t.Fatalf` 而非 `t.Skip`）
 5. **遇错查表**：见下方"错误码导航"
 
 ### 2. TEST_DM_DSN 格式
@@ -1147,7 +1153,26 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 ## 开发测试
 
-默认 `go test ./...` 使用内存 SQLite，未配置 `TEST_MYSQL_DSN` / `TEST_PG_DSN` 的专项测试会跳过。使用一次性测试库设置 DSN 后，可通过 `TEST_DB=mysql` 或 `TEST_DB=pg` 运行共享测试；`TEST_DB=sqlite` 始终选择 SQLite。显式选择数据库却缺少对应 DSN、或已配置 DSN 但连接失败时，测试失败。CI 分别运行 SQLite、MySQL、PostgreSQL 的 race 测试；部分固定 SQLite 的测试仍只验证 SQLite。
+根模块的 `go test ./...` 运行无驱动单元测试；需要实际驱动的测试和示例位于独立 `tests/` 模块，根 `./...` 不会自动运行它们。根 SQL 白盒测试仅验证构建逻辑，实际驱动与数据库行为由测试模块验证。
+
+```bash
+# 从根目录验证核心模块
+go build ./...
+go vet ./...
+go test -race ./...
+go mod tidy -diff
+go run ./scripts/check-driver-deps.go
+
+# 验证数据库测试模块，默认内存 SQLite
+cd tests
+go mod tidy -diff
+go vet ./...
+go test -race ./...
+```
+
+在 `tests/` 中，未配置 `TEST_MYSQL_DSN` / `TEST_PG_DSN` 的专项测试会跳过。使用一次性测试库设置 DSN 后，可通过 `TEST_DB=mysql` 或 `TEST_DB=pg` 运行共享测试；`TEST_DB=sqlite` 始终选择 SQLite。显式选择数据库却缺少对应 DSN、或已配置 DSN 但连接失败时，测试失败。CI 分别运行核心单元测试及 SQLite、MySQL、PostgreSQL 的数据库 race 测试；部分固定 SQLite 的测试仍只验证 SQLite。Oracle/DM 的带 tag 测试命令也在 `tests/` 中执行。
+
+独立消费者检查会关闭 workspace，分别编译无驱动、仅 MySQL、仅 PostgreSQL 的项目，检查实际驱动编译依赖和所选驱动版本；只编译，不连接数据库。
 
 ## 贡献
 
