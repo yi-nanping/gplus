@@ -510,27 +510,31 @@ func buildLeafSQL(cond condition, qL, qR string) (sqlStr string, args []any, ok 
 
 // applyWhere where
 func (b *ScopeBuilder) applyWhere(db *gorm.DB, qL, qR string) *gorm.DB {
-	var rules []condition
+	ruleCount := 0
 	for _, cond := range b.conditions {
 		if cond.isDataRule {
-			rules = append(rules, cond)
+			ruleCount++
 		}
 	}
-	if len(rules) == 0 {
+	if ruleCount == 0 {
 		return applyConditions(db, b.conditions, qL, qR)
 	}
-	business := make([]condition, 0, len(b.conditions)-len(rules))
+	business := make([]condition, 0, len(b.conditions)-ruleCount)
+	ruleExprs := make([]clause.Expression, 0, ruleCount)
 	for _, cond := range b.conditions {
 		if !cond.isDataRule {
 			business = append(business, cond)
+			continue
 		}
+		// DataRule 只生成已校验的叶条件，直接构建表达式，避免临时 GORM Session。
+		sql, args, ok := buildLeafSQL(cond, qL, qR)
+		if !ok {
+			return shortCircuit(db, errors.New("gplus: invalid data rule condition"))
+		}
+		ruleExprs = append(ruleExprs, clause.Expr{SQL: sql, Vars: args})
 	}
 	db = applyConditions(db, business, qL, qR)
-	ruleDB := applyConditions(db.Session(&gorm.Session{NewDB: true}), rules, qL, qR)
-	if ruleDB.Error != nil {
-		return shortCircuit(db, ruleDB.Error)
-	}
-	ruleWhere := ruleDB.Statement.Clauses["WHERE"].Expression.(clause.Where)
+	ruleWhere := clause.Where{Exprs: ruleExprs}
 	where := db.Statement.Clauses["WHERE"]
 	where.Name = "WHERE"
 	if where.Expression == nil {

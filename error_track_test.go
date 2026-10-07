@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+func TestErrTrack_DataRulePreservesExistingDBError(t *testing.T) {
+	db := newDryRunDB(t)
+	want := errors.New("existing database error")
+	db.AddError(want)
+	ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{
+		{Column: "age", Condition: "IN", Values: []string{"18", "20"}},
+	})
+	q, m := NewQuery[TestUser](ctx)
+	q.Eq(&m.Name, "Alice").DataRuleBuilder()
+	var rows []TestUser
+	result := db.Model(new(TestUser)).Scopes(q.BuildQuery()).Find(&rows)
+	if !errors.Is(result.Error, want) || result.RowsAffected != 0 || result.Statement.SQL.Len() != 0 {
+		t.Fatalf("原有数据库错误应阻止构建与执行 SQL: err=%v, affected=%d, SQL=%s", result.Error, result.RowsAffected, result.Statement.SQL.String())
+	}
+}
+
 // 本文件对应 spec docs/superpowers/specs/2026-06-10-error-track-unification-design.md
 // 的 AC-1/2/3/5/7（AC-4 由既有 alias_test.go 决策 1B 测试承载，AC-6 见 Task 2 部分）。
 

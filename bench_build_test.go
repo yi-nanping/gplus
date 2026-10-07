@@ -24,11 +24,6 @@ func BenchmarkAliasLookup_FiveAliases(b *testing.B) {
 
 func BenchmarkQuery_DryRunBuild(b *testing.B) {
 	_, db := setupBenchDB(b)
-	sqlDB, err := db.DB()
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.Cleanup(func() { _ = sqlDB.Close() })
 	ctx := context.Background()
 	dryDB := db.Session(&gorm.Session{DryRun: true})
 	for _, kind := range []string{"Plain", "AliasGroup", "CorrelatedSubquery"} {
