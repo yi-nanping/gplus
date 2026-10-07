@@ -721,6 +721,7 @@ func (r *Repository[D, T]) FirstOrCreate(q *Query[T], defaults *T) (data T, crea
 // 返回值：(record, created, error)，created=true 表示本次新建。
 // defaults 不可为 nil，否则返回 ErrDefaultsNil。
 // 内部使用事务保证查找与更新/创建的原子性。
+// q.Context() 控制事务、查找、创建和重读，u.Context() 仅用于 UPDATE 阶段。
 //
 // 数据权限（DataRule）：q 的 ctx 规则作用于查找与重读阶段，u 的 ctx 规则作用于更新阶段
 // （与 UpdateByCond 对称）。若更新将行改出 DataRule 可见范围（如修改 tenant_id），
@@ -754,7 +755,7 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 		if e := tx.Scopes(q.BuildCount()).First(&data).Error; e == nil {
 			// 找到记录，执行更新。不检查 RowsAffected：u 侧 DataRule 拦截
 			// （affected=0）不视为错误，后续重读返回未变更行
-			if ue := tx.Model(&data).Scopes(u.BuildUpdate()).Updates(u.setMap).Error; ue != nil {
+			if ue := tx.WithContext(u.Context()).Model(&data).Scopes(u.BuildUpdate()).Updates(u.setMap).Error; ue != nil {
 				return ue
 			}
 			// 按主键重读：避免 data 中的旧字段值（含被更新的字段）被当作 WHERE 条件导致查不到
