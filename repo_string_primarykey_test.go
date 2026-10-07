@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -19,18 +18,21 @@ type stringPrimaryRecord struct {
 
 func setupStringPrimaryDB(t *testing.T, id string) (*Repository[string, stringPrimaryRecord], *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
+	db := openDB(t).Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+	if db.Name() == "sqlite" {
+		sqlDB, err := db.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB.SetMaxOpenConns(1)
+		t.Cleanup(func() { _ = sqlDB.Close() })
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.AutoMigrate(&stringPrimaryRecord{}); err != nil {
 		t.Fatal(err)
+	}
+	if db.Name() == "mysql" || db.Name() == "postgres" {
+		truncateTables(t, db, &stringPrimaryRecord{})
+		t.Cleanup(func() { truncateTables(t, db, &stringPrimaryRecord{}) })
 	}
 	rows := []stringPrimaryRecord{
 		{Key: "000-other", Name: "other", TenantID: 2},

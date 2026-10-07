@@ -194,6 +194,10 @@ func TestDataRule_OR_CustomWherePreloadIsolation(t *testing.T) {
 	if err := db.AutoMigrate(&dataRuleORParent{}); err != nil {
 		t.Fatal(err)
 	}
+	if db.Name() == "mysql" || db.Name() == "postgres" {
+		truncateTables(t, db, &dataRuleORParent{})
+		t.Cleanup(func() { truncateTables(t, db, &dataRuleORParent{}) })
+	}
 	parent := dataRuleORParent{TenantID: 1, ChildID: bobID}
 	if err := db.Create(&parent).Error; err != nil {
 		t.Fatal(err)
