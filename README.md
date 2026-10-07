@@ -226,6 +226,10 @@ affected, err := repo.UpdateByCond(updater)
 
 版本字段可以位于匿名值嵌入，也可以位于标记 `gorm:"embedded"` 的命名值嵌入中，支持多层值嵌入。嵌入业务字段同样按非零值更新，成功后回写嵌入字段中的版本号。
 
+嵌入字段的 `gorm:"embeddedPrefix:addr_"` 会逐层累加到列名，也作用于内层显式 `column` 标签。构建器返回的规范或别名实例会初始化嵌入指针；不同前缀的嵌入字段应使用独立实例，避免同一字段地址对应多个列名。乐观锁版本字段目前支持值嵌入。
+
+`UpdateByIdTx` 在 UPDATE 成功后立即回写实体版本号。外层事务随后回滚时，数据库变更被撤销，内存中的实体版本号仍保留新值；重试前应重新查询实体或丢弃该实例。
+
 需要指定字段、包含零值、只 UPDATE 并检查结果时，用现有 Updater。以下以含 Weight、Enabled 和 Version 的配置模型为例，字段指针来自 Repository 的构建器：
 
 ```go
@@ -407,6 +411,8 @@ u, um := gplus.NewUpdater[User](ctx)
 u.Set(&um.Name, "更新名字")
 user, created, err := repo.FirstOrUpdate(q, u, &User{Name: "新用户"})
 ```
+
+`FirstOrUpdate` 的事务、查找、创建及重读使用 Query Context，更新阶段使用 Updater Context。`created=false` 表示找到了已有记录；Updater 条件或数据规则未命中时，仍可能返回原记录且无错误。需要确认更新行数时，使用 `UpdateByCond`。
 
 ### 原子增减
 
