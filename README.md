@@ -224,6 +224,8 @@ affected, err := repo.UpdateByCond(updater)
 
 `UpdateById` 两个分支都忽略普通字段的 `0/false/空串`。无 version 时，不存在或不可见目标也可能返回 nil；有 version 时，零行返回 `ErrOptimisticLock`，原因可能是不匹配版本、不存在或 DataRule 不可见，不能据此无条件重试。
 
+版本字段可以位于匿名值嵌入，也可以位于标记 `gorm:"embedded"` 的命名值嵌入中，支持多层值嵌入。嵌入业务字段同样按非零值更新，成功后回写嵌入字段中的版本号。
+
 需要指定字段、包含零值、只 UPDATE 并检查结果时，用现有 Updater。以下以含 Weight、Enabled 和 Version 的配置模型为例，字段指针来自 Repository 的构建器：
 
 ```go

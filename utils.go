@@ -149,8 +149,10 @@ func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
 		}
 		currentOffset := baseOffset + field.Offset
 
-		// 递归处理非指针匿名嵌入字段（与 parseFields 保持一致）
-		if field.Anonymous {
+		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
+		_, isEmbedded := tagSetting["EMBEDDED"]
+		// 递归处理匿名或显式标记的值嵌入字段（与 parseFields 保持一致）。
+		if field.Anonymous || isEmbedded {
 			ft := field.Type
 			if ft.Kind() == reflect.Ptr {
 				continue // 指针嵌入，偏移量不可推算
@@ -175,7 +177,6 @@ func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
 			continue // 不支持的类型，忽略
 		}
 
-		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
 		colName := tagSetting["COLUMN"]
 		if colName == "" {
 			colName = nsColumnName(field.Name)
@@ -284,8 +285,10 @@ func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMa
 		currentOffset := baseOffset + field.Offset
 		fv := v.Field(i)
 
-		// 递归处理非指针匿名嵌入字段
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
+		_, isEmbedded := tagSetting["EMBEDDED"]
+		// 与版本字段扫描一致，递归提取匿名或显式标记的值嵌入字段。
+		if (field.Anonymous || isEmbedded) && field.Type.Kind() == reflect.Struct {
 			fillUpdateMap(field.Type, fv, currentOffset, offsetMap, excludeVersionOffset, result)
 			continue
 		}
@@ -300,7 +303,6 @@ func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMa
 		}
 
 		// 排除主键字段（不放进 SET）
-		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
 		if _, isPK := tagSetting["PRIMARYKEY"]; isPK {
 			continue
 		}
