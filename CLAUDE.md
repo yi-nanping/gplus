@@ -53,6 +53,8 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 **关键不变量**：`NewQuery[T]` 和 `NewUpdater[T]` 均返回 `(builder, *T)`。`*T` 是已注册的单例。所有字段地址参数（`&model.Name`）必须来自该返回的指针，而不是另外创建的结构体。
 
+值嵌入与指针嵌入的 `embeddedPrefix` 逐层累加，显式 `column` 也保留前缀。规范及 alias 实例会初始化嵌入指针；注册、注销和 alias 使用同一指针遍历路径。不同前缀须使用独立嵌入实例，避免同地址映射歧义；版本字段仍只支持值嵌入。
+
 ### `ScopeBuilder`（builder.go）
 
 嵌入在 `Query[T]` 和 `Updater[T]` 中的共享基础结构。保存条件、select、join、排序、分组、having、预加载、锁配置。提供四种构建路径：

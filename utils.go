@@ -54,30 +54,100 @@ func reflectStructSchema(model any, tag, label string) map[uintptr]string {
 	return actual.(map[uintptr]string)
 }
 
-// initPtrEmbeds 递归初始化结构体中所有 nil 指针匿名嵌入字段。
+// embeddedStructType 返回匿名或显式嵌入字段的结构体类型。
+func embeddedStructType(field reflect.StructField, settings map[string]string) reflect.Type {
+	if !field.IsExported() {
+		return nil
+	}
+	if _, ignored := settings["-"]; ignored {
+		return nil
+	}
+	if _, embedded := settings["EMBEDDED"]; !field.Anonymous && !embedded {
+		return nil
+	}
+	fieldType := field.Type
+	if fieldType.Kind() == reflect.Ptr {
+		fieldType = fieldType.Elem()
+	}
+	if fieldType.Kind() != reflect.Struct {
+		return nil
+	}
+	return fieldType
+}
+
+// parseEmbeddedStructField 先排除普通字段，避免为每个标量字段分配标签 map。
+func parseEmbeddedStructField(field reflect.StructField, tag string) (reflect.Type, map[string]string) {
+	if !field.IsExported() {
+		return nil, nil
+	}
+	fieldType := field.Type
+	if fieldType.Kind() == reflect.Ptr {
+		fieldType = fieldType.Elem()
+	}
+	if fieldType.Kind() != reflect.Struct {
+		return nil, nil
+	}
+	tagValue := field.Tag.Get(tag)
+	if tagValue == "" {
+		if field.Anonymous {
+			return fieldType, nil
+		}
+		return nil, nil
+	}
+	settings := schema.ParseTagSetting(tagValue, ";")
+	return embeddedStructType(field, settings), settings
+}
+
+// ptrEmbedTypeCache 的类型属性不可变，注册/注销模型时无需清理。
+var ptrEmbedTypeCache sync.Map // reflect.Type -> bool
+
+func hasGormPtrEmbeds(t reflect.Type) bool {
+	if cached, ok := ptrEmbedTypeCache.Load(t); ok {
+		return cached.(bool)
+	}
+	found := false
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		innerType, _ := parseEmbeddedStructField(field, "gorm")
+		if innerType != nil && (field.Type.Kind() == reflect.Ptr || hasGormPtrEmbeds(innerType)) {
+			found = true
+			break
+		}
+	}
+	actual, _ := ptrEmbedTypeCache.LoadOrStore(t, found)
+	return actual.(bool)
+}
+
+// initPtrEmbeds 递归初始化匿名或显式嵌入中的 nil 指针，包括值嵌入层。
 // 确保规范单例的所有指针嵌入字段均已分配，以便在运行时获取真实内存地址。
 func initPtrEmbeds(v reflect.Value) {
 	t := v.Type()
+	if !hasGormPtrEmbeds(t) {
+		return
+	}
 	for i := 0; i < t.NumField(); i++ {
-		// 获取字段类型
 		f := t.Field(i)
-		// 是匿名嵌入 && 是指针类型 && 指针指向结构体
-		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
+		fieldType, _ := parseEmbeddedStructField(f, "gorm")
+		if fieldType == nil {
 			continue
 		}
-		// 获取字段值
 		fv := v.Field(i)
-		if fv.IsNil() {
-			// 分配新实例
-			fv.Set(reflect.New(f.Type.Elem()))
+		if f.Type.Kind() == reflect.Ptr {
+			if fv.IsNil() {
+				fv.Set(reflect.New(fieldType))
+			}
+			fv = fv.Elem()
 		}
-		// 递归处理
-		initPtrEmbeds(fv.Elem())
+		initPtrEmbeds(fv)
 	}
 }
 
 // parseFields 解析字段
 func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[uintptr]string) {
+	parseFieldsWithPrefix(t, tag, label, baseOffset, "", res)
+}
+
+func parseFieldsWithPrefix(t reflect.Type, tag, label string, baseOffset uintptr, prefix string, res map[uintptr]string) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
@@ -100,14 +170,13 @@ func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[
 		// 递归处理：匿名嵌套或标记为 EMBEDDED 的字段
 		_, isEmbedded := tagSetting["EMBEDDED"]
 		if field.Anonymous || isEmbedded {
-			fieldType := field.Type
-			if fieldType.Kind() == reflect.Ptr {
+			if field.Type.Kind() == reflect.Ptr {
 				// 指针嵌入字段（如 *EmbedStruct）：内层字段的真实地址由独立堆分配决定，
 				// 无法通过外层结构体 baseAddr+offset 推算，跳过以避免错误地址映射。
 				continue
 			}
-			if fieldType.Kind() == reflect.Struct {
-				parseFields(fieldType, tag, label, currentOffset, res)
+			if fieldType := embeddedStructType(field, tagSetting); fieldType != nil {
+				parseFieldsWithPrefix(fieldType, tag, label, currentOffset, prefix+tagSetting["EMBEDDEDPREFIX"], res)
 			}
 			continue
 		}
@@ -121,7 +190,7 @@ func parseFields(t reflect.Type, tag, label string, baseOffset uintptr, res map[
 			// 这里的命名转换可以根据需要替换
 			columnName = nsColumnName(field.Name)
 		}
-		res[currentOffset] = columnName
+		res[currentOffset] = prefix + columnName
 	}
 }
 
@@ -142,6 +211,10 @@ var (
 
 // findVersionField 递归扫描结构体，返回标注 `gplus:"version"` 的字段信息。
 func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
+	return findVersionFieldWithPrefix(t, baseOffset, "")
+}
+
+func findVersionFieldWithPrefix(t reflect.Type, baseOffset uintptr, prefix string) *versionFieldInfo {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if !field.IsExported() {
@@ -150,6 +223,9 @@ func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
 		currentOffset := baseOffset + field.Offset
 
 		tagSetting := schema.ParseTagSetting(field.Tag.Get("gorm"), ";")
+		if _, ignored := tagSetting["-"]; ignored {
+			continue
+		}
 		_, isEmbedded := tagSetting["EMBEDDED"]
 		// 递归处理匿名或显式标记的值嵌入字段（与 parseFields 保持一致）。
 		if field.Anonymous || isEmbedded {
@@ -158,7 +234,7 @@ func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
 				continue // 指针嵌入，偏移量不可推算
 			}
 			if ft.Kind() == reflect.Struct {
-				if info := findVersionField(ft, currentOffset); info != nil {
+				if info := findVersionFieldWithPrefix(ft, currentOffset, prefix+tagSetting["EMBEDDEDPREFIX"]); info != nil {
 					return info
 				}
 			}
@@ -181,7 +257,7 @@ func findVersionField(t reflect.Type, baseOffset uintptr) *versionFieldInfo {
 		if colName == "" {
 			colName = nsColumnName(field.Name)
 		}
-		return &versionFieldInfo{offset: currentOffset, columnName: colName, kind: kind}
+		return &versionFieldInfo{offset: currentOffset, columnName: prefix + colName, kind: kind}
 	}
 	return nil
 }

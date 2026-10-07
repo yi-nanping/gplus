@@ -48,47 +48,50 @@ func unregisterModel[T any]() {
 // 指针嵌入的内层字段由独立堆分配，无法通过静态 baseAddr+offset 推算，
 // 必须在实例分配后解引用指针字段，取得真实地址再注册。支持多层嵌套递归。
 func registerPtrEmbedFields(val reflect.Value, tag, label string) {
-	t := val.Type()
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
-			continue // 只处理指针匿名嵌入字段
-		}
-		fv := val.Field(i)
-		if fv.IsNil() {
-			continue // nil 无地址，跳过
-		}
-		inner := fv.Elem()                                                   // 解引用，拿到内层实例
-		innerBaseAddr := inner.UnsafeAddr()                                  // 内层实例真实堆地址
-		innerOffsetMap := reflectStructSchema(inner.Interface(), tag, label) // 内层字段 offset → 列名
+	walkPtrEmbedFields(val, tag, "", func(inner reflect.Value, prefix string) {
+		innerBaseAddr := inner.UnsafeAddr()
+		innerOffsetMap := reflectStructSchema(inner.Interface(), tag, label)
 		for offset, name := range innerOffsetMap {
-			columnNameCache.Store(innerBaseAddr+offset, name) // 注册绝对地址
+			columnNameCache.Store(innerBaseAddr+offset, prefix+name)
 		}
-		registerPtrEmbedFields(inner, tag, label) // 递归，支持多层嵌套
-	}
+	})
 }
 
 // unregisterPtrEmbedFields 清理指针嵌入字段注册的绝对地址映射。
 // 与 registerPtrEmbedFields 配对使用，确保 unregisterModel 完整清理缓存，不留悬空条目。
 func unregisterPtrEmbedFields(val reflect.Value, tag, label string) {
-	t := val.Type()
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		// 不是指针匿名嵌入
-		if !f.Anonymous || f.Type.Kind() != reflect.Ptr || f.Type.Elem().Kind() != reflect.Struct {
-			continue
-		}
-		fv := val.Field(i)
-		if fv.IsNil() {
-			continue
-		}
-		inner := fv.Elem()
+	walkPtrEmbedFields(val, tag, "", func(inner reflect.Value, _ string) {
 		innerBaseAddr := inner.UnsafeAddr()
 		innerOffsetMap := reflectStructSchema(inner.Interface(), tag, label)
 		for offset := range innerOffsetMap {
-			columnNameCache.Delete(innerBaseAddr + offset) // 删除绝对地址条目
+			columnNameCache.Delete(innerBaseAddr + offset)
 		}
-		unregisterPtrEmbedFields(inner, tag, label) // 递归清理多层嵌套
+	})
+}
+
+// walkPtrEmbedFields 穿过值嵌入层遍历实际指针嵌入，累积外层列名前缀。
+// 注册、注销和 alias 映射复用相同遍历路径，避免遗漏命名或多层嵌入。
+func walkPtrEmbedFields(val reflect.Value, tag, prefix string, visit func(reflect.Value, string)) {
+	t := val.Type()
+	if tag == "gorm" && !hasGormPtrEmbeds(t) {
+		return
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		fieldType, settings := parseEmbeddedStructField(f, tag)
+		if fieldType == nil {
+			continue
+		}
+		fv := val.Field(i)
+		innerPrefix := prefix + settings["EMBEDDEDPREFIX"]
+		if f.Type.Kind() == reflect.Ptr {
+			if fv.IsNil() {
+				continue
+			}
+			fv = fv.Elem()
+			visit(fv, innerPrefix)
+		}
+		walkPtrEmbedFields(fv, tag, innerPrefix, visit)
 	}
 }
 
@@ -154,7 +157,6 @@ func RegisterModel(models ...any) {
 		if _, loaded := modelInstanceCache.LoadOrStore(t, model); loaded {
 			continue
 		}
-
 		// 仅第一个写入者执行：将偏移量转换为绝对地址并缓存
 		baseAddr := val.Pointer()
 		offsetMap := reflectStructSchema(model, "gorm", "COLUMN")

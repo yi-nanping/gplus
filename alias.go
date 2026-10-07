@@ -17,12 +17,13 @@ type AnyQuery interface {
 
 // aliasEntry 单条 alias 注册项
 type aliasEntry struct {
-	instance any          // *X 独立实例（reflect.New 创建）
-	name     string       // SQL 中的 alias name
-	typ      reflect.Type // X 的反射类型
-	addrLow  uintptr      // 实例地址范围下界（含）
-	addrHigh uintptr      // 实例地址范围上界（不含）
-	revoked  bool         // N4：Clear() 时翻转，lookupAddr 命中 revoked 直接返回错误
+	instance  any                // *X 独立实例（reflect.New 创建）
+	name      string             // SQL 中的 alias name
+	typ       reflect.Type       // X 的反射类型
+	addrLow   uintptr            // 实例地址范围下界（含）
+	addrHigh  uintptr            // 实例地址范围上界（不含）
+	ptrFields map[uintptr]string // 指针嵌入的独立堆地址 -> 带前缀列名
+	revoked   bool               // N4：Clear() 时翻转，lookupAddr 命中 revoked 直接返回错误
 }
 
 // coreMetadata 是横切关注点的扩展容器
@@ -94,13 +95,24 @@ func (c *queryCore) addAlias(name string, typ reflect.Type, instance any) error 
 	}
 	addrLow := uintptr(reflect.ValueOf(instance).Pointer())
 	addrHigh := addrLow + typ.Size()
+	var ptrFields map[uintptr]string
+	walkPtrEmbedFields(reflect.ValueOf(instance).Elem(), "gorm", "", func(inner reflect.Value, prefix string) {
+		if ptrFields == nil {
+			ptrFields = make(map[uintptr]string)
+		}
+		baseAddr := inner.UnsafeAddr()
+		for offset, column := range reflectStructSchema(inner.Interface(), "gorm", "COLUMN") {
+			ptrFields[baseAddr+offset] = prefix + column
+		}
+	})
 	c.aliases[name] = &aliasEntry{
-		instance: instance,
-		name:     name,
-		typ:      typ,
-		addrLow:  addrLow,
-		addrHigh: addrHigh,
-		revoked:  false,
+		instance:  instance,
+		name:      name,
+		typ:       typ,
+		addrLow:   addrLow,
+		addrHigh:  addrHigh,
+		ptrFields: ptrFields,
+		revoked:   false,
 	}
 	return nil
 }
@@ -111,6 +123,12 @@ func (c *queryCore) addAlias(name string, typ reflect.Type, instance any) error 
 // N4：revoked entry 直接返回未命中（让调用方累积 ErrAliasRevoked）。
 func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
 	for _, entry := range c.aliases {
+		if name, found := entry.ptrFields[addr]; found {
+			if entry.revoked {
+				return "", "", false
+			}
+			return entry.name, name, true
+		}
 		if entry.addrLow <= addr && addr < entry.addrHigh {
 			if entry.revoked {
 				// N4：revoked，由调用方 resolveColumnName 累积 ErrAliasRevoked
@@ -133,7 +151,8 @@ func (c *queryCore) lookupAddr(addr uintptr) (alias, col string, ok bool) {
 // 用于 resolveColumnName 在 lookupAddr 返回 false 后累积 ErrAliasRevoked。
 func (c *queryCore) hadRevokedHit(addr uintptr) bool {
 	for _, entry := range c.aliases {
-		if entry.addrLow <= addr && addr < entry.addrHigh && entry.revoked {
+		_, ptrHit := entry.ptrFields[addr]
+		if entry.revoked && (ptrHit || entry.addrLow <= addr && addr < entry.addrHigh) {
 			return true
 		}
 	}
@@ -187,6 +206,7 @@ func As[X any](q AnyQuery, alias string) *X {
 	// 创建独立 alias 实例（reflect.New，地址独立于规范单例）
 	typ := reflect.TypeOf((*X)(nil)).Elem()
 	instancePtr := reflect.New(typ)
+	initPtrEmbeds(instancePtr.Elem())
 	instance := instancePtr.Interface().(*X)
 	if err := core.addAlias(alias, typ, instance); err != nil {
 		core.appendErr(err)
