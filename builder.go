@@ -234,14 +234,45 @@ func (b *ScopeBuilder) BuildCount() func(*gorm.DB) *gorm.DB {
 		db = b.applyJoins(db)
 		// 分组与聚合过滤
 		db = b.applyGroupHaving(db, qL, qR)
-		// Distinct：需同时传入 select 字段，GORM 才能生成 SELECT count(*) FROM (SELECT DISTINCT ...) 子查询
-		if b.distinct && len(b.selects) > 0 {
-			db = b.applySelects(db, qL, qR)
+		// COUNT 的 DISTINCT 投影只属于去重子查询，不覆盖聚合或 First 的投影。
+		if _, counting := db.Statement.Dest.(*int64); counting && b.distinct {
+			if len(b.selects) > 0 {
+				db = b.applySelects(db, qL, qR)
+			} else {
+				delete(db.Statement.Clauses, "SELECT")
+			}
+			db = buildDistinctCount(db)
 		}
 		db = b.applyDistinct(db)
 		db = b.applyScopes(db)
 		return db
 	}
+}
+
+// buildDistinctCount 在同一 Query callback 中构建去重子查询，保留主模型、Context
+// 和 callback 追加的筛选条件；不通过 Raw/Row 另开执行路径。
+func buildDistinctCount(db *gorm.DB) *gorm.DB {
+	selectClause := db.Statement.Clauses["SELECT"]
+	previous := selectClause.Builder
+	selectClause.Builder = func(c clause.Clause, builder clause.Builder) {
+		stmt := builder.(*gorm.Statement)
+		stmt.WriteString("SELECT count(*) FROM (")
+		c.Builder = nil
+		if previous != nil {
+			previous(c, builder)
+		} else {
+			c.Build(builder)
+		}
+		stmt.WriteByte(' ')
+		stmt.Build("FROM", "WHERE", "GROUP BY")
+		stmt.WriteString(") ")
+		stmt.WriteQuoted("gplus_count")
+		// 外层只返回一行计数，避免 GORM Count 用分组 RowsAffected 覆盖结果。
+		delete(stmt.Clauses, "GROUP BY")
+	}
+	db.Statement.Clauses["SELECT"] = selectClause
+	db.Statement.BuildClauses = []string{"SELECT"}
+	return db
 }
 
 // BuildQuery 专门用于查询 (Find/First/List)
@@ -618,6 +649,10 @@ func applyConditions(db *gorm.DB, conditions []condition, qL, qR string) *gorm.D
 				// GORM v2 分组条件需传入 *gorm.DB，不支持 func(*gorm.DB)*gorm.DB 签名
 				subDb := d.Session(&gorm.Session{NewDB: true})
 				subDb = buildCond(subDb, cond.group)
+				if subDb.Error != nil {
+					_ = d.AddError(subDb.Error)
+					return d
+				}
 				if cond.isOr {
 					d = d.Or(subDb)
 				} else {

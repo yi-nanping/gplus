@@ -500,14 +500,17 @@ func TestUpdater_OrWhereRaw_Empty(t *testing.T) {
 // TestUpdater_OrWhereRaw_SingleArg 验证 OrWhereRaw 单参数路径
 func TestUpdater_OrWhereRaw_SingleArg(t *testing.T) {
 	ctx := context.Background()
-	u, _ := NewUpdater[TestUser](ctx)
+	u, m := NewUpdater[TestUser](ctx)
+	u.Set(&m.Name, "changed")
 	u.OrWhereRaw("age > ?", 18)
 	assertError(t, u.GetError(), false, "单参数 OrWhereRaw 不应有错误")
 	if len(u.conditions) != 1 {
 		t.Fatalf("期望 1 个条件，实际 %d", len(u.conditions))
 	}
-	if u.conditions[0].value != 18 {
-		t.Errorf("单参数应直接存为值，实际 %v", u.conditions[0].value)
+	preview := newDryRunDB(t).Model(new(TestUser)).Scopes(u.BuildUpdate()).Updates(u.UpdateMap())
+	if preview.Error != nil || !strings.Contains(preview.Statement.SQL.String(), "age > ?") ||
+		len(preview.Statement.Vars) < 2 || preview.Statement.Vars[len(preview.Statement.Vars)-1] != 18 {
+		t.Fatalf("单参数绑定丢失: SQL=%s vars=%v err=%v", preview.Statement.SQL.String(), preview.Statement.Vars, preview.Error)
 	}
 }
 

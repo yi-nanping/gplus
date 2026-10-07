@@ -335,7 +335,7 @@ func PluckTx[T any, R any, D comparable](r *Repository[D, T], q *Query[T], col a
 		return nil, err
 	}
 	var result []R
-	colName, err := resolveColumnName(col)
+	colName, err := q.resolveColumnNameAny(col)
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +752,8 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 	}
 	err = r.db.WithContext(q.Context()).Transaction(func(tx *gorm.DB) error {
 		// BuildCount 路径：WHERE/JOIN，不含 SELECT/ORDER/LIMIT，确保 First 返回完整记录
-		if e := tx.Scopes(q.BuildCount()).First(&data).Error; e == nil {
+		lookup := tx.Scopes(q.BuildCount()).First(&data)
+		if e := lookup.Error; e == nil {
 			// 找到记录，执行更新。不检查 RowsAffected：u 侧 DataRule 拦截
 			// （affected=0）不视为错误，后续重读返回未变更行
 			if ue := tx.WithContext(u.Context()).Model(&data).Scopes(u.BuildUpdate()).Updates(u.setMap).Error; ue != nil {
@@ -766,7 +767,22 @@ func (r *Repository[D, T]) FirstOrUpdate(q *Query[T], u *Updater[T], defaults *T
 					// 重读带 DataRule（与查找阶段同源 q.Context()；规则已在事务前
 					// 经 q.DataRuleBuilder().GetError() 校验，此处必无新错误）
 					rq, _ := NewQuery[T](q.Context())
-					if re := tx.Scopes(rq.DataRuleBuilder().BuildCount()).First(&fresh, clause.Eq{Column: clause.PrimaryColumn, Value: pkVal}).Error; re != nil {
+					rq.DataRuleBuilder()
+					reloadDB := tx.Scopes(rq.BuildCount())
+					if len(rq.conditions) != 0 {
+						rq.tableName = q.tableName
+						rq.mainAlias = q.mainAlias
+						rq.mainAliasTable = q.mainAliasTable
+						for _, rule := range rq.conditions {
+							prefix, _, qualified := strings.Cut(rule.expr, ".")
+							if qualified && prefix != reloadStmt.Schema.Table && prefix != q.tableName && prefix != q.mainAlias {
+								// 查找后的 JOIN 已包含延迟 scope；保留 ON 及参数，不重跑 scope 或业务 WHERE。
+								reloadDB.Statement.Joins = append(lookup.Statement.Joins[:0:0], lookup.Statement.Joins...)
+								break
+							}
+						}
+					}
+					if re := reloadDB.First(&fresh, clause.Eq{Column: clause.PrimaryColumn, Value: pkVal}).Error; re != nil {
 						return re
 					}
 					data = fresh
@@ -974,7 +990,7 @@ func aggregate[T any, R any, D comparable](r *Repository[D, T], q *Query[T], fn 
 	if err = q.GetError(); err != nil {
 		return result, err
 	}
-	colName, err := resolveColumnName(col)
+	colName, err := q.resolveColumnNameAny(col)
 	if err != nil {
 		return result, err
 	}

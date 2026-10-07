@@ -337,6 +337,8 @@ min, err   := gplus.Min[User, int64, uint](repo, q, &m.Age)
 avg, err   := gplus.Avg[User, float64, uint](repo, q, &m.Age)
 ```
 
+聚合函数保留查询的筛选、JOIN 和 GROUP/HAVING，并使用传入的 `col` 构建聚合表达式；Query 的 `Select` 或 `Distinct(cols...)` 投影不会替换它，也不会把 `Sum` 改为 `SUM(DISTINCT col)`。`Pluck` 和聚合的字段指针可来自当前 Query 的规范模型或同链 alias。
+
 ### OnConflict（按唯一键 upsert）
 
 `InsertOnConflict` / `InsertBatchOnConflict` 支持数据库原生冲突处理，覆盖四种策略：

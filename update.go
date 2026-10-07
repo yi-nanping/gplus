@@ -590,17 +590,11 @@ func (u *Updater[T]) WhereRaw(sql string, args ...any) *Updater[T] {
 		u.errs = append(u.errs, errors.New("gplus: WhereRaw sql cannot be empty"))
 		return u
 	}
-	var val any
-	if len(args) == 1 {
-		val = args[0]
-	} else if len(args) > 1 {
-		val = args
-	}
 	u.conditions = append(u.conditions, condition{
 		expr:  sql,
 		isRaw: true,
 		isOr:  false,
-		value: val,
+		value: append([]any(nil), args...),
 	})
 	return u
 }
@@ -612,17 +606,11 @@ func (u *Updater[T]) OrWhereRaw(sql string, args ...any) *Updater[T] {
 		u.errs = append(u.errs, errors.New("gplus: OrWhereRaw sql cannot be empty"))
 		return u
 	}
-	var val any
-	if len(args) == 1 {
-		val = args[0]
-	} else if len(args) > 1 {
-		val = args
-	}
 	u.conditions = append(u.conditions, condition{
 		expr:  sql,
 		isRaw: true,
 		isOr:  true,
-		value: val,
+		value: append([]any(nil), args...),
 	})
 	return u
 }
@@ -662,8 +650,13 @@ func (u *Updater[T]) applyDataRule(rule DataRule) {
 	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
 	value := rule.Value
 
-	if value == "" && len(rule.Values) == 0 && c != "IS NULL" && c != "IS NOT NULL" {
-		return
+	// 仅合法操作符沿用空值忽略契约；非法类型仍须进入下方拒绝分支。
+	if value == "" && len(rule.Values) == 0 {
+		switch c {
+		case "=", "EQ", "<>", "!=", "NE", ">", "GT", ">=", "GE", "<", "LT", "<=", "LE",
+			"IN", "NOT IN", "LIKE", "LEFT_LIKE", "RIGHT_LIKE", "BETWEEN":
+			return
+		}
 	}
 
 	// 禁止原生 SQL 注入

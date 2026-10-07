@@ -189,16 +189,18 @@ func ownsJoinField(model reflect.Value, addr uintptr) bool {
 			return true
 		}
 	}
-	// 匿名指针嵌入字段位于独立分配的实例中，不能只检查主结构体地址范围。
-	for i := 0; i < model.NumField(); i++ {
-		field := model.Field(i)
-		if model.Type().Field(i).Anonymous && field.Kind() == reflect.Pointer && !field.IsNil() && field.Elem().Kind() == reflect.Struct {
-			if ownsJoinField(field.Elem(), addr) {
-				return true
+	// 命名、匿名及值嵌入内的指针字段均复用注册时的遍历路径。
+	owned := false
+	walkPtrEmbedFields(model, "gorm", "", func(inner reflect.Value, _ string) {
+		base := inner.Addr().Pointer()
+		for offset := range reflectStructSchema(inner.Interface(), "gorm", "COLUMN") {
+			if base+offset == addr {
+				owned = true
+				return
 			}
 		}
-	}
-	return false
+	})
+	return owned
 }
 
 func renderJoinOn(conditions []condition, qL, qR string) (string, []any) {

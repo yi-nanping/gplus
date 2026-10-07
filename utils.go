@@ -347,12 +347,18 @@ func buildUpdateMap(entity any, vInfo *versionFieldInfo) map[string]any {
 	}
 	offsetMap := reflectStructSchema(entity, "gorm", "COLUMN")
 	result := make(map[string]any)
-	fillUpdateMap(t, v, 0, offsetMap, vInfo.offset, result)
+	fillUpdateMap(t, v, 0, offsetMap, vInfo.offset, "", result)
+	// 指针嵌入具有独立地址，按其实际实例提取业务字段并累积列名前缀。
+	walkPtrEmbedFields(v, "gorm", "", func(inner reflect.Value, prefix string) {
+		innerOffsets := reflectStructSchema(inner.Interface(), "gorm", "COLUMN")
+		// version 仅支持值嵌入；指针内偏移不能与根 version 的偏移比较。
+		fillUpdateMap(inner.Type(), inner, 0, innerOffsets, ^uintptr(0), prefix, result)
+	})
 	return result
 }
 
 // fillUpdateMap 递归遍历结构体字段，将非零、非主键、非 version 的字段填入 result。
-func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMap map[uintptr]string, excludeVersionOffset uintptr, result map[string]any) {
+func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMap map[uintptr]string, excludeVersionOffset uintptr, prefix string, result map[string]any) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if !field.IsExported() {
@@ -365,7 +371,7 @@ func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMa
 		_, isEmbedded := tagSetting["EMBEDDED"]
 		// 与版本字段扫描一致，递归提取匿名或显式标记的值嵌入字段。
 		if (field.Anonymous || isEmbedded) && field.Type.Kind() == reflect.Struct {
-			fillUpdateMap(field.Type, fv, currentOffset, offsetMap, excludeVersionOffset, result)
+			fillUpdateMap(field.Type, fv, currentOffset, offsetMap, excludeVersionOffset, prefix, result)
 			continue
 		}
 
@@ -387,7 +393,7 @@ func fillUpdateMap(t reflect.Type, v reflect.Value, baseOffset uintptr, offsetMa
 			continue
 		}
 
-		result[colName] = fv.Interface()
+		result[prefix+colName] = fv.Interface()
 	}
 }
 

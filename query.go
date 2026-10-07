@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 type Query[T any] struct {
@@ -309,17 +310,11 @@ func (q *Query[T]) WhereRaw(sql string, args ...any) *Query[T] {
 		q.errs = append(q.errs, errors.New("gplus: WhereRaw sql cannot be empty"))
 		return q
 	}
-	var val any
-	if len(args) == 1 {
-		val = args[0]
-	} else if len(args) > 1 {
-		val = args
-	}
 	q.conditions = append(q.conditions, condition{
 		expr:  sql,
 		isRaw: true,
 		isOr:  false,
-		value: val,
+		value: append([]any(nil), args...),
 	})
 	return q
 }
@@ -331,17 +326,11 @@ func (q *Query[T]) OrWhereRaw(sql string, args ...any) *Query[T] {
 		q.errs = append(q.errs, errors.New("gplus: OrWhereRaw sql cannot be empty"))
 		return q
 	}
-	var val any
-	if len(args) == 1 {
-		val = args[0]
-	} else if len(args) > 1 {
-		val = args
-	}
 	q.conditions = append(q.conditions, condition{
 		expr:  sql,
 		isRaw: true,
 		isOr:  true,
-		value: val,
+		value: append([]any(nil), args...),
 	})
 	return q
 }
@@ -1064,9 +1053,13 @@ func (q *Query[T]) applyDataRule(rule DataRule) {
 	c := strings.ToUpper(strings.TrimSpace(rule.Condition))
 	value := rule.Value
 
-	// 1. 处理空值情况
-	if value == "" && len(rule.Values) == 0 && c != "IS NULL" && c != "IS NOT NULL" {
-		return
+	// 1. 仅合法操作符沿用空值忽略契约；非法类型仍须进入下方拒绝分支。
+	if value == "" && len(rule.Values) == 0 {
+		switch c {
+		case "=", "EQ", "<>", "!=", "NE", ">", "GT", ">=", "GE", "<", "LT", "<=", "LE",
+			"IN", "NOT IN", "LIKE", "LEFT_LIKE", "RIGHT_LIKE", "BETWEEN":
+			return
+		}
 	}
 
 	// 2. 禁止原生 SQL 注入：SQL/USE_SQL_RULES 条件类型存在 SQL 注入风险，
@@ -1304,7 +1297,7 @@ func reflectPointerAddr(v any) uintptr {
 	return reflect.ValueOf(v).Pointer()
 }
 
-// aliasSchemaTableName 根据 reflect.Type 推导 GORM 默认表名（复用 nsColumnName 转蛇形 + 复数）。
+// aliasSchemaTableName 根据 reflect.Type 推导 GORM 默认表名。
 // 例：Order → "orders"，UserProfile → "user_profiles"。
 // 若 X 实现了 TableName() string，则使用自定义表名；否则走默认规则。
 func aliasSchemaTableName(typ reflect.Type) string {
@@ -1320,7 +1313,7 @@ func aliasSchemaTableName(typ reflect.Type) string {
 		}
 	}
 	// 默认：蛇形 + 复数（GORM 默认命名规范）
-	return nsColumnName(typ.Name()) + "s"
+	return (schema.NamingStrategy{}).TableName(typ.Name())
 }
 
 // mainTableName 返回 T 的主表 table 名（用于 resolveColumnName 顶层 fallback 加前缀）。
