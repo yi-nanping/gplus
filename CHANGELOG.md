@@ -2,6 +2,23 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.14.1] - 2026-10-08
+
+### 修复
+
+- 拒绝空值的非法 DataRule 操作符，保留合法操作符的空值忽略契约；嵌套分组中的子查询错误传回父层，阻止条件缺失导致过量读取或更新。
+- 修正单值、多列及分组 Distinct 的 Count/Page/PageAs，通过 Query callback 对去重结果计数；聚合入口保留自身表达式，避免 Query 投影覆盖聚合结果。
+- 原样保存 Raw 参数列表，修正 nil、切片及数据库子查询绑定；Pluck 和聚合支持当前查询链中的合法 alias 字段，继续拒绝撤销的 alias。
+- 指针嵌入模型的乐观锁更新正确提取业务字段，保留累计前缀、非零更新和版本回写；JOIN ON 字段归属检查覆盖命名指针和多层嵌入。
+- 默认 alias 表名遵循 GORM 复数命名规则，继续优先使用模型的 TableName。
+- FirstOrUpdate 在副表数据规则需要时保留查找阶段的实际 JOIN、ON 参数及延迟 scope JOIN，保证重读和事务回滚；不重新执行业务 scope，也不恢复旧业务 WHERE。
+
+### 验证与升级注意
+
+- 新增 19 个正式回归入口，覆盖可见行、受影响行、存储状态、事务回滚及 callback/Context；不新增公共 API 或升级依赖。
+- 本地根模块与独立 tests 模块的 build、vet、tidy、race 检查及独立消费者检查通过，真实数据库执行为 SQLite；14 项未配置的 MySQL/PostgreSQL 测试跳过。发布提交的真库结果以 GitHub CI 为准。
+- Oracle/DM 仅完成带标签编译，未执行真库验证。权限与查询修复会收紧原先错误的结果范围，下游应回归实际查询、更新和事务调用链。
+
 ## [0.14.0] - 2026-10-07
 
 ### 新增
