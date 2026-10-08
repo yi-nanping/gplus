@@ -25,7 +25,7 @@ func TestDistinctCount_RealDriverSQL(t *testing.T) {
 			}
 			ctx := context.WithValue(context.Background(), DataRuleKey, []DataRule{{Column: "tenant_id", Condition: "=", Value: "1"}})
 			q, m := NewQuery[auditFixRow](ctx)
-			q.SelectRaw("age + ? AS shifted", 5).Select(&m.Name).Distinct().WhereRaw("? IS NULL", nil).Page(2, 1)
+			q.SelectRaw("age + ? AS shifted", 5).Select(&m.Name).Distinct().WhereRaw("CAST(? AS CHAR) IS NULL", nil).Page(2, 1)
 			var count int64
 			preview := db.WithContext(ctx).Model(new(auditFixRow)).Scopes(q.DataRuleBuilder().BuildCount()).Count(&count)
 			sql := preview.Statement.SQL.String()

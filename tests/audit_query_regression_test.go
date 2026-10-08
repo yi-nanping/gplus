@@ -94,7 +94,8 @@ func TestRawBindings_QueryAndUpdater(t *testing.T) {
 			arg       any
 			want      int
 		}{
-			{"nil", "? IS NULL", nil, 3},
+			// 显式类型使 PostgreSQL 能推断 nil 参数，仍验证占位符绑定。
+			{"nil", "CAST(? AS CHAR) IS NULL", nil, 3},
 			{"slice", "id IN (?)", []any{1, 2}, 2},
 		} {
 			t.Run(tc.name+"/or="+testBoolName(useOr), func(t *testing.T) {
