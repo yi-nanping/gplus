@@ -49,12 +49,12 @@ func SubQuery[X any](outer AnyQuery) (*Query[X], *X) {
 	return sub, x
 }
 
-// SubQueryAs 派生子查询并指定主表 alias。
-// 等价于 SubQuery + As(sub, alias)，但合并为单步以避免双初始化。
+// SubQueryAs 派生子查询并指定主表 alias，构建时物化为 FROM table AS alias。
 //
 // 错误处理：
 //   - outer == nil：返回带 ErrSubqueryOuterNil 累积错误的 dud sub（H4）
 //   - alias 不合法：由 NewQueryAs 内部 As 校验逻辑累积 ErrAliasInvalidName
+//   - alias 与可见外层别名重名：累积 ErrAliasDuplicate，防止相关列被内层遮蔽
 func SubQueryAs[X any](outer AnyQuery, alias string) (*Query[X], *X) {
 	if outer == nil {
 		// H4：返回带预置错误的 dud sub
@@ -66,9 +66,14 @@ func SubQueryAs[X any](outer AnyQuery, alias string) (*Query[X], *X) {
 	ctx := core.context()
 	// NewQueryAs 内部调用 As(q, alias)，完成主表 alias 注册和 addrLow/addrHigh 计算
 	sub, x := NewQueryAs[X](ctx, alias)
-	// C-1：子查询不物化 FROM（同 SubQuery）。SubQueryAs 自定义别名的 FROM 物化属既有不支持限制。
-	sub.mainAlias = ""
-	sub.mainAliasTable = ""
+	// 自定义主别名必须物化到子查询 FROM，供相关列引用及软删除条件共同使用。
 	sub.gplusCore().outerQueryRef = outer
+	// 禁止内层主别名遮蔽外层 alias，否则相关列会意外指向内层表。
+	for current := outer; current != nil; current = current.gplusCore().outerQueryRef {
+		if _, exists := current.gplusCore().aliases[alias]; exists {
+			sub.gplusCore().appendErr(ErrAliasDuplicate)
+			break
+		}
+	}
 	return sub, x
 }

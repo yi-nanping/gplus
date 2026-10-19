@@ -441,7 +441,10 @@ func (b *ScopeBuilder) applyMainAlias(db *gorm.DB, qL, qR string) *gorm.DB {
 	if !validTableName.MatchString(table) {
 		return db // 表名非法：保守不物化（异常会在 GORM 执行层暴露）
 	}
-	return db.Table(qL + table + qR + " AS " + qL + b.mainAlias + qR)
+	db = db.Table(quoteColumn(table, qL, qR) + " AS " + quoteColumn(b.mainAlias, qL, qR))
+	// GORM 的 Table 正则不能提取带引号的 alias，需同步当前表供软删除条件引用。
+	db.Statement.Table = b.mainAlias
+	return db
 }
 
 // applySelects 将 selects 列表渲染到 db：零回归路径（无 args/exprParts）直接 quoteColumns；

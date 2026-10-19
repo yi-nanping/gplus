@@ -206,8 +206,8 @@ func TestMainAlias_datarule_selfjoin_ambiguous(t *testing.T) {
 	}
 }
 
-// AC-11：主别名查询走 First 路径（GetOne）因 GORM 自动 ORDER BY closure.id 裸表名被别名遮蔽而失败（已知限制）
-func TestMainAlias_first_path_not_supported(t *testing.T) {
+// 主别名查询的 First 自动主键排序须使用 alias，且返回正确模型字段。
+func TestMainAlias_first_path_uses_alias(t *testing.T) {
 	repo, _ := setupTestDB[Closure](t)
 	ctx := context.Background()
 	if err := repo.Save(ctx, &Closure{AncestorID: 1, DescendantID: 5, Depth: 0}); err != nil {
@@ -217,10 +217,12 @@ func TestMainAlias_first_path_not_supported(t *testing.T) {
 	q, m := repo.NewQueryAs(ctx, "ext")
 	q.Eq(&m.DescendantID, 5)
 
-	_, err := repo.GetOne(q)
-	// 错误文本随方言不同（GORM 自动 ORDER BY closure.id 裸表名被别名遮蔽），公共子串仅表名 closure。
-	if err == nil || !strings.Contains(err.Error(), "closure") {
-		t.Fatalf("期望 First 路径报错（裸表名 closure 被别名遮蔽，已知限制），实际 err: %v", err)
+	row, err := repo.GetOne(q)
+	if err != nil {
+		t.Fatalf("主别名 First 应成功，实际 err: %v", err)
+	}
+	if row.AncestorID != 1 || row.DescendantID != 5 || row.Depth != 0 {
+		t.Fatalf("主别名 First 返回错误记录: %+v", row)
 	}
 }
 

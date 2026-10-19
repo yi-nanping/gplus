@@ -2,7 +2,6 @@ package gplus_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	. "github.com/yi-nanping/gplus"
@@ -57,9 +56,8 @@ func TestInsertSelectJoin_inserts_row_when_no_softdelete(t *testing.T) {
 	}
 }
 
-// AC-2：软删除模型自连接（不 Unscoped）报裸表名错误，零副作用（限制锁）。
-// GORM 软删除条件用裸表名 closure_sd.deleted_at，FROM 只有 ext/sub 别名 → 报错（与 Round 3a AC-11 同源）。
-func TestInsertSelectJoin_softdelete_bare_column_fails(t *testing.T) {
+// 软删除模型自连接时，主模型自动软删条件使用 alias，已删主记录不得被复制。
+func TestInsertSelectJoin_softdelete_uses_main_alias(t *testing.T) {
 	repo, db := setupTestDB[ClosureSD](t)
 	ctx := context.Background()
 	seeds := []ClosureSD{{AncestorID: 1, DescendantID: 5, Depth: 0}, {AncestorID: 5, DescendantID: 7, Depth: 0}}
@@ -67,6 +65,13 @@ func TestInsertSelectJoin_softdelete_bare_column_fails(t *testing.T) {
 		if err := repo.Save(ctx, &seeds[i]); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
+	}
+	deleted := ClosureSD{AncestorID: 9, DescendantID: 5, Depth: 0}
+	if err := repo.Save(ctx, &deleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&deleted).Error; err != nil {
+		t.Fatal(err)
 	}
 
 	q, ext := repo.NewQueryAs(ctx, "ext")
@@ -76,17 +81,16 @@ func TestInsertSelectJoin_softdelete_bare_column_fails(t *testing.T) {
 		SelectRaw("sub.descendant_id").
 		SelectRaw("ext.depth + sub.depth + 1")
 
-	_, err := InsertSelect(repo, ctx, []any{"ancestor_id", "descendant_id", "depth"}, q)
-	// 错误文本随方言不同（SQLite: no such column；MySQL: Unknown column；PG: invalid reference to FROM-clause），
-	// 三方言公共子串仅表名 closure_sd（PG 错误不含 .deleted_at），故只断到表名 + 零副作用。
-	if err == nil || !strings.Contains(err.Error(), "closure_sd") {
-		t.Fatalf("期望报错（GORM 软删除裸表名 closure_sd 被别名遮蔽），实际: %v", err)
+	affected, err := InsertSelect(repo, ctx, []any{"ancestor_id", "descendant_id", "depth"}, q)
+	if err != nil || affected != 1 {
+		t.Fatalf("带主别名软删条件的 InsertSelect affected=%d err=%v", affected, err)
 	}
-	// 零副作用：closure_sd 未删行数仍 2（GORM Count 自动排除软删，本例无软删）。
-	var n int64
-	db.Model(&ClosureSD{}).Count(&n)
-	if n != 2 {
-		t.Fatalf("行数期望 2（无插入副作用），实际 %d", n)
+	var rows []ClosureSD
+	if err := db.Order("id").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[2].AncestorID != 1 || rows[2].DescendantID != 7 || rows[2].Depth != 1 {
+		t.Fatalf("仅应复制活跃主记录的路径，实际: %+v", rows)
 	}
 }
 
