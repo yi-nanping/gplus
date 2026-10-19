@@ -16,8 +16,10 @@ type condition struct {
 	expr     string
 	operator string // =, <>, >, >=, <, <=, IN, NOT IN, LIKE, NOT LIKE, BETWEEN, NOT BETWEEN, IS NULL, IS NOT NULL
 	value    any
-	isOr     bool // true 为 OR，false 为 AND
-	isRaw    bool // 是否为原生 SQL
+	// rightColumn 非空时，右侧为已解析的列引用，不参与值绑定。
+	rightColumn string
+	isOr        bool // true 为 OR，false 为 AND
+	isRaw       bool // 是否为原生 SQL
 	// isDataRule 标记权限条件，构建时独立于业务 OR 条件进行 AND 组合。
 	isDataRule bool
 	// 用于存储嵌套的子条件块
@@ -40,6 +42,7 @@ type orderItem struct {
 // 渲染时覆盖 expr/isRaw 路径：遍历 parts 拼成加法片段，列经 quoteColumn、字面量走 ? 绑定。
 type selectItem struct {
 	expr      string
+	alias     string // 结果别名，独立于来源列名，在 build 期转义
 	args      []any
 	isRaw     bool
 	exprParts []exprPart
@@ -447,15 +450,15 @@ func (b *ScopeBuilder) applyMainAlias(db *gorm.DB, qL, qR string) *gorm.DB {
 	return db
 }
 
-// applySelects 将 selects 列表渲染到 db：零回归路径（无 args/exprParts）直接 quoteColumns；
-// 绑定路径展平 args，并对 exprParts 渲染加法片段（列名 quoteColumn、字面量 ? 绑定，" + " 连接）。
+// applySelects 将 selects 列表渲染到 db：普通列直接 quoteColumns；
+// 表达式和别名路径展平 args，来源列及结果别名分别转义，字面量走参数绑定。
 func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 	if len(b.selects) > 0 {
-		// 检查是否需要走绑定路径：含 args（SelectRaw 绑定）或含 exprParts（SelectExpr 表达式树）。
+		// 含绑定参数、表达式树或独立结果别名时，统一渲染为投影片段。
 		// 纯 Add(Col,Col) 无字面量但仍需拼 "col + col"，不能走只 quoteColumn 单列的零回归路径。
 		needsBindingPath := false
 		for _, it := range b.selects {
-			if len(it.args) > 0 || it.exprParts != nil {
+			if len(it.args) > 0 || it.exprParts != nil || it.alias != "" {
 				needsBindingPath = true
 				break
 			}
@@ -490,6 +493,9 @@ func (b *ScopeBuilder) applySelects(db *gorm.DB, qL, qR string) *gorm.DB {
 					flatArgs = append(flatArgs, it.args...)
 				default:
 					parts[i] = quoteColumn(it.expr, qL, qR)
+				}
+				if it.alias != "" {
+					parts[i] += " AS " + quoteColumn(it.alias, qL, qR)
 				}
 			}
 			expr := strings.Join(parts, ", ")
@@ -528,6 +534,9 @@ func buildLeafSQL(cond condition, qL, qR string) (sqlStr string, args []any, ok 
 		return cond.expr, []any{cond.value}, true
 	}
 	quotedCol := quoteColumn(cond.expr, qL, qR)
+	if cond.rightColumn != "" {
+		return fmt.Sprintf("%s %s %s", quotedCol, cond.operator, quoteColumn(cond.rightColumn, qL, qR)), nil, true
+	}
 	switch cond.operator {
 	case OpBetween, OpNotBetween:
 		a, isSlice := cond.value.([]any)

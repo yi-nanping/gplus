@@ -129,7 +129,7 @@ func (q *Query[T]) appendJoinOn(method string, alias, leftCol, rightCol any, fn 
 	return q
 }
 
-// 新 ON 入口只接受当前链中的 alias 或主模型字段，避免全局缓存重绑其他模型。
+// 类型化 ON、投影别名和列比较只接受当前链中的 alias 或主模型字段，避免全局缓存重绑其他模型。
 func (q *Query[T]) resolveJoinField(field any) (string, error) {
 	if !isOnFieldPointer(field) {
 		return "", ErrInvalidPointer
@@ -137,6 +137,9 @@ func (q *Query[T]) resolveJoinField(field any) (string, error) {
 	addr := reflect.ValueOf(field).Pointer()
 	for current := AnyQuery(q); current != nil; current = current.gplusCore().outerQueryRef {
 		core := current.gplusCore()
+		if core == nil {
+			break
+		}
 		if alias, col, ok := core.lookupAddr(addr); ok {
 			return alias + "." + col, nil
 		}
