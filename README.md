@@ -432,6 +432,21 @@ affected, err := repo.IncrBy(u, &m.Score, 10)
 affected, err  = repo.DecrBy(u, &m.Score, 5)
 ```
 
+需要同时修改其他字段时，使用 `Updater.Incr` 构建赋值，再统一执行：
+
+```go
+u, m := gplus.NewUpdater[Job](ctx)
+u.Eq(&m.ID, id).Eq(&m.StateVersion, expectedVersion).
+    Set(&m.Status, "running").
+    Incr(&m.Attempt, 1).
+    Incr(&m.StateVersion, 1)
+affected, err := jobRepo.UpdateByCondTx(u, tx)
+```
+
+这些赋值和 CAS 条件进入同一条 UPDATE；`affected == 0` 表示没有匹配行，调用方按业务判断冲突或不可见目标。事务、DataRule 和 Context 沿用 `UpdateByCond/Tx`。`Incr(field, delta int64)` 仅接受主模型规范实例的字段指针，列名按 `gorm` tag 解析，delta 参数化；是否可执行加法由数据库字段类型决定。负数可用于自减。同列重复 `Set` / `SetExpr` / `Incr` 时最后一次赋值生效，`Select` / `Omit` 仍会限制实际更新列。
+
+`IncrBy` / `DecrBy` 保持原契约：Updater 提供筛选条件，调用只更新指定列，不合并已有的 Set 赋值。
+
 ### ListMap（列表转 map）
 
 ```go
@@ -465,9 +480,10 @@ type UserVO struct {
 
 // 多行
 var rows []UserVO
-q, _ := gplus.NewQuery[User](ctx)
-q.LeftJoin("dept", "users.dept_id = dept.id").
-    Select("users.name", "dept.name AS dept_name")
+q, u := gplus.NewQuery[User](ctx)
+dept := gplus.As[Dept](q, "dept")
+q.LeftJoinAs(dept, &u.DeptID, &dept.ID, "").
+    Select(&u.Name).SelectAs(&dept.Name, "dept_name")
 err := gplus.FindAs(repo, q, &rows)
 
 // 单行（无匹配返回 gorm.ErrRecordNotFound）
@@ -490,6 +506,8 @@ err := db.Transaction(func(tx *gorm.DB) error {
 - 跨表 JOIN 列必须 SQL alias，否则字段名冲突 GORM 无法定位
 
 > ⚠️ `SelectExpr`（v0.11.0+）的表达式列**无 AS 别名**，FindAs/FindOneAs 按名映射不可用。需读取表达式结果时改用 `SelectRaw("expr AS col_name", args...)` 配合 Dest 字段，或单列场景用 `RawScan`。
+
+`SelectAs(field, alias)` 追加一个字段投影，来源字段必须属于当前查询链或可见外层查询；支持 JOIN alias 和自定义 `gorm:"column:..."`。结果别名与物理列名独立，采用与表别名一致的标识符规则（1-32 个字母、数字或下划线，不能以数字开头），构建时按方言转义。它可与 `Select` / `SelectRaw` / `SelectExpr` 混用，仅为字段提供别名，不为任意表达式提供别名。字符串来源、非法指针和非法别名会累积构建错误，执行入口拒绝查询。
 
 **执行契约与规则范围**：
 
@@ -581,7 +599,7 @@ q.SelectExpr(gplus.Add(gplus.Col(&m.Depth), gplus.Lit(1))).Eq(&m.DescendantID, 5
 
 **要点**：
 - `Col(&model.Field)` 字段引用（地址在 SelectExpr/InsertSelectMap **调用期**解析，改列名构建期即报错）；`Lit(val)` 字面量走参数化绑定（防注入）；`Add(...)` 变长加法（YAGNI：当前仅 `+`）
-- `InsertSelectMap` 的 src **不得有手动投影**（Select/SelectRaw/SelectExpr），否则返回 `ErrInsertSelectMapConflict`（投影由映射 API 独占设置）
+- `InsertSelectMap` 的 src **不得有手动投影**（Select/SelectAs/SelectRaw/SelectExpr），否则返回 `ErrInsertSelectMapConflict`（投影由映射 API 独占设置）
 - ⚠️ **成功后 `q` 被永久追加投影**——同一 `q` 二次调用必撞 `ErrInsertSelectMapConflict`（天然防重入）。需多次 INSERT 时每次 `NewQuery` 新建独立 Query；失败路径对 `q.selects` 零副作用
 - Target 解析失败（包级解析）返回 `ErrColumnNotFound` 且 `q` 可复用；Src 的 Col 失败（alias 链）返回 `ErrFieldAddrUnregistered` 且 `q` 不可复用须新建
 - **选型**：新代码一律用 `InsertSelectMap`（成对声明，列对位由结构保证）；仅当目标列名来自动态来源（运行期字符串）或维护既有调用时用 `InsertSelect`
@@ -1398,18 +1416,29 @@ boss := gplus.As[User](q, "boss")
 q.LeftJoinAs(boss, &u.BossID, &boss.ID, "")
 ```
 
-> ⚠️ **`NewQueryAs` 主别名已知限制**（详见 CHANGELOG v0.9.0）：
-> - **First 路径不可用**：`GetOne` / `Last` / `GetByLock` / `FirstOrCreate` / `FirstOrUpdate` 下 GORM 自动追加 `ORDER BY <裸表名>.id`，裸表名被别名遮蔽报错（如 `no such column: users.id`）。改用 `List` / `Page` / `Count` / `FindAs` / `ToDB` 等 SELECT 路径
-> - **写路径不可用**：主别名 Query 传入 Delete / Update 真实执行会失败（BuildUpdate/BuildDelete 结构性不物化别名）
+`NewQueryAs` 的主别名会同步给 GORM，自动主键排序及主模型软删除条件使用同一别名。写路径仍不物化主别名：不要把主别名 Query 用于 Delete / Update。
 
 ### Correlated EXISTS
 
 ```go
 q, u := gplus.NewQuery[User](ctx)
 sub, o := gplus.SubQuery[Order](q)
-sub.Eq(&o.UserID, u.ID)
+sub.EqColumn(&o.UserID, &u.ID)
 q.Exists(sub)
 ```
+
+`EqColumn(left, right)` 是 WHERE 列对列比较，两侧字段均按所在查询作用域和 column tag 解析，右侧生成列引用，不作为普通值绑定。普通 `Eq(field, value)` 仍是列与值比较。两侧必须为当前查询链或可见外层查询的有效字段指针，字符串列名、独立实例和其他查询链的 alias 会被拒绝。
+
+需要自关联或明确区分作用域时使用不同的主别名：
+
+```go
+q, parent := gplus.NewQueryAs[User](ctx, "parent")
+sub, child := gplus.SubQueryAs[User](q, "child")
+sub.EqColumn(&child.ParentID, &parent.ID)
+q.NotExists(sub)
+```
+
+`SubQueryAs` 的自定义别名会生成到 FROM，并用于子查询主模型的自动软删除条件。内层主别名不得与可见外层 alias 重名。子查询仍不自动应用 Context 中的 DataRule，需要时显式调用 `sub.DataRuleBuilder()`；JOIN 副表的软删除与 DataRule 仍由调用方指定。
 
 ### ⚠️ DataRule × alias 安全契约
 
