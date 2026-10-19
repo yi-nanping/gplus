@@ -2,6 +2,26 @@
 
 所有版本变更记录遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.15.0] - 2026-10-19
+
+### 新增
+
+- `Updater.Incr(field, delta)`：通过主模型字段指针构建参数化原子自增，与 Set 赋值和显式 CAS 条件合并为同一条 UPDATE，沿用 UpdateByCond/Tx 的事务、DataRule、Context 和影响行数语义。
+- `Query.SelectAs(field, alias)`：按字段指针、JOIN alias 和 column tag 解析来源列，独立校验并转义结果别名，可与 Select/SelectRaw/SelectExpr 混用。
+- `Query.EqColumn(left, right)`：在 WHERE 中比较两个列引用，支持当前查询及可见外层作用域，覆盖相关子查询和不同 alias 的同模型自关联；右侧不作为值绑定。
+
+### 修复
+
+- SubQueryAs 的自定义主别名正确物化到 FROM，并拒绝遮蔽外层 alias 的重名主别名。
+- 同步 GORM 当前表别名，使主模型自动软删除条件和主键排序使用相同 alias；正确转义 schema 限定的 FROM 表名。
+
+### 契约与验证
+
+- 新入口只接受有效字段指针：Incr 限主模型规范实例字段，SelectAs/EqColumn 限当前查询链及可见外层作用域；结果别名沿用 1-32 字符的标识符规则。
+- 保持既有 IncrBy/DecrBy 只更新指定列、不合并 Set 的契约；Updater 仍由调用方显式添加 CAS 条件并判断影响行数。子查询不自动应用 Context 中的 DataRule，JOIN 副表规则与软删除仍由调用方指定。
+- 功能提交 38a1e80 的 GitHub CI 已通过核心与 SQLite/MySQL/PostgreSQL 全量 race、静态检查、依赖完整性及独立消费者驱动隔离检查。Oracle/DM 未做真实数据库验收；定版提交 CI 结果以 GitHub Actions 为准。
+- 新增公共 API，按项目惯例发布 MINOR 版本；GORM 与数据库驱动版本保持不变。
+
 ## [0.14.1] - 2026-10-08
 
 ### 修复
